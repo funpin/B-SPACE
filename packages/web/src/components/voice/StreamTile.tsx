@@ -502,11 +502,25 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
           }`}
           style={large ? { right: 'var(--focus-quality-right, 16rem)' } : undefined}
         >
-          {healthWarning && (
-            <div className={`${large ? 'h-7 rounded-lg' : 'h-5 rounded'} min-w-0 max-w-full px-2 bg-black/60 backdrop-blur-md border border-status-warn/40 flex items-center text-2xs text-white/90 truncate`}>
+          {healthWarning && (large ? (
+            <div className="h-7 rounded-lg min-w-0 max-w-full px-2 bg-black/60 backdrop-blur-md border border-status-warn/40 flex items-center text-2xs text-white/90 truncate">
               {t(STREAM_HEALTH_KEYS[healthWarning])}
             </div>
-          )}
+          ) : (
+            // A grid cell or a strip thumbnail has no room for the sentence,
+            // and a truncated one read as a stray letter ("Н…"). It gets the
+            // warning mark alone; the sentence is its accessible name and
+            // hover title, and the focused tile spells it out.
+            <span
+              data-testid="stream-health-mark"
+              role="img"
+              aria-label={t(STREAM_HEALTH_KEYS[healthWarning])}
+              title={t(STREAM_HEALTH_KEYS[healthWarning])}
+              className="h-5 w-5 flex-shrink-0 rounded bg-black/60 backdrop-blur-md flex items-center justify-center text-status-warn pointer-events-auto"
+            >
+              <Icon name={healthWarning === 'publisherCpu' ? 'zap' : healthWarning === 'reconnecting' ? 'refresh-cw' : 'wifi-off'} size="xs" />
+            </span>
+          ))}
           {qualityBadge && hasVideo && (
             // Pinned to the row's right edge: "1080p · 60 fps" and a bare
             // "1438p" grow leftward and move nothing else.
