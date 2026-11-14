@@ -97,7 +97,7 @@ jobs:
             echo "| **Windows 10/11** | $(badge "Setup x64" "Setup-x64-2B6CB0" windows "B-SPACE-$version-win-x64.exe") |"
             echo "| **macOS 12+** | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-111111" apple "B-SPACE-$version-mac-arm64.dmg") |"
             echo
-            echo "Файлы \`.blockmap\` и \`.yml\` читает автообновление, скачивать их вручную не нужно."
+            echo "Файлы \`.zip\` (macOS), \`.blockmap\` и \`.yml\` читает автообновление, скачивать их вручную не нужно."
             echo
             echo "---"
             echo
@@ -105,7 +105,7 @@ jobs:
             echo
             echo "**Windows.** Запустите установщик и следуйте шагам. Новую версию ставьте поверх старой: настройки и вход сохраняются. Если SmartScreen предупредит о неизвестном издателе: «Подробнее» → «Выполнить в любом случае»."
             echo
-            echo "**macOS (Apple Silicon).** Откройте DMG и перетащите B-SPACE в «Программы» (при обновлении — «Заменить»; старый Backspace из «Программ» после первого перехода на B-SPACE можно удалить). Приложение не подписано сертификатом Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Если macOS пишет, что приложение повреждено, выполните в Терминале:"
+            echo "**macOS (Apple Silicon).** Откройте DMG и перетащите B-SPACE в «Программы» (при обновлении — «Заменить»; старый Backspace из «Программ» после первого перехода на B-SPACE можно удалить). Приложение подписано сертификатом проекта, но не Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Дальше оно обновляется само, а разрешения macOS (запись экрана, звук) сохраняются между версиями. Если macOS пишет, что приложение повреждено, выполните в Терминале:"
             echo
             echo '```bash'
             echo 'xattr -dr com.apple.quarantine "/Applications/B-SPACE.app"'
@@ -219,6 +219,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # The project's self-signed code-signing certificate (scripts/macSign.js,
+          # docs/systems/desktop-security.md "Stable signing identity"). Only the
+          # macOS job reads them. MAC_SIGN_REQUIRED makes a missing secret fail
+          # the release instead of shipping an ad-hoc build, which would reset
+          # every user's macOS permissions and end their auto-update.
+          MAC_SIGN_P12: ${{ runner.os == 'macOS' && secrets.MAC_SIGN_P12 || '' }}
+          MAC_SIGN_P12_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_SIGN_P12_PASSWORD || '' }}
+          MAC_SIGN_REQUIRED: ${{ runner.os == 'macOS' && '1' || '' }}
           # Use the host-native fpm installed above instead of electron-builder's
           # bundled x86_64 fpm (which can't run on the arm64 runner). No-op on
           # macOS/Windows, which don't build .deb.
@@ -337,12 +345,15 @@ jobs:
       - name: Verify macOS code signature
         if: runner.os == 'macOS'
         working-directory: packages/desktop
-        # Backstop for the ad-hoc signing done in scripts/macSign.js. A bundle
-        # whose signature does not validate is reported by macOS as "Backspace
-        # is damaged and can't be opened", which no user can work around from
-        # the UI — so a broken seal must fail the release loudly rather than
-        # ship. macSign.js already verifies before packaging; this re-checks the
-        # final bundle, and also covers the case where that hook no-ops.
+        # Backstop for the signing done in scripts/macSign.js. A bundle whose
+        # signature does not validate is reported by macOS as "B-SPACE is
+        # damaged and can't be opened", which no user can work around from the
+        # UI — so a broken seal must fail the release loudly rather than ship.
+        # The designated requirement must name the project certificate: that
+        # is what keeps users' macOS permissions and auto-update working from
+        # one release to the next. macSign.js checks both before packaging;
+        # this re-checks the final bundle, and also covers the case where that
+        # hook no-ops.
         run: |
           shopt -s nullglob
           apps=(dist-electron/mac*/*.app)
@@ -353,4 +364,10 @@ jobs:
           for app in "${apps[@]}"; do
             echo "==> $app"
             codesign --verify --deep --strict --verbose=2 "$app"
+            requirement=$(codesign -d -r- "$app" 2>&1)
+            echo "$requirement" | grep designated
+            if ! echo "$requirement" | grep -Eq 'certificate (leaf|root) = H"[0-9a-f]{40}"'; then
+              echo "::error::$app is not signed with the project certificate (no certificate hash in its designated requirement)"
+              exit 1
+            fi
           done
