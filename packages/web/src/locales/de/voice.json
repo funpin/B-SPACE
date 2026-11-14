@@ -141,6 +141,7 @@
     },
     "codec": "Codec",
     "codecOption": {
+      "auto": "Auto",
       "vp9": "VP9",
       "h264": "H264"
     },
@@ -174,7 +175,8 @@
       "maintainFramerate": "Framerate halten",
       "balanced": "ausgewogen"
     },
-    "summary": "{{bitrate}} · {{degradation}}"
+    "summary": "{{bitrate}} · {{degradation}}",
+    "codecHint": "Auto wählt den Codec, den dieser Computer per Hardware kodiert (H264 unter macOS und Windows), damit die Bildschirmfreigabe den Prozessor kaum belastet. VP9 wird auf den meisten Computern in Software kodiert."
   },
   "stream": {
     "quality": "Stream-Qualität",

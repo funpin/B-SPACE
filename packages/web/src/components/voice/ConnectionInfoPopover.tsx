@@ -10,6 +10,7 @@ import { formatters } from '../../i18n/formatters';
 import { VOICE_HEALTH, healthBand, type HealthBand } from '../../utils/voiceHealth';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { PingGraph } from './PingGraph';
+import { resolveScreenShareCodec } from '../../utils/screenShareCodec';
 
 interface ConnectionInfoPopoverProps {
   open: boolean;
@@ -141,7 +142,11 @@ export function ConnectionInfoPopover({ open, onClose, anchorRef }: ConnectionIn
   const popoverRef = useRef<HTMLDivElement>(null);
   const portalContainer = usePortalContainer();
   const stats = useTrackStats(open);
-  const requestedCodec = useVoiceStore((s) => s.screenShareConfig.codec);
+  const codecChoice = useVoiceStore((s) => s.screenShareConfig.codec);
+  // Auto shows what it resolved to, e.g. "H264 (Auto)".
+  const requestedCodec = codecChoice === 'auto'
+    ? `${resolveScreenShareCodec('auto').toUpperCase()} (${t('voice:streamSettings.codecOption.auto')})`
+    : codecChoice.toUpperCase();
 
   const { style } = useFloatingPosition(anchorRef, popoverRef, {
     placement: 'top',
@@ -236,7 +241,7 @@ export function ConnectionInfoPopover({ open, onClose, anchorRef }: ConnectionIn
               <Section title={t('voice:connectionInfo.section.video')}>
                 {outboundScreen && (
                   <>
-                    <Row label={t('voice:connectionInfo.video.requestedCodec')} value={requestedCodec.toUpperCase()} />
+                    <Row label={t('voice:connectionInfo.video.requestedCodec')} value={requestedCodec} />
                     <Row label={t('voice:connectionInfo.video.negotiatedCodec')} value={outboundScreen.codec ?? '\u2014'} />
                     {outboundScreen.encoderImpl && (
                       <Row label={t('voice:connectionInfo.video.encoderImplementation')} value={outboundScreen.encoderImpl} />

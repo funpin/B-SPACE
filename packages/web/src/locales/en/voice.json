@@ -141,6 +141,7 @@
     },
     "codec": "Codec",
     "codecOption": {
+      "auto": "Auto",
       "vp9": "VP9",
       "h264": "H264"
     },
@@ -174,7 +175,8 @@
       "maintainFramerate": "hold framerate",
       "balanced": "balanced"
     },
-    "summary": "{{bitrate}} · {{degradation}}"
+    "summary": "{{bitrate}} · {{degradation}}",
+    "codecHint": "Auto picks the codec this computer encodes in hardware (H264 on macOS and Windows), so sharing barely loads the processor. VP9 is encoded in software on most computers."
   },
   "stream": {
     "quality": "Stream Quality",

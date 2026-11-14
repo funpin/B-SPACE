@@ -141,6 +141,7 @@
     },
     "codec": "Codec",
     "codecOption": {
+      "auto": "Auto",
       "vp9": "VP9",
       "h264": "H264"
     },
@@ -175,7 +176,8 @@
       "maintainFramerate": "manter taxa de quadros",
       "balanced": "equilibrado"
     },
-    "summary": "{{bitrate}} · {{degradation}}"
+    "summary": "{{bitrate}} · {{degradation}}",
+    "codecHint": "O modo Auto escolhe o codec que este computador codifica por hardware (H264 no macOS e no Windows), para que o compartilhamento quase não pese no processador. O VP9 é codificado por software na maioria dos computadores."
   },
   "stream": {
     "quality": "Qualidade da transmissão",

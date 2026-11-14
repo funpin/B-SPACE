@@ -141,6 +141,7 @@
     },
     "codec": "编解码器",
     "codecOption": {
+      "auto": "自动",
       "vp9": "VP9",
       "h264": "H264"
     },
@@ -173,7 +174,8 @@
       "maintainFramerate": "保持帧率",
       "balanced": "平衡"
     },
-    "summary": "{{bitrate}} · {{degradation}}"
+    "summary": "{{bitrate}} · {{degradation}}",
+    "codecHint": "“自动”会选择本机可用硬件编码的编解码器（macOS 和 Windows 上为 H264），共享屏幕时几乎不占用处理器。大多数电脑上 VP9 只能软件编码。"
   },
   "stream": {
     "quality": "推流画质",
