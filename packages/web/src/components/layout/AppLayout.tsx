@@ -28,6 +28,7 @@ import { IncomingCallModal } from '../voice/IncomingCallModal';
 import { PictureInPicture } from '../voice/PictureInPicture';
 import { SoundController } from '../voice/SoundController';
 import { GlobalAudioRenderer } from '../voice/GlobalAudioRenderer';
+import { StreamPointerOverlayBridge } from '../voice/StreamPointerOverlayBridge';
 import { NotificationController } from '../NotificationController';
 import { UserProfilePopoutLayer } from '../ui/UserProfilePopoutLayer';
 import { ToastContainer } from '../ui/ToastContainer';
@@ -440,6 +441,7 @@ export function AppLayout() {
             the root). */}
         <SoundController />
         <GlobalAudioRenderer />
+        <StreamPointerOverlayBridge />
         <NotificationController />
         <UpdateToast />
         <InstanceUpdateToast />
@@ -485,6 +487,7 @@ export function AppLayout() {
       <PictureInPicture />
       <SoundController />
       <GlobalAudioRenderer />
+      <StreamPointerOverlayBridge />
       <NotificationController />
       <UpdateToast />
 

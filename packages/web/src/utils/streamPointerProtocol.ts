@@ -1,7 +1,8 @@
 /**
  * Wire format and geometry of the stream pointer: a viewer's mouse shown to
- * everyone else watching the same screen share. It only draws: nothing here
- * reaches the sharer's machine, and the sharer's own screen does not change.
+ * everyone else watching the same screen share, the sharer included. Nothing
+ * reaches the sharer's machine but a position; the desktop app draws it over
+ * the shared display (utils/streamPointerOverlay.ts).
  *
  * `stream_pointer` travels on the LiveKit data channel next to `stream_watch`
  * (see streamWatchProtocol.ts). Moves are lossy and frequent; the leave and

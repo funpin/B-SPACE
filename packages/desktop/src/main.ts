@@ -53,6 +53,7 @@ import {
 } from './recovery';
 import { migrateUserData } from './userDataMigration';
 import { isNavigationAllowed } from './navigationPolicy';
+import { PointerOverlay, displayForSource } from './pointerOverlay';
 import { NotificationRetainer } from './notificationRetention';
 import { isTrayState, trayIconFile, type TrayState } from './trayState';
 import {
@@ -469,6 +470,9 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     systemAudio.stop();
+    // The share went with the window; an overlay left behind would also keep
+    // window-all-closed from firing and the app from quitting.
+    pointerOverlay?.setTarget(null);
     setMainWindow(null);
     mainWindow = null;
     // Clear recovery state so macOS dock-activate (which calls createWindow again)
@@ -596,6 +600,15 @@ const systemAudio = createSystemAudioController({
   isSandboxed,
   log: (message, ...args) => console.warn('[Main:SystemAudio]', message, ...args),
 });
+/** Viewers' stream pointers drawn over the shared display; created once the app is ready. */
+let pointerOverlay: PointerOverlay | null = null;
+
+/** A share was granted: the pointer overlay follows it onto the display it captures. */
+function trackSharedSource(source: Electron.DesktopCapturerSource): void {
+  const display = displayForSource(source, screen.getAllDisplays());
+  pointerOverlay?.setTarget(display ? display.id : null);
+}
+
 /** Last enumeration, so a preselected id resolves to its DesktopCapturerSource without a second scan. */
 let lastScreenSources: Electron.DesktopCapturerSource[] = [];
 /** Last list handed to the renderer, and when: what a throttled or unfocused caller gets back. */
@@ -858,6 +871,19 @@ function registerIpcHandlers(): void {
     if (event.sender !== mainWindow?.webContents) return;
     if (typeof sourceId !== 'string' || !sourceId) return;
     pendingScreenSelection = { sourceId, shareAudio: shareAudio === true, at: Date.now() };
+  });
+  // Viewers' pointers on this client's screen share, drawn over the shared
+  // display (pointerOverlay.ts). The renderer sends the whole list on every
+  // change, and `end` once the share is over.
+  ipcMain.on('stream-pointer-overlay', (event, pointers: unknown) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    pointerOverlay?.update(pointers);
+  });
+  ipcMain.on('stream-pointer-overlay-end', (event) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    // The display stays remembered: pointers switched off and on again
+    // during the same share come back on it. The next grant replaces it.
+    pointerOverlay?.close();
   });
   // System-picker sessions have no tile to preselect; the renderer only tells
   // us whether loopback audio should ride along with whatever the portal returns.
@@ -1331,6 +1357,7 @@ if (!gotTheLock) {
     //   2. Prompted (older web clients, or nothing preselected): push the
     //      sources to the renderer and wait for screen-share-selected.
     // Audio loopback controlled by user's shareAudio toggle.
+    pointerOverlay = new PointerOverlay();
     session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
       console.log('[Main:ScreenShare] Handler invoked');
       try {
@@ -1345,6 +1372,7 @@ if (!gotTheLock) {
             return;
           }
           console.log('[Main:ScreenShare] Using preselected source:', pending.sourceId, 'audio:', pending.shareAudio);
+          trackSharedSource(selected);
           callback({ video: selected, ...(pending.shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1368,6 +1396,7 @@ if (!gotTheLock) {
           // captured against the setting it thinks is in force.
           const shareAudio = lastSystemPickerShareAudio ?? false;
           console.log('[Main:ScreenShare] System picker returned one source:', sources[0]!.id, 'audio:', shareAudio);
+          trackSharedSource(sources[0]!);
           callback({ video: sources[0]!, ...(shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1408,6 +1437,7 @@ if (!gotTheLock) {
         //     `PulseaudioLoopbackForScreenShare` feature flag we enable above.
         //     Fails on PipeWire-only systems without pulse compat — the
         //     renderer catches that and toasts the user.
+        trackSharedSource(selected);
         callback({ video: selected, ...(shareAudio ? { audio: 'loopback' } : {}) });
       } catch (err) {
         console.error('[Main:ScreenShare] Handler error:', err);
@@ -1552,6 +1582,7 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     systemAudio.stop();
+    pointerOverlay?.dispose();
     isQuitting = true;
     stopActivityDetection();
     keybindManager.stop();

@@ -75,6 +75,15 @@ contextBridge.exposeInMainWorld('backspace', {
     ipcRenderer.send('open-release-page');
   },
 
+  // Viewers' pointers on this client's screen share, drawn over the shared
+  // display. The full list on every change; end() once the share is over.
+  setStreamPointerOverlay: (pointers: unknown[]): void => {
+    ipcRenderer.send('stream-pointer-overlay', pointers);
+  },
+  endStreamPointerOverlay: (): void => {
+    ipcRenderer.send('stream-pointer-overlay-end');
+  },
+
   // Window focus
   onWindowFocusChange: (callback: (focused: boolean) => void) => {
     ipcRenderer.on('window-focus-changed', (_event, focused) => callback(focused));
