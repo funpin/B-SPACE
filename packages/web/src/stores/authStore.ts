@@ -2,6 +2,7 @@ import { useChannelPokeStore } from './channelPokeStore';
 import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
 import { create } from 'zustand';
+import { celebrateInTray } from '../utils/trayMoments';
 import { isChosenUserStatus, type ChosenUserStatus, type FederatedIdentity, type User } from '@backspace/shared';
 import { api } from '../api/client';
 import { useChatStore } from './chatStore';
@@ -226,6 +227,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await api.auth.login({ username, password });
       get().initSession(response.token, response.user);
+      celebrateInTray();
     } catch (err) {
       set({ isLoading: false, error: err instanceof Error ? err.message : 'Login failed' });
       throw err;
@@ -237,6 +239,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await api.auth.register({ username, password, displayName, avatarColor });
       get().initSession(response.token, response.user);
+      celebrateInTray();
     } catch (err) {
       set({ isLoading: false, error: err instanceof Error ? err.message : 'Registration failed' });
       throw err;

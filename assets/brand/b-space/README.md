@@ -75,12 +75,12 @@
 
 Анимация не нужна в строке каналов и в списке пространств: там знак всегда неподвижный. Если в системе включено «Уменьшить движение» (`prefers-reduced-motion: reduce`), персонаж не двигается и только меняет кадры.
 
-Значок в трее (строка меню сверху на macOS, панель задач снизу на Windows) показывает пять состояний: `idle`, `notify`, `screen` (идёт демонстрация экрана), `dnd`, `offline`. Значок в трее — статичная картинка, которую меняют через `tray.setImage(...)` (см. «Где знак уже стоит»).
+Значок в трее (строка меню сверху на macOS, панель задач снизу на Windows) показывает девять состояний из таблицы и двигается так же: моргает, оглядывается, подпрыгивает, печатает, пульсирует. Трей не умеет анимированные картинки, поэтому движение собрано из 16 кадров (`idle`, `blink`, `look-left`, `look-right`, `notify`, `notify-up`, `typing-a`, `typing-b`, `typing`, `voice`, `screen`, `screen-dim`, `joy`, `joy-up`, `dnd`, `offline`), которые приложение меняет через `tray.setImage(...)` по расписанию `TRAY_ANIMATIONS` в `packages/desktop/src/trayState.ts`. В строке меню macOS значок одноцветный (template), поэтому красная точка и зелёное кольцо там видны формой, а не цветом.
 
 ## Где знак уже стоит
 
 - **Иконки приложения, фавиконы, PWA:** исходники в `assets/brand/*.svg` рисует `node scripts/b-space-kit.mjs`, растровые файлы собирает `pnpm gen-icons`.
-- **Трей:** пять состояний (`idle`, `notify`, `screen`, `dnd`, `offline`). Исходники — `assets/brand/tray/`, файлы — `packages/desktop/resources/tray-<state>*`. Состояние выбирает веб-клиент (`packages/web/src/utils/trayState.ts`) и передаёт его через `set-tray-state` (`packages/desktop/src/trayState.ts`).
+- **Трей:** девять состояний, 16 кадров. Исходники — `assets/brand/tray/<кадр>*.svg`, файлы — `packages/desktop/resources/tray-<кадр>*`. Состояние выбирает веб-клиент (`packages/web/src/utils/trayState.ts`, `hooks/useTrayBridge.ts`) и передаёт его через `set-tray-state`; анимацию проигрывает `TrayAnimator` (`packages/desktop/src/trayState.ts`). В меню трея — микрофон, звук, отключение от звонка и статус (`trayContext.ts`).
 - **Интерфейс:** `BrandMark` (знак одним цветом: кнопка «Главная», строка «Backspace» в ЛС, шапка страницы проекта) и `Mascot` (персонаж с состояниями: пустые экраны, вход, регистрация, приглашение). Геометрия — `packages/web/src/components/brand/markGeometry.ts`; тест сверяет её с файлами этой папки.
 - **Лендинг:** `site/assets/logo.svg` (фавикон) и `logo-glyph.svg` (маска для `logo.css`).
 

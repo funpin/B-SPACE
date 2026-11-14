@@ -176,13 +176,20 @@ function updateActionItem(
  * `language` defaults to English so the pure template builders stay usable
  * without Electron; main.ts passes the resolved desktop language.
  */
+/**
+ * The tray menu. `controls` are the quick controls the renderer's state
+ * allows (voice, mute, deafen, status, see trayContext.ts); they lead the
+ * menu, the app's own items follow.
+ */
 export function buildTrayMenuTemplate(
   state: RecoveryState,
   actions?: Partial<MenuActions>,
   language: DesktopLanguage = 'en',
+  controls: readonly MenuItemConstructorOptions[] = [],
 ): MenuItemConstructorOptions[] {
   const t = (key: Parameters<typeof translateDesktop>[1]) => translateDesktop(language, key);
   const items: MenuItemConstructorOptions[] = [
+    ...controls,
     { label: t('tray.show'), click: actions?.onShow },
     { label: t('tray.hide'), click: actions?.onHide },
   ];

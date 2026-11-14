@@ -92,6 +92,10 @@ interface BackspaceElectronAPI {
   setBadgeCount: (count: number) => void;
   /** Absent on desktop builds older than the tray states. */
   setTrayState?: (state: import('../utils/trayState').TrayState) => void;
+  /** The tray menu's quick controls. Absent on desktop builds older than the animated tray. */
+  setTrayContext?: (context: import('../utils/trayState').TrayContext) => void;
+  /** A quick control clicked in the tray menu. Absent on the same older builds. */
+  onTrayAction?: (callback: (action: import('../utils/trayState').TrayAction) => void) => () => void;
 
   /**
    * Viewers' pointers on this client's screen share, drawn by the desktop app

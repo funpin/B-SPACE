@@ -84,7 +84,14 @@ const STATES = {
   screen: { eyes: (e) => e.map(([x, y, rx, ry]) => ellipse([x + 1.5, y + 3, rx, ry])), bodyHoles: [SCREEN], live: true },
   dnd: { eyes: (e) => e.map(([x, y, rx]) => ellipse([x, y + 1, rx + 0.4, 1.3])), muted: true },
   offline: { eyes: (e) => e.map((p) => cross(p)), off: true },
+  // In-between frames for the tray animation (TRAY_FRAMES below): the dots
+  // of "typing" appearing one by one, and the screen with its live dot off.
+  'typing-a': { eyes: (e) => e.map(([x, y, rx, ry]) => ellipse([x - 3, y + 3, rx, ry])), bodyHoles: [42].map((x) => circle(x, 70.5, 3.4)) },
+  'typing-b': { eyes: (e) => e.map(([x, y, rx, ry]) => ellipse([x - 3, y + 3, rx, ry])), bodyHoles: [42, 52].map((x) => circle(x, 70.5, 3.4)) },
+  'screen-dim': { eyes: (e) => e.map(([x, y, rx, ry]) => ellipse([x + 1.5, y + 3, rx, ry])), bodyHoles: [SCREEN] },
 };
+// Frames that are not states of the character on their own.
+const FRAME_ONLY = new Set(['typing-a', 'typing-b', 'screen-dim']);
 
 // Returns the inner SVG markup of the mark in grid units.
 function markInner({ state = 'idle', eyes = 'std', head, body, badgeColor = C.danger, ringColor = C.ok, idp = 'm' }) {
@@ -174,10 +181,10 @@ function appIconSvg({ small = false } = {}) {
 
 // macOS menu-bar template: 18x22 px canvas (viewBox 0 0 180 220), glyph
 // 16 px tall, small eyes. Pure black: macOS tints the alpha.
-function trayTemplateSvg(state) {
+function trayTemplateSvg(state, dy = 0) {
   const s = 2; // 80 grid units -> 160 viewBox units = 16 px
   const tx = 90 - 50 * s;
-  const ty = 110 - 50 * s;
+  const ty = 110 - 50 * s + dy * 10; // dy in px of the 18x22 canvas
   const opacity = STATES[state].off ? ' opacity="0.45"' : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="22" viewBox="0 0 180 220"><g${opacity} transform="translate(${tx} ${ty}) scale(${s})">${markInner({ ...palette.black, state, eyes: 'small', idp: `tray-${state}` })}</g></svg>\n`;
 }
@@ -237,8 +244,29 @@ function animatedSvg(states, { cell = 120, gap = 12 } = {}) {
 }
 
 // ---- output ----
-// The tray states the desktop app switches between (see packages/desktop/src/trayState.ts).
-const TRAY_STATES = ['idle', 'notify', 'screen', 'dnd', 'offline'];
+// The tray frames the desktop app animates through (TRAY_FRAMES in
+// packages/desktop/src/trayState.ts, which lists the same names). Each is a
+// character state, optionally raised by `dy` px for the jump of "notify" and
+// "joy". The template bakes the raise in; the colour master stays centred and
+// scripts/gen-icons.mjs applies the same raise when it places the glyph.
+const TRAY_FRAMES = {
+  idle: { state: 'idle' },
+  blink: { state: 'blink' },
+  'look-left': { state: 'look-left' },
+  'look-right': { state: 'look-right' },
+  notify: { state: 'notify' },
+  'notify-up': { state: 'notify', dy: -2 },
+  'typing-a': { state: 'typing-a' },
+  'typing-b': { state: 'typing-b' },
+  typing: { state: 'typing' },
+  voice: { state: 'voice' },
+  screen: { state: 'screen' },
+  'screen-dim': { state: 'screen-dim' },
+  joy: { state: 'joy' },
+  'joy-up': { state: 'joy', dy: -2 },
+  dnd: { state: 'dnd' },
+  offline: { state: 'offline' },
+};
 const files = [];
 function write(rel, data, base = KIT) {
   const p = join(base, rel);
@@ -283,10 +311,11 @@ async function main() {
   write('mark-mono-dark.svg', markSvg({ ...palette.black }, { tight: true }), BRAND);
   // Tray states: a black template per state for the macOS menu bar, and a
   // colour glyph per state for the Windows and Linux trays.
-  for (const state of TRAY_STATES) {
-    write(`tray/${state}-template.svg`, trayTemplateSvg(state), BRAND);
+  rmSync(join(BRAND, 'tray'), { recursive: true, force: true });
+  for (const [frame, { state, dy = 0 }] of Object.entries(TRAY_FRAMES)) {
+    write(`tray/${frame}-template.svg`, trayTemplateSvg(state, dy), BRAND);
     const colours = STATES[state].off ? { head: C.offHead, body: C.offHead } : palette.lavender;
-    write(`tray/${state}.svg`, markSvg({ ...colours, state, eyes: 'small', idp: `tray-${state}` }, { tight: true }), BRAND);
+    write(`tray/${frame}.svg`, markSvg({ ...colours, state, eyes: 'small', idp: `tray-${frame}` }, { tight: true }), BRAND);
   }
 
   // Landing page: favicon (the small mark, readable on light and dark tabs)
@@ -296,7 +325,7 @@ async function main() {
   write('logo-glyph.svg', markSvg({ ...palette.black }, { tight: true }), SITE);
 
   // States: static frames of the character
-  for (const state of Object.keys(STATES)) {
+  for (const state of Object.keys(STATES).filter((name) => !FRAME_ONLY.has(name))) {
     write(`states/${state}.svg`, header(`character, state "${state}", for dark grounds`) + markSvg({ ...stateColours(state, palette.dark), state, idp: state }, { size: 200 }));
     write(`states/${state}-on-light.svg`, header(`character, state "${state}", for light grounds`) + markSvg({ ...stateColours(state, palette.light), state, idp: state }, { size: 200 }));
   }

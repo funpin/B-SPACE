@@ -150,7 +150,7 @@ function placeMarkSvg(mark, canvasW, canvasH, glyphH, x, y) {
   );
 }
 
-async function renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH) {
+async function renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH, dy = 0) {
   // Colour tray glyph on a transparent canvas: glyphH px tall, centred
   // vertically by bounding box and horizontally by alpha centroid. The
   // mark's straight left edge and open right side put its centroid left
@@ -164,7 +164,10 @@ async function renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH) {
       .png({ compressionLevel: 9, palette: false })
       .toBuffer();
   const x0 = (canvasW - glyphH * mark.aspect) / 2;
-  const y0 = (canvasH - glyphH) / 2;
+  // dy: the frame's raise in px of a 16px glyph (TRAY_FRAMES), scaled to this
+  // glyph and capped at the cell's top margin so the head is never clipped.
+  const margin = (canvasH - glyphH) / 2;
+  const y0 = margin + Math.max((dy * glyphH) / 16, -margin);
   const probe = await render(x0, y0);
   const shift = canvasW / 2 - (await alphaCentroidX(probe));
   const png = await render(x0 + shift, y0);
@@ -177,8 +180,17 @@ async function renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH) {
 // 11 draws its own tray glyphs about 14px inside the 16px cell).
 const TRAY_ICO_SIZES = [16, 20, 24, 32, 40, 48];
 
-// Must match TRAY_STATES in packages/desktop/src/trayState.ts.
-const TRAY_STATES = ['idle', 'notify', 'screen', 'dnd', 'offline'];
+// Tray animation frames and their raise in px of a 16px glyph. Must match
+// TRAY_FRAMES in packages/desktop/src/trayState.ts and in
+// scripts/b-space-kit.mjs (which bakes the raise into the macOS templates).
+const TRAY_FRAMES = {
+  idle: 0, blink: 0, 'look-left': 0, 'look-right': 0,
+  notify: 0, 'notify-up': -2,
+  'typing-a': 0, 'typing-b': 0, typing: 0,
+  voice: 0, screen: 0, 'screen-dim': 0,
+  joy: 0, 'joy-up': -2,
+  dnd: 0, offline: 0,
+};
 const trayGlyphHeight = (size) => size - Math.floor(size / 8);
 
 function groundSvg(size) {
@@ -216,16 +228,16 @@ async function writeTemplatePng(path, svg, height) {
   writeFileSync(path, buf);
 }
 
-async function writeTrayPng(path, markSvg, canvasW, canvasH, glyphH) {
+async function writeTrayPng(path, markSvg, canvasW, canvasH, glyphH, dy = 0) {
   mkdirSync(dirname(path), { recursive: true });
-  const { png, measured } = await renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH);
+  const { png, measured } = await renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH, dy);
   writeFileSync(path, png);
   return measured;
 }
 
-async function writeTrayIco(path, markSvg, sizes) {
+async function writeTrayIco(path, markSvg, sizes, dy = 0) {
   mkdirSync(dirname(path), { recursive: true });
-  const frames = await Promise.all(sizes.map((s) => renderTrayGlyphPng(markSvg, s, s, trayGlyphHeight(s))));
+  const frames = await Promise.all(sizes.map((s) => renderTrayGlyphPng(markSvg, s, s, trayGlyphHeight(s), dy)));
   const ico = await pngToIco(frames.map((f) => f.png));
   writeFileSync(path, ico);
   return `${sizes.length} frames: ${frames.map((f) => f.measured).join('; ')}`;
@@ -356,7 +368,7 @@ async function writeMaskableIcon(path, markSvg, canvas, heightScale) {
 async function main() {
   // Spec: refuse to run if any source SVG is missing — fail loudly, not on
   // a downstream sharp error with a cryptic ENOENT.
-  const traySources = TRAY_STATES.flatMap((state) => [
+  const traySources = Object.keys(TRAY_FRAMES).flatMap((state) => [
     join(BRAND, `tray/${state}-template.svg`),
     join(BRAND, `tray/${state}.svg`),
   ]);
@@ -440,11 +452,11 @@ async function main() {
   );
   await trace('win-ico', join(DESKTOP_BUILD, 'icon.ico'), '7 sizes', winIcoMeasured);
 
-  // --- Desktop: tray, one icon per tray state ---
-  // The B:SPACE character shows the app's state in the tray: idle, unread
-  // (notify), screen sharing (screen), do-not-disturb (dnd) and no server
-  // connection (offline). packages/desktop/src/trayState.ts picks one and
-  // main.ts swaps the image. Masters: assets/brand/tray/<state>-template.svg
+  // --- Desktop: tray, one icon per animation frame ---
+  // The B:SPACE character shows the app's state in the tray and moves the way
+  // the brand README describes (blinks, looks around, jumps, types). Each
+  // state is a loop of these frames (TRAY_ANIMATIONS in
+  // packages/desktop/src/trayState.ts), played by main.ts with tray.setImage. Masters: assets/brand/tray/<state>-template.svg
   // and <state>.svg, written by scripts/b-space-kit.mjs.
   //
   // macOS menu bar: the template is the character's silhouette (eyes cut
@@ -456,7 +468,7 @@ async function main() {
   // each platform's own tray glyphs are (Windows 11: about 14px in the 16px
   // cell; Ubuntu/KDE indicators: about 18px in 22) and centred by alpha
   // centroid, see renderTrayGlyphPng.
-  for (const state of TRAY_STATES) {
+  for (const [state, dy] of Object.entries(TRAY_FRAMES)) {
     const template = loadSvg(join(BRAND, `tray/${state}-template.svg`));
     const colour = loadSvg(join(BRAND, `tray/${state}.svg`));
 
@@ -465,10 +477,10 @@ async function main() {
     await writeTemplatePng(join(DESKTOP_RES, `tray-${state}Template@2x.png`), template, 44);
     await trace('tray-mac-2x', join(DESKTOP_RES, `tray-${state}Template@2x.png`), `36x44 (${state})`);
 
-    const icoMeasured = await writeTrayIco(join(DESKTOP_RES, `tray-${state}.ico`), colour, TRAY_ICO_SIZES);
+    const icoMeasured = await writeTrayIco(join(DESKTOP_RES, `tray-${state}.ico`), colour, TRAY_ICO_SIZES, dy);
     await trace('tray-win-ico', join(DESKTOP_RES, `tray-${state}.ico`), `6 sizes (${state}, inset)`, icoMeasured);
 
-    const pngMeasured = await writeTrayPng(join(DESKTOP_RES, `tray-${state}.png`), colour, 22, 22, 18);
+    const pngMeasured = await writeTrayPng(join(DESKTOP_RES, `tray-${state}.png`), colour, 22, 22, 18, dy);
     await trace('tray-linux', join(DESKTOP_RES, `tray-${state}.png`), `22x22 (${state}, 18px glyph)`, pngMeasured);
   }
 
