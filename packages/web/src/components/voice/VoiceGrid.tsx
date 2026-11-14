@@ -280,7 +280,11 @@ export function VoiceGrid({ participants, chromeRevealed = false }: VoiceGridPro
   const renderCell = (cell: GridCell, variant: 'grid' | 'focused' | 'thumbnail', compact?: boolean) => {
     const showInset = cell.inset !== null
       && (variant === 'focused' || (variant === 'grid' && tileWidth >= MIN_TILE_WIDTH_FOR_INSET));
-    const actions = variant === 'grid' ? cellActions(cell) : [];
+    // A focused cell carries its actions in the focus bar; a grid cell and a
+    // strip thumbnail carry them on hover. The thumbnail needs them too: a
+    // camera taken out of its share sits in the strip while the share is
+    // focused, and putting it back must not mean leaving the share first.
+    const actions = variant === 'focused' ? [] : cellActions(cell);
     return (
       <div
         className="relative h-full w-full group/cell"
@@ -306,7 +310,10 @@ export function VoiceGrid({ participants, chromeRevealed = false }: VoiceGridPro
           </div>
         )}
         {actions.length > 0 && (
-          <div className="absolute top-10 right-2 z-raised flex items-center gap-1.5 transition-opacity duration-fast opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          <div
+            data-testid="cell-actions"
+            className={`absolute ${variant === 'thumbnail' ? 'top-1.5 right-1.5' : 'top-10 right-2'} z-raised flex items-center gap-1.5 transition-opacity duration-fast opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100`}
+          >
             {actions}
           </div>
         )}

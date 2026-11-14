@@ -193,6 +193,18 @@ describe('VoiceGrid one tile per participant', () => {
     expect(screen.queryByTestId('tile-inset')).toBeNull();
   });
 
+  it('puts a camera taken out of its share back from the strip, without leaving the share', async () => {
+    useVoiceStore.setState({ focusedParticipantId: 'bob:stream', splitCameraUserIds: new Set(['bob']) });
+    render(<VoiceGrid participants={[participant('ada', true), sharing('bob', { screen: true, camera: true })]} />);
+    expect(screen.queryByTestId('tile-inset')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Return Camera to Corner' }));
+
+    expect(useVoiceStore.getState().splitCameraUserIds.has('bob')).toBe(false);
+    expect(useVoiceStore.getState().focusedParticipantId).toBe('bob:stream');
+    expect(screen.getAllByTestId('tile-inset')).toHaveLength(1);
+  });
+
   it('moves the inset to another corner on drag without touching focus or swapping', () => {
     useVoiceStore.setState({ focusedParticipantId: 'bob:stream' });
     render(<VoiceGrid participants={[participant('ada', true), sharing('bob', { screen: true, camera: true })]} />);
