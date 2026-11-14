@@ -418,6 +418,15 @@ button that did nothing. `MacUpdater.quitAndInstall()` then takes a branch that
 registers a listener for an event that never fires and returns, with no error and
 no exception.
 
+#### Quitting for the install, and when Restart is offered (since 2.3.2)
+
+Two things kept a downloaded update from installing on macOS even with a signed build (measured 2.3.0 → 2.3.1: "Update could not be installed" four seconds after Restart, the install only when the user quit by hand a minute later):
+
+- **The app never quit.** `autoUpdater.quitAndInstall()` closes every window first and calls `app.quit()` only when all are closed; `before-quit` comes later. The main window's `close` handler hid the window to the tray because `isQuitting` was still false, so `app.quit()` never ran and ShipIt waited for a process that stayed alive. `prepareToQuit()` (the old `before-quit` body) now also runs on the native `autoUpdater`'s `before-quit-for-update` (macOS and Windows).
+- **Restart came too early.** On macOS the update is `ready` only when both electron-updater's `update-downloaded` and the native `autoUpdater`'s `update-downloaded` (Squirrel staged it) have fired (`createUpdateReadyGate`, `src/updateReadyGate.ts`; reset on every `checking-for-update`). In between the status stays `downloading` at 100 %, and the update window shows "Preparing … to install" with an indeterminate bar. Restart then quits at once, so the 4-second install watchdog is right again.
+
+A copy older than this fix still has the first bug: after Restart it has to be quit by hand (tray → Quit or ⌘Q) once, and ShipIt installs the update then.
+
 ### Status model
 
 One value, replaced wholesale by every event, so a stale `ready` can never
