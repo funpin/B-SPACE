@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { celebrateInTray } from '../utils/trayMoments';
 import type { MessageWithUser, Reaction, ReadState, User } from '@backspace/shared';
 import { wsSend } from '../hooks/useWebSocket';
 import { HttpError } from '../api/client';
@@ -794,6 +795,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await client.channels.sendMessage(channelId, { content, attachments: attachmentIds, replyToId });
       }
       // Real message will arrive via WebSocket and replace the temp one
+      celebrateInTray();
     } catch (error) {
       // Roll back locally, but let the composer expose failure and retain the draft.
       get().removeMessage(tempId, channelId);

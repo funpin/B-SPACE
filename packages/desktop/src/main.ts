@@ -10,6 +10,7 @@ import {
   screen,
   session,
   desktopCapturer,
+  systemPreferences,
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -55,7 +56,15 @@ import { migrateUserData } from './userDataMigration';
 import { isNavigationAllowed } from './navigationPolicy';
 import { PointerOverlay, displayForSource } from './pointerOverlay';
 import { NotificationRetainer } from './notificationRetention';
-import { isTrayState, trayIconFile, type TrayState } from './trayState';
+import { isTrayState, trayIconFile, TrayAnimator, type TrayFrame } from './trayState';
+import {
+  buildTrayControlItems,
+  EMPTY_TRAY_CONTEXT,
+  parseTrayContext,
+  sameTrayContext,
+  type TrayAction,
+  type TrayContext,
+} from './trayContext';
 import {
   screenSharePickerMode,
   isPendingSelectionFresh,
@@ -327,36 +336,57 @@ function generateFallbackTrayIcon(): Electron.NativeImage {
   return nativeImage.createFromBuffer(canvas, { width: size, height: size });
 }
 
-/** Loaded tray images, one per state; a state whose file is missing falls back to idle. */
-const trayIcons = new Map<TrayState, Electron.NativeImage>();
-let currentTrayState: TrayState = 'idle';
+/** Loaded tray images, one per frame; a frame whose file is missing falls back to idle. */
+const trayIcons = new Map<TrayFrame, Electron.NativeImage>();
 
-function loadTrayIcon(state: TrayState): Electron.NativeImage {
-  const cached = trayIcons.get(state);
+function loadTrayIcon(frame: TrayFrame): Electron.NativeImage {
+  const cached = trayIcons.get(frame);
   if (cached) return cached;
   const resourcesDir = path.join(__dirname, '..', 'resources');
   try {
     // macOS: template image, Electron resolves the @2x by suffix and the
     // menu bar tints it for light/dark. Windows: multi-size .ico, the
     // system picks the frame for the DPI. Linux: one 22x22 PNG.
-    const icon = nativeImage.createFromPath(path.join(resourcesDir, trayIconFile(state, process.platform)));
+    const icon = nativeImage.createFromPath(path.join(resourcesDir, trayIconFile(frame, process.platform)));
     if (!icon.isEmpty()) {
       if (process.platform === 'darwin') icon.setTemplateImage(true);
-      trayIcons.set(state, icon);
+      trayIcons.set(frame, icon);
       return icon;
     }
   } catch {
     // Fall through to the idle image, then to the generated icon
   }
-  if (state !== 'idle') return loadTrayIcon('idle');
+  if (frame !== 'idle') return loadTrayIcon('idle');
   return generateFallbackTrayIcon();
 }
 
-/** Shows the character in the tray in the given state (unread, screen sharing, DND, offline). */
-function setTrayState(state: TrayState): void {
-  if (state === currentTrayState) return;
-  currentTrayState = state;
-  tray?.setImage(loadTrayIcon(state));
+/**
+ * Whether the OS asks apps to keep still. The tray character then shows each
+ * state's still frame instead of its loop (brand README, "Состояния").
+ */
+function prefersReducedMotion(): boolean {
+  try {
+    return systemPreferences.getAnimationSettings().prefersReducedMotion;
+  } catch {
+    return false;
+  }
+}
+
+/** Plays the character's animation for the state the renderer reports (trayState.ts). */
+const trayAnimator = new TrayAnimator({
+  show: (frame) => tray?.setImage(loadTrayIcon(frame)),
+  setTimer: (callback, ms) => setTimeout(callback, ms),
+  clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+  prefersReducedMotion,
+});
+
+/** The quick controls the renderer last reported for the tray menu (trayContext.ts). */
+let trayContext: TrayContext = EMPTY_TRAY_CONTEXT;
+/** Rebuilds the tray and app menus; set once app.whenReady has the menu actions. */
+let refreshMenus: (() => void) | null = null;
+
+function sendTrayAction(action: TrayAction): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tray-action', action);
 }
 
 // ─── Window & Tray Creation ─────────────────────────────────────────────────
@@ -536,7 +566,8 @@ function createWindow(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(loadTrayIcon(currentTrayState));
+  tray = new Tray(loadTrayIcon('idle'));
+  trayAnimator.set(trayAnimator.current ?? 'idle');
 
   tray.setToolTip(APP_DISPLAY_NAME);
   // Context menu is set by the recoveryStore subscriber in app.whenReady,
@@ -678,7 +709,16 @@ function registerIpcHandlers(): void {
   // The renderer decides the tray state (see packages/web/src/hooks/useTrayState.ts);
   // anything that is not a known state is ignored.
   ipcMain.on('set-tray-state', (_event, state: unknown) => {
-    if (isTrayState(state)) setTrayState(state);
+    if (isTrayState(state)) trayAnimator.set(state);
+  });
+
+  // The quick controls at the top of the tray menu (trayContext.ts). A
+  // malformed context is dropped and the menu keeps the last good one.
+  ipcMain.on('set-tray-context', (_event, value: unknown) => {
+    const next = parseTrayContext(value);
+    if (!next || sameTrayContext(next, trayContext)) return;
+    trayContext = next;
+    refreshMenus?.();
   });
 
   ipcMain.on('minimize-window', () => {
@@ -1495,7 +1535,8 @@ if (!gotTheLock) {
     const applyMenusForState = (state: RecoveryState): void => {
       const language = getDesktopLanguage();
       if (tray) {
-        tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate(state, trayActions, language)));
+        const controls = buildTrayControlItems(trayContext, sendTrayAction, language);
+        tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate(state, trayActions, language, controls)));
       }
       if (process.platform === 'darwin') {
         Menu.setApplicationMenu(Menu.buildFromTemplate(buildAppMenuTemplate(app.name, state, trayActions, language)));
@@ -1507,6 +1548,7 @@ if (!gotTheLock) {
     };
 
     recoveryStore.subscribe(applyMenusForState);
+    refreshMenus = () => applyMenusForState(recoveryStore.get());
     applyMenusForState(recoveryStore.get());  // initial fire — subscribers don't auto-fire on subscribe
 
     // The renderer owns the language choice (settings → Language). Remember

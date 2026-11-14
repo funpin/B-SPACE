@@ -235,35 +235,52 @@ Pure logic lives in `packages/desktop/src/autoLaunch.ts` with vitest coverage in
 
 ## Tray Icon
 
-### Icon and tray states (`loadTrayIcon(state)`, `src/trayState.ts`)
+### Icon, tray states and animation (`src/trayState.ts`)
 
-The tray shows the B:SPACE character, the logo's B with eyes, in one of five states. The renderer decides the state and sends it over `set-tray-state`; the main process validates it with `isTrayState` (anything else is ignored), caches one `NativeImage` per state and swaps it with `tray.setImage`.
+The tray shows the B:SPACE character, the logo's B with eyes, in one of nine states, and moves the way the brand README (`assets/brand/b-space/README.md`, "Состояния персонажа") describes. The renderer decides the state and sends it over `set-tray-state`; the main process validates it with `isTrayState` (anything else is ignored) and hands it to a `TrayAnimator`, which plays the state's loop from `TRAY_ANIMATIONS` frame by frame with `tray.setImage`. Reporting the same state again keeps the loop's place; only frame changes reach `setImage`. When the OS asks for reduced motion (`systemPreferences.getAnimationSettings().prefersReducedMotion`, read at each state change) the animator shows the loop's first frame and sets no timer.
 
-| State | When (renderer, `utils/trayState.ts`, most urgent first) | Look |
+| State | When (renderer, `utils/trayState.ts` `pickTrayState`, most urgent first) | Loop (frame ms) |
 |-------|-------------------------------------------------------|------|
-| `offline` | The home instance's realtime socket closed (`homeConnectionStore` is `closed`) | Greyed, eyes "× ×" |
-| `screen` | The user is sharing their screen (`voiceStore.isScreenSharing`) | Body is a screen with a live dot |
-| `notify` | Any unread channel (`chatStore.unreadChannels`) | Unread dot on the head |
-| `dnd` | The user's own status is Do Not Disturb or Idle | Eyes closed |
-| `idle` | Otherwise | Open eyes |
+| `offline` | The home instance's realtime socket closed (`homeConnectionStore` is `closed`) | `offline`, still: grey, eyes "× ×" |
+| `screen` | The user is sharing their screen (`voiceStore.isScreenSharing`) | `screen` 1000, `screen-dim` 600: the live dot blinks |
+| `voice` | The user's own mic picks up speech: the local participant is in `speakingParticipantIds` and not muted | `voice` 450, `idle` 250: the ring pulses |
+| `notify` | Any unread channel (`chatStore.unreadChannels`) | `notify` 1900, `notify-up` 160, `notify` 110, `notify-up` 110: a double hop, dot on the head |
+| `joy` | For `JOY_DURATION_MS` (1.8 s) after `celebrateInTray()`: a sent message (`chatStore.sendMessage`), a sign-in or sign-up (`authStore`) | `joy-up` 180, `joy` 1600: one hop, eyes "^ ^" |
+| `dnd` | The user's own status is Do Not Disturb or Idle | `dnd`, still: eyes closed |
+| `typing` | Someone other than the user is typing in a DM or in the channel on screen (`someoneTypingToMe`) | `typing-a` 300, `typing-b` 300, `typing` 600: eyes down, dots appear one by one |
+| `look` | The home socket has not opened yet (`unknown`), or a call is connecting or reconnecting | `look-left` 1300, `idle` 300, `look-right` 1300, `idle` 1450, `blink` 150 |
+| `idle` | Otherwise | `idle` 3400, `blink` 150 |
 
-| Platform | File per state | Notes |
+| Platform | File per frame | Notes |
 |----------|----------------|-------|
-| macOS | `resources/tray-<state>Template.png` (+ `@2x`) | Template image: black + alpha at 18×22 / 36×44, glyph 16px tall; the menu bar tints it for light/dark/active |
-| Windows | `resources/tray-<state>.ico` | Multi-size `.ico` (16/20/24/32/40/48), glyph inset per frame; Windows picks the frame for the DPI |
-| Linux | `resources/tray-<state>.png` | 22×22 colour PNG, 18px glyph (AppIndicator / StatusNotifier convention) |
-| Fallback | Programmatic 16×16 BGRA buffer | Lavender circle; a missing state file first falls back to `idle` |
+| macOS | `resources/tray-<frame>Template.png` (+ `@2x`) | Template image: black + alpha at 18×22 / 36×44, glyph 16px tall; the menu bar tints it for light/dark/active. The `-up` frames are raised 2px inside the canvas |
+| Windows | `resources/tray-<frame>.ico` | Multi-size `.ico` (16/20/24/32/40/48), glyph inset per frame; the raise is scaled to the glyph and capped at the cell margin |
+| Linux | `resources/tray-<frame>.png` | 22×22 colour PNG, 18px glyph (AppIndicator / StatusNotifier convention) |
+| Fallback | Programmatic 16×16 BGRA buffer | Lavender circle; a missing frame file first falls back to `idle` |
 
-All files are rendered by `scripts/gen-icons.mjs` from `assets/brand/tray/<state>-template.svg` and `<state>.svg`, which `scripts/b-space-kit.mjs` draws from the mark's geometry. The web client sends the state only when the bridge has `setTrayState` (desktop builds before it keep the idle icon), and a desktop build talking to an older web client stays on `idle`.
+The sixteen frames (`TRAY_FRAMES`) are rendered by `scripts/gen-icons.mjs` from `assets/brand/tray/<frame>-template.svg` and `<frame>.svg`, which `scripts/b-space-kit.mjs` draws from the mark's geometry. Both scripts list the same frames and raises as `TRAY_FRAMES` in `trayState.ts`; `trayState.test.ts` fails when a played frame has no file or a shipped file is never played.
+
+Compatibility: the web client sends the state only when the bridge has `setTrayState` (desktop builds before it keep the idle icon). A desktop build from before the animated tray (its bridge has no `setTrayContext`) knows only `idle`, `notify`, `screen`, `dnd`, `offline`; `updateTrayState` sends it `idle` for any other state rather than leave the previous image up. A desktop build talking to an older web client stays on `idle`.
 
 ### Context Menu
 
-| Item | Action |
-|------|--------|
-| Show Backspace | `window.show()` + `focus()` |
-| Hide | `window.hide()` |
-| Change Instance | Load picker (non-destructive — saved URL preserved), show + focus |
-| Quit | Set `isQuitting = true`, `app.quit()` |
+The menu starts with quick controls the renderer allows (`src/trayContext.ts`), then the app's own items (`buildTrayMenuTemplate` in `recovery.ts`):
+
+| Item | Shown | Action |
+|------|-------|--------|
+| In voice: *channel* (disabled) | In a voice channel or DM call | Label only; the name is cut to 40 characters |
+| Mute Microphone (checkbox) | Signed in | `tray-action {type:'toggleMute'}` → `toggleMuteFromControl()`; outside a call it sets how the next call starts, like the voice bar |
+| Deafen (checkbox) | Signed in | `{type:'toggleDeafen'}` → `toggleDeafenFromControl()` |
+| Disconnect | In a call | `{type:'disconnect'}` → `handleDisconnectAction()` (DM calls included) |
+| Status ▸ Online / Idle / Do Not Disturb (radio) | Signed in | `{type:'setStatus', status}` → `authStore.updateProfile({ status })`, the same path as the status picker |
+| Show B:SPACE | Always | `window.show()` + `focus()` |
+| Hide | Always | `window.hide()` |
+| Check for Updates… and the update action | Per update state | See Auto-Update |
+| Change Instance | Always | Load picker (non-destructive — saved URL preserved), show + focus |
+| Source code (AGPL) | Always | Opens the source repository |
+| Quit | Always | Set `isQuitting = true`, `app.quit()` |
+
+The renderer (`hooks/useTrayBridge.ts`, mounted by `NotificationController`) reports the context over `set-tray-context` whenever it changes; main validates it with `parseTrayContext` (a malformed one is dropped and the last good one stays) and rebuilds the tray and app menus. A clicked control goes back over `tray-action`; the renderer runs it through the same functions as the voice bar and the status picker, so space mute/deafen enforcement and federation (the status lands on the account that owns it) apply unchanged.
 
 Tray click toggles window visibility (show/hide).
 
@@ -935,7 +952,9 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 | `show-notification` | R->M | `{ title, body, options?: { channelId?, spaceId?, userId? } }` | Show native notification with optional chat target |
 | `notification-click` | M->R | `{ channelId?, spaceId?, userId? }` | Open the notification's chat in the originating session |
 | `set-badge-count` | R->M | `number` | Set dock/taskbar badge |
-| `set-tray-state` | R->M | `'idle' \| 'notify' \| 'screen' \| 'dnd' \| 'offline'` | Show the character in the tray in that state (unknown values ignored) |
+| `set-tray-state` | R->M | One of `TRAY_STATES` | Play the character's animation for that state in the tray (unknown values ignored) |
+| `set-tray-context` | R->M | `TrayContext` (`signedIn`, `voice: {channelName} \| null`, `muted`, `deafened`, `status`) | The tray menu's quick controls; validated by `parseTrayContext` |
+| `tray-action` | M->R | `TrayAction` (`toggleMute`, `toggleDeafen`, `disconnect`, `setStatus`) | A quick control clicked in the tray menu |
 | `minimize-window` | R->M | — | Minimize window |
 | `maximize-window` | R->M | — | Toggle maximize/unmaximize |
 | `close-window` | R->M | — | Close (hides to tray) |

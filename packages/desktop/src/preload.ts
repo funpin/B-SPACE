@@ -26,10 +26,21 @@ contextBridge.exposeInMainWorld('backspace', {
   setBadgeCount: (count: number) => {
     ipcRenderer.send('set-badge-count', count);
   },
-  // The character in the tray: 'idle' | 'notify' | 'screen' | 'dnd' | 'offline'.
+  // The character in the tray, one of TRAY_STATES in trayState.ts.
   // Older desktop builds lack it, so the web client calls it optionally.
   setTrayState: (state: string) => {
     ipcRenderer.send('set-tray-state', state);
+  },
+  // The quick controls in the tray menu (trayContext.ts): voice, mute,
+  // deafen, status. The main process validates the shape.
+  setTrayContext: (context: unknown) => {
+    ipcRenderer.send('set-tray-context', context);
+  },
+  // A quick control was clicked in the tray menu; the renderer carries it out.
+  onTrayAction: (callback: (action: import('./trayContext').TrayAction) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, action: import('./trayContext').TrayAction) => callback(action);
+    ipcRenderer.on('tray-action', handler);
+    return () => { ipcRenderer.removeListener('tray-action', handler); };
   },
 
   // Auto-update, legacy per-event channels.
