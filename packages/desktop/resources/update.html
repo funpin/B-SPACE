@@ -122,6 +122,8 @@
           upToDateHint: 'B:SPACE {current} is up to date.',
           downloading: 'Downloading B:SPACE {version}',
           downloadingHint: 'You can close this window, the download carries on.',
+          preparing: 'Preparing B:SPACE {version} to install…',
+          preparingHint: 'macOS is checking the update. The Restart button appears in a minute.',
           speed: '{speed} MB/s',
           ready: 'B:SPACE {version} is ready',
           readyHint: 'Restart the app to install it. It takes a few seconds.',
@@ -146,6 +148,8 @@
           upToDateHint: 'B:SPACE {current} — самая новая.',
           downloading: 'Загружается B:SPACE {version}',
           downloadingHint: 'Окно можно закрыть — загрузка продолжится.',
+          preparing: 'Готовим B:SPACE {version} к установке…',
+          preparingHint: 'macOS проверяет обновление. Кнопка «Перезапустить» появится примерно через минуту.',
           speed: '{speed} МБ/с',
           ready: 'B:SPACE {version} готова к установке',
           readyHint: 'Перезапустите приложение, чтобы установить обновление. Это займёт несколько секунд.',
@@ -170,6 +174,8 @@
           upToDateHint: 'B:SPACE {current} ist aktuell.',
           downloading: 'B:SPACE {version} wird heruntergeladen',
           downloadingHint: 'Du kannst das Fenster schließen, der Download läuft weiter.',
+          preparing: 'B:SPACE {version} wird zur Installation vorbereitet…',
+          preparingHint: 'macOS prüft das Update. Der Neustart-Knopf erscheint in etwa einer Minute.',
           speed: '{speed} MB/s',
           ready: 'B:SPACE {version} ist bereit',
           readyHint: 'Starte die App neu, um das Update zu installieren. Das dauert nur ein paar Sekunden.',
@@ -194,6 +200,8 @@
           upToDateHint: 'O B:SPACE {current} está atualizado.',
           downloading: 'Baixando o B:SPACE {version}',
           downloadingHint: 'Pode fechar esta janela, o download continua.',
+          preparing: 'Preparando o B:SPACE {version} para instalar…',
+          preparingHint: 'O macOS está verificando a atualização. O botão Reiniciar aparece em cerca de um minuto.',
           speed: '{speed} MB/s',
           ready: 'O B:SPACE {version} está pronto',
           readyHint: 'Reinicie o app para instalar. Leva poucos segundos.',
@@ -218,6 +226,8 @@
           upToDateHint: 'B:SPACE {current} 已是最新。',
           downloading: '正在下载 B:SPACE {version}',
           downloadingHint: '可以关闭此窗口，下载会继续。',
+          preparing: '正在准备安装 B:SPACE {version}…',
+          preparingHint: 'macOS 正在检查更新，约一分钟后会出现“重启”按钮。',
           speed: '{speed} MB/s',
           ready: 'B:SPACE {version} 已就绪',
           readyHint: '重启应用即可安装，只需几秒钟。',
@@ -319,6 +329,14 @@
             buttons(close, null);
             return;
           case 'downloading':
+            if (status.percent >= 100) {
+              // Downloaded; Squirrel.Mac still unpacks and verifies it.
+              mascot('look');
+              text(t('preparing', { version: status.version }), t('preparingHint'));
+              progress('indeterminate');
+              buttons(null, close);
+              return;
+            }
             mascot('idle');
             text(t('downloading', { version: status.version }), t('downloadingHint'));
             progress(

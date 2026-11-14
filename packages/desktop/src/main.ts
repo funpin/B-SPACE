@@ -11,6 +11,7 @@ import {
   session,
   desktopCapturer,
   systemPreferences,
+  autoUpdater as nativeAutoUpdater,
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -32,6 +33,7 @@ import { createSystemAudioController, withSystemAudioSource, type PatchBayModule
 import { loadDismissedVersion, setDismissedVersion } from './updateDismissal';
 import { purgeUpdaterCache } from './updaterCache';
 import { taskbarProgress, UpdateWindow } from './updateWindow';
+import { createUpdateReadyGate } from './updateReadyGate';
 import {
   UpdateStatusStore,
   RELEASES_URL,
@@ -1252,13 +1254,30 @@ function initAutoUpdater(): void {
       });
     });
 
-    autoUpdater.on('update-downloaded', (info: { version: string }) => {
-      const version = info.version.slice(0, 32);
-      pendingVersion = version;
+    // On macOS a finished download is not yet installable: Squirrel.Mac still
+    // fetches, unpacks and verifies it (updateReadyGate.ts). Restart is offered
+    // only when it is, so quitAndInstall() quits at once.
+    const readyGate = createUpdateReadyGate(process.platform, (version) => {
       recoveryStore.update({ updateState: 'downloaded', updateVersion: version });
       store.setStatus({ phase: 'ready', version });
       mainWindow?.webContents.send('update-downloaded', { version });
       notifyAboutUpdate(store.get(), autoUpdater);
+    });
+    if (process.platform === 'darwin') {
+      nativeAutoUpdater.on('update-downloaded', () => readyGate.staged());
+    }
+    autoUpdater.on('checking-for-update', () => readyGate.reset());
+
+    autoUpdater.on('update-downloaded', (info: { version: string }) => {
+      const version = info.version.slice(0, 32);
+      pendingVersion = version;
+      readyGate.downloaded(version);
+      if (readyGate.preparing) {
+        // Downloaded, being prepared: the download stays on screen at 100 %
+        // (the update window says "Preparing to install").
+        recoveryStore.update({ updateState: 'downloading', updateVersion: version });
+        store.setStatus({ phase: 'downloading', version, percent: 100, bytesPerSecond: 0 });
+      }
     });
 
     autoUpdater.on('error', (err: unknown) => {
@@ -1673,11 +1692,27 @@ if (!gotTheLock) {
     }
   });
 
-  app.on('before-quit', () => {
+  // Everything that has to happen before the windows close on the way out.
+  const prepareToQuit = (): void => {
     systemAudio.stop();
     pointerOverlay?.dispose();
     isQuitting = true;
     stopActivityDetection();
     keybindManager.stop();
-  });
+  };
+
+  app.on('before-quit', prepareToQuit);
+
+  // `autoUpdater.quitAndInstall()` closes every window first and calls
+  // `app.quit()` only once they are all closed; `before-quit` comes after
+  // that, too late. Without this the main window's 'close' handler still sees
+  // isQuitting = false, hides the window to the tray instead of closing it,
+  // `app.quit()` never runs, and Squirrel.Mac's ShipIt waits for a process
+  // that never exits: the Restart button "did nothing" and the update was
+  // installed only when the user quit by hand. Native autoUpdater only
+  // exists on macOS and Windows; electron-updater's NSIS path on Windows
+  // calls app.quit() itself, which is covered by `before-quit` as well.
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    nativeAutoUpdater.on('before-quit-for-update', prepareToQuit);
+  }
 }
