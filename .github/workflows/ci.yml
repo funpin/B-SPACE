@@ -14,11 +14,14 @@ on:
 permissions:
   contents: read
 
-# A newer commit on the same branch/PR supersedes in-flight runs — cancel the
-# stale one so a rapid push sequence doesn't queue redundant CI.
+# On a pull request a newer push supersedes the in-flight run: cancel the stale
+# one so a rapid push sequence doesn't queue redundant CI. On main every commit
+# is a merge that deserves its own verdict, so each push gets its own group and
+# nothing is cancelled. (Cancelling there left the earlier of two quick merges
+# with a red "Build & test" that said nothing about its code.)
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -187,11 +190,13 @@ jobs:
   # Branch protection on main requires the "Build & test" context, but the matrix
   # job above reports per-version contexts ("Build & test (Node 22/24)"). This job
   # keeps the stable required context alive and fails unless every matrix leg
-  # succeeded (if: always() so a matrix failure still reports a definitive result
-  # instead of leaving the required check pending forever).
+  # succeeded (`!cancelled()` so a matrix failure still reports a definitive
+  # result instead of leaving the required check pending forever, while a run
+  # that was cancelled — superseded by a newer push — reports nothing rather
+  # than a failure it never had).
   build-and-test-required:
     name: Build & test
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [build-and-test, build-image, lint]
     runs-on: ubuntu-latest
     steps:
