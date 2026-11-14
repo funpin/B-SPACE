@@ -93,6 +93,13 @@ interface BackspaceElectronAPI {
   /** Absent on desktop builds older than the tray states. */
   setTrayState?: (state: import('../utils/trayState').TrayState) => void;
 
+  /**
+   * Viewers' pointers on this client's screen share, drawn by the desktop app
+   * over the shared display. Absent on desktop builds older than the overlay.
+   */
+  setStreamPointerOverlay?: (pointers: import('../utils/streamPointerOverlay').OverlayPointer[]) => void;
+  endStreamPointerOverlay?: () => void;
+
   // Auto-update, legacy per-event channels.
   //
   // Kept because the desktop app and the instance it connects to version

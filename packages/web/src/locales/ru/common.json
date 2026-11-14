@@ -42,7 +42,8 @@
     "previous": "Назад",
     "next": "Далее",
     "preview": "Предпросмотр",
-    "logIn": "Войти"
+    "logIn": "Войти",
+    "download": "Скачать"
   },
   "states": {
     "loading": "Загрузка…",

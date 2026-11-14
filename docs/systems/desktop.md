@@ -122,6 +122,15 @@ Dev-mode caveat: if a developer runs Electron pointed at the Vite dev server (`h
 
 ---
 
+## Stream pointer overlay (`src/pointerOverlay.ts`)
+
+Viewers' stream pointers (voice.md, *Stream pointer*) drawn over the sharer's real screen.
+
+- **Target.** Every grant in `setDisplayMediaRequestHandler` calls `trackSharedSource(source)`: `displayForSource` maps a `screen:` source to its `Display` by `display_id` (or the only display when the id is empty, as on the Wayland portal). A window source has no target — Electron cannot read another application's window bounds — so window shares get no overlay. The target follows `display-metrics-changed`; a removed display closes the overlay.
+- **Window.** Created on the first non-empty list: frameless, transparent, `focusable: false`, `skipTaskbar`, bounds of the target display, `setAlwaysOnTop(true, 'screen-saver')`, visible on all workspaces and over full-screen apps, `setIgnoreMouseEvents(true)` so clicks pass through, and `setContentProtection(true)` so it is left out of the capture — otherwise the share would carry a second, late copy of every pointer. Sandboxed, no preload, no Node; the page is a self-contained `data:` URL that refuses navigation and window opening. Shown inactive, hidden when the list is empty.
+- **IPC.** `stream-pointer-overlay` (renderer → main, the full list on every change) and `stream-pointer-overlay-end` (closes the window; the target display is kept so pointers switched back on during the same share return). Both accept only the main window's `webContents`. `sanitizeOverlayPointers` keeps at most 32 entries, requires an id and coordinates in 0..1, cuts names to 64 characters and replaces any colour that is not plain `rgb(…)`. Main draws by calling the page's `render(list)` with the validated list as JSON; names are set as text, never markup.
+- **Lifetime.** Closed when the main window closes (it would otherwise keep `window-all-closed` from firing) and disposed on `before-quit`.
+
 ## Instance Picker
 
 When no instance URL is configured, the app loads `resources/instance-picker.html` — a self-contained HTML page where the user enters their Backspace instance URL. The renderer communicates the chosen URL back via the `set-instance-url` IPC handler.
@@ -607,6 +616,8 @@ the summary paragraph directly under that heading before publishing. Flathub
 shows that paragraph, so write it as the store-facing summary of the release.
 
 CI publishes via `.github/workflows/release.yml` (tag `v*` on the public repo).
+
+Test builds without a release: `.github/workflows/desktop-test-build.yml` builds the same two installers with `--publish never` and keeps them as workflow artifacts for 7 days. It runs when a pull request carries the `desktop-build` label (and on every push to it while labelled), or by hand (`workflow_dispatch`, once the file is on `main`).
 A `create-release` job runs first and creates the draft for the tag, then four
 native build jobs fan out (mac arm64+x64, win x64+arm64, linux x64, linux
 arm64), each uploading its installers, `.blockmap`s, and platform `latest*.yml`
