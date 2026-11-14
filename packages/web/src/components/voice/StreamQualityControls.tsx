@@ -33,6 +33,7 @@ const MODES: { value: ScreenShareConfig['mode']; labelKey: 'voice:streamSettings
 ];
 
 const CODEC_OPTIONS = [
+  { value: 'auto' as const, labelKey: 'voice:streamSettings.codecOption.auto' as const },
   { value: 'vp9' as const, labelKey: 'voice:streamSettings.codecOption.vp9' as const },
   { value: 'h264' as const, labelKey: 'voice:streamSettings.codecOption.h264' as const },
 ];
@@ -229,6 +230,7 @@ export function StreamQualityControls() {
                 key={c.value}
                 onClick={() => setConfig({ codec: c.value })}
                 aria-pressed={isSelected}
+                title={c.value === 'auto' ? t('voice:streamSettings.codecHint') : undefined}
                 className={`${pillBase} ${isSelected ? pillSelected : pillUnselected}`}
               >
                 {t(c.labelKey)}

@@ -10,6 +10,7 @@ import {
   stageScreenCapture,
   stopScreenShare,
 } from './screenShare';
+import { resetSoftwareH264ForTest } from './screenShareCodec';
 
 const sdp = vi.hoisted(() => ({ activate: vi.fn(), deactivate: vi.fn() }));
 const internals = vi.hoisted(() => ({ getPublisherPC: vi.fn(), getMediaStreamTrack: vi.fn() }));
@@ -306,6 +307,50 @@ describe('screen-share media options', () => {
     expect(getPublishedScreenShareCodec()).toBe('vp9');
   });
 
+  it('switches an Auto share from software H264 to VP9 without a warning', async () => {
+    window.backspace = { platform: 'darwin' } as unknown as NonNullable<Window['backspace']>;
+    // jsdom has no MediaStream; the republish wraps the live tracks in one.
+    vi.stubGlobal('MediaStream', class {
+      constructor(private readonly tracks: unknown[]) {}
+      getVideoTracks() { return this.tracks.filter((t) => (t as { kind: string }).kind === 'video'); }
+      getAudioTracks() { return this.tracks.filter((t) => (t as { kind: string }).kind === 'audio'); }
+      getTracks() { return this.tracks; }
+    });
+    try {
+      useVoiceStore.getState().setScreenShareConfig({ codec: 'auto' });
+      const video = makeVideoTrack();
+      const room = fakeRoom();
+      attachPublishedSender(room, video, [
+        ['codec-h264', { id: 'codec-h264', type: 'codec', mimeType: 'video/H264' }],
+        ['outbound-h264', {
+          id: 'outbound-h264', type: 'outbound-rtp', kind: 'video', codecId: 'codec-h264',
+          bytesSent: 100, encoderImplementation: 'OpenH264',
+        }],
+      ]);
+      // What the republish reads back: the live publication and the data channel for the swap signal.
+      room.localParticipant.getTrackPublication.mockImplementation((source: Track.Source) => (
+        source === Track.Source.ScreenShare ? { source, track: { mediaStreamTrack: video } } : undefined
+      ));
+      room.localParticipant.publishData = vi.fn().mockResolvedValue(undefined);
+      const addToast = vi.spyOn(useUIStore.getState(), 'addToast');
+
+      await publishScreenShare(room, makeStream(video));
+      expect(room.localParticipant.publishTrack.mock.calls[0]![1]).toMatchObject({ videoCodec: 'h264' });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const codecs = room.localParticipant.publishTrack.mock.calls
+        .map(([, options]) => (options as { videoCodec?: string } | undefined)?.videoCodec)
+        .filter(Boolean);
+      expect(codecs).toEqual(['h264', 'vp9']);
+      expect(addToast).not.toHaveBeenCalledWith(i18n.t('voice:streamSettings.softwareH264Fallback'), 'warning', 8000);
+    } finally {
+      delete window.backspace;
+      vi.unstubAllGlobals();
+      resetSoftwareH264ForTest();
+    }
+  });
+
   it('warns with localized copy when H264 falls back to OpenH264 software encoding', async () => {
     useVoiceStore.getState().setScreenShareConfig({ codec: 'h264' });
     const video = makeVideoTrack();
@@ -335,7 +380,7 @@ describe('screen-share media options', () => {
     );
   });
 
-  it('migrates older saved settings to VP9 once and persists subsequent choices', async () => {
+  it('migrates older saved settings to Auto once and persists subsequent choices', async () => {
     localStorage.setItem('backspace-voice-settings', JSON.stringify({
       version: 13,
       state: {
@@ -350,9 +395,28 @@ describe('screen-share media options', () => {
     }));
 
     await useVoiceStore.persist.rehydrate();
-    expect(useVoiceStore.getState().screenShareConfig.codec).toBe('vp9');
+    expect(useVoiceStore.getState().screenShareConfig.codec).toBe('auto');
 
     useVoiceStore.getState().setScreenShareConfig({ codec: 'h264' });
+    await useVoiceStore.persist.rehydrate();
+    expect(useVoiceStore.getState().screenShareConfig.codec).toBe('h264');
+
+    // VP9 picked by hand after the migration is a real choice and stays.
+    useVoiceStore.getState().setScreenShareConfig({ codec: 'vp9' });
+    await useVoiceStore.persist.rehydrate();
+    expect(useVoiceStore.getState().screenShareConfig.codec).toBe('vp9');
+  });
+
+  it('turns the VP9 that version 14 wrote for everyone into Auto, and keeps a hand-picked H264', async () => {
+    const saved = (codec: string) => JSON.stringify({
+      version: 14,
+      state: { screenShareConfig: { height: 1080, fps: 60, mode: 'gaming', customBitrateKbps: null, shareAudio: false, codec } },
+    });
+    localStorage.setItem('backspace-voice-settings', saved('vp9'));
+    await useVoiceStore.persist.rehydrate();
+    expect(useVoiceStore.getState().screenShareConfig.codec).toBe('auto');
+
+    localStorage.setItem('backspace-voice-settings', saved('h264'));
     await useVoiceStore.persist.rehydrate();
     expect(useVoiceStore.getState().screenShareConfig.codec).toBe('h264');
   });

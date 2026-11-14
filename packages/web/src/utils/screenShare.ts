@@ -12,6 +12,7 @@ import i18n from '../i18n';
 import { isElectron, getElectronAPI } from '../platform/platform';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import { startKeyframeWatchdog } from './keyframeWatchdog';
+import { isSoftwareH264Encoder, noteSoftwareH264, resolveScreenShareCodec, type ScreenShareCodec } from './screenShareCodec';
 import type { InstanceStreamingLimits } from '@backspace/shared';
 import {
   STANDARD_RESOLUTIONS, STANDARD_FRAMERATES, WIDTH_MAP,
@@ -32,7 +33,7 @@ export interface OverdriveOptions {
 export interface ScreenShareBuildResult {
   capture: { width: number; height: number; frameRate: number };
   publish: {
-    videoCodec: 'vp9' | 'h264';
+    videoCodec: ScreenShareCodec;
     videoEncoding: { maxBitrate: number; maxFramerate: number };
     simulcast: false;
     backupCodec?: { codec: 'vp8' | 'h264'; encoding: { maxBitrate: number; maxFramerate: number } };
@@ -196,7 +197,7 @@ export function buildScreenShareOptions(savedConfig: ScreenShareConfig): ScreenS
   return {
     capture: { width: captureWidth, height: captureHeight, frameRate: fps },
     publish: {
-      videoCodec: config.codec,
+      videoCodec: resolveScreenShareCodec(config.codec),
       videoEncoding: { maxBitrate: bps, maxFramerate: fps },
       simulcast: false,
       backupCodec: {
@@ -468,7 +469,7 @@ export async function publishScreenShare(
 ): Promise<boolean> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
-  const needsH264SdpPatch = config.codec === 'h264';
+  const needsH264SdpPatch = opts.publish.videoCodec === 'h264';
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack || videoTrack.readyState !== 'live') return false;
   const capturedAudio = stream.getAudioTracks().find((t) => t.readyState === 'live') ?? null;
@@ -512,7 +513,7 @@ export async function publishScreenShare(
       screenShareAudio: audioToPublish ? 'published' : idleScreenShareAudioState(),
     });
     scheduleScreenShareOverdrive(room);
-    scheduleEncoderDetection(room, config.codec, videoTrack.id);
+    scheduleEncoderDetection(room, opts.publish.videoCodec, config.codec === 'auto', videoTrack.id);
     watchKeyframes(room, videoTrack.id);
     return true;
   } catch (err) {
@@ -972,7 +973,8 @@ function normalizeVideoCodec(value: string | undefined): 'vp9' | 'h264' | 'vp8' 
 
 async function inspectPublishedEncoder(
   room: Room,
-  requestedCodec: 'vp9' | 'h264',
+  requestedCodec: ScreenShareCodec,
+  autoCodec: boolean,
   expectedTrackId: string,
 ): Promise<boolean> {
   if (!useVoiceStore.getState().isScreenSharing) return true;
@@ -1022,7 +1024,17 @@ async function inspectPublishedEncoder(
     .filter((entry) => entry.codec === 'h264')
     .map((entry) => entry.encoderImpl)
     .filter((value): value is string => value != null);
-  if (requestedCodec === 'h264' && h264Implementations.some((value) => /openh264/i.test(value))) {
+  if (requestedCodec === 'h264' && h264Implementations.some((value) => isSoftwareH264Encoder(value))) {
+    if (autoCodec) {
+      // Auto chose H264 expecting a hardware encoder and got OpenH264: VP9 is
+      // what this machine should send, and nobody asked for H264 by name, so
+      // the switch is silent. The same track is republished (no new capture).
+      noteSoftwareH264();
+      void republishScreenShare(room).catch((err) => {
+        console.error('[ScreenShare] Could not switch the share to VP9:', err);
+      });
+      return true;
+    }
     useUIStore.getState().addToast(
       i18n.t('voice:streamSettings.softwareH264Fallback'),
       'warning',
@@ -1042,14 +1054,15 @@ const ENCODER_DETECTION_OFFSETS_MS = [0, 1000, 4000, 8000] as const;
 
 function scheduleEncoderDetection(
   room: Room,
-  requestedCodec: 'vp9' | 'h264',
+  requestedCodec: ScreenShareCodec,
+  autoCodec: boolean,
   expectedTrackId: string,
 ): void {
   const startedAt = Date.now();
   let attemptIndex = 0;
   const inspect = async (): Promise<void> => {
     try {
-      if (await inspectPublishedEncoder(room, requestedCodec, expectedTrackId)) return;
+      if (await inspectPublishedEncoder(room, requestedCodec, autoCodec, expectedTrackId)) return;
     } catch {
       // Non-critical — the connection inspector still exposes available stats.
     }

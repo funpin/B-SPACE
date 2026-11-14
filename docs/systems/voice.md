@@ -373,14 +373,14 @@ ScreenShareConfig {
   mode: 'gaming' | 'text',         // Content hint and degradation priority
   customBitrateKbps: number | null, // Admin override (if allowed)
   shareAudio: boolean,              // System audio loopback (see Platform Support below)
-  codec: 'vp9' | 'h264'             // Persisted codec preference
+  codec: 'auto' | 'vp9' | 'h264'    // Persisted codec choice; 'auto' is the default (see below)
 }
 ```
 
 ### Build Pipeline (`buildScreenShareOptions()`)
 1. Resolve bitrate from matrix (custom > override > default > native estimate)
 2. Clamp to instance limits (minBitrateKbps, maxBitrateKbps)
-3. Select the persisted codec: VP9 (default) or H.264
+3. Resolve the codec: an explicit VP9 or H.264 as chosen, Auto through `resolveScreenShareCodec()` (below)
 4. Configure a VP8 simulcast backup at reduced framerate/bitrate; room dynacast pauses it when no subscriber needs it
 5. Content hint: `'detail'` (text) or `'motion'` (gaming)
 6. Degradation preference: preserve resolution for text, balanced for gaming
@@ -389,6 +389,20 @@ ScreenShareConfig {
 - Captures at display's full resolution
 - Snaps to nearest known tier for bitrate lookup
 - Scales proportionally: `baseKbps * (capturedPixels / knownPixels) * (fps / knownFps)`
+
+### Codec choice: Auto (`utils/screenShareCodec.ts`)
+
+Auto, the default, sends the codec this machine encodes in hardware. VP9 has no hardware encoder on Macs and on most Windows GPUs, so Chromium encodes it with libvpx; H.264 goes to VideoToolbox / Media Foundation there. Measured on an Apple Silicon Mac sharing 2216×1438 at ~50 fps while watching a 1440p stream: VP9/libvpx 38–85 % renderer CPU and ~385 MB, H.264/VideoToolbox ~25 % and ~134 MB; GPU process 20 % → 11 %.
+
+| Platform (`detectCodecPlatform`: desktop bridge first, then UA data / platform / UA) | Auto sends |
+|---|---|
+| macOS, Windows, iOS, Android | H.264 |
+| Linux, other | VP9 (what every share used before Auto) |
+| any, after H.264 was seen in software this session | VP9 |
+
+`navigator.mediaCapabilities.encodingInfo({ type: 'webrtc' })` is deliberately not used: on the measured Mac it answered `powerEfficient: false` for H.264 while WebRTC stats reported `encoderImplementation: VideoToolbox`, `powerEfficientEncoder: true`. The stats are the truth instead: when the encoder check after publishing (`inspectPublishedEncoder`) sees OpenH264 under Auto, it records it for the session (`noteSoftwareH264`, sessionStorage) and republishes the same track as VP9, with no toast. An explicit H.264 keeps the OpenH264 warning toast. The connection inspector shows Auto's result as e.g. "H264 (Auto)".
+
+Persist migration v15: version 14 wrote `codec: 'vp9'` into every saved config, so a saved VP9 becomes `'auto'`; a saved H.264 was picked by hand and stays.
 
 ### Codec and sender parameters
 - H.264 uses an SDP profile override only during its publish negotiation; the

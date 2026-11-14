@@ -5,6 +5,7 @@ import { AudioManager } from '../audio/AudioManager';
 import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin } from './spaceStore';
 import { useAuthStore } from './authStore';
 import { isElectron } from '../platform/platform';
+import type { ScreenShareCodecChoice } from '../utils/screenShareCodec';
 
 export interface ScreenShareConfig {
   height: number | 'native';
@@ -12,7 +13,8 @@ export interface ScreenShareConfig {
   mode: 'gaming' | 'text';
   customBitrateKbps: number | null;
   shareAudio: boolean;
-  codec: 'vp9' | 'h264';
+  /** Auto picks the codec this machine encodes in hardware (utils/screenShareCodec.ts). */
+  codec: ScreenShareCodecChoice;
 }
 
 /**
@@ -331,7 +333,7 @@ export const useVoiceStore = create<VoiceState>()(
       outputDeviceId: 'default',
       cameraDeviceId: null,
       focusedParticipantId: null,
-      screenShareConfig: { height: 720, fps: 60, mode: 'gaming', customBitrateKbps: null, shareAudio: !isElectron(), codec: 'vp9' },
+      screenShareConfig: { height: 720, fps: 60, mode: 'gaming', customBitrateKbps: null, shareAudio: !isElectron(), codec: 'auto' },
       lastScreenShareSourceId: null,
       participantVolumes: new Map(),
       setParticipantVolume: (userId, volume) => {
@@ -940,7 +942,7 @@ export const useVoiceStore = create<VoiceState>()(
     }),
     {
       name: 'backspace-voice-settings',
-      version: 14,
+      version: 15,
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
           persistedState.streamAttenuationEnabled = false;
@@ -1007,6 +1009,15 @@ export const useVoiceStore = create<VoiceState>()(
           // spread replaces the defaults wholesale rather than filling them in.
           if (persistedState.screenShareConfig) {
             persistedState.screenShareConfig.codec = 'vp9';
+          }
+        }
+        if (version < 15) {
+          // Version 14 wrote VP9 into every saved config, so a saved VP9 is
+          // not evidence that anyone chose it. It becomes Auto, which keeps
+          // VP9 where there is no hardware H264 encoder and spares the CPU
+          // where there is. A saved H264 was chosen by hand and stays.
+          if (persistedState.screenShareConfig && persistedState.screenShareConfig.codec !== 'h264') {
+            persistedState.screenShareConfig.codec = 'auto';
           }
         }
         return persistedState;
