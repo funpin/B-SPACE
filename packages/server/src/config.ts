@@ -90,7 +90,7 @@ if (publicOrigin !== undefined) {
 // Operators who modify Backspace and self-host MUST point this at their own
 // fork's source so the offer stays accurate. This build is the funpin fork, so
 // the default is the fork's repository, not the upstream project's.
-const PROJECT_SOURCE_URL = 'https://github.com/funpin/backspace';
+const PROJECT_SOURCE_URL = 'https://github.com/funpin/B-SPACE';
 const sourceCodeUrl = envOptional('BACKSPACE_SOURCE_URL') ?? PROJECT_SOURCE_URL;
 if (!/^https?:\/\//i.test(sourceCodeUrl)) {
   throw new Error(

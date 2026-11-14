@@ -166,7 +166,7 @@ describe('buildTrayMenuTemplate', () => {
   it('includes Show/Hide/Change Instance/Quit base items', () => {
     const items = buildTrayMenuTemplate(defaultState());
     const labels = items.map((i) => i.label);
-    expect(labels).toContain('Show Backspace');
+    expect(labels).toContain('Show B:SPACE');
     expect(labels).toContain('Hide');
     expect(labels).toContain('Change Instance');
     expect(labels).toContain('Quit');
@@ -231,16 +231,16 @@ describe('buildTrayMenuTemplate', () => {
 
 describe('buildAppMenuTemplate', () => {
   it('returns top-level menu with App, Edit, Window submenus', () => {
-    const template = buildAppMenuTemplate('Backspace', defaultState());
+    const template = buildAppMenuTemplate('B:SPACE', defaultState());
     const [appMenu, editMenu, windowMenu] = template;
     expect(template.length).toBeGreaterThanOrEqual(3);
-    expect(appMenu!.label).toBe('Backspace');
+    expect(appMenu!.label).toBe('B:SPACE');
     expect(editMenu!.label).toBe('Edit');
     expect(windowMenu!.label).toBe('Window');
   });
 
   it('App submenu includes About and Change Instance', () => {
-    const template = buildAppMenuTemplate('Backspace', defaultState());
+    const template = buildAppMenuTemplate('B:SPACE', defaultState());
     const [appMenu] = template;
     const appSub = appMenu!.submenu as MenuItemConstructorOptions[];
     const labels = appSub.map((i) => i.label).filter(Boolean);
@@ -250,7 +250,7 @@ describe('buildAppMenuTemplate', () => {
   });
 
   it('App submenu includes Check for Updates with state-correct label', () => {
-    const template = buildAppMenuTemplate('Backspace', defaultState({ updateState: 'idle' }));
+    const template = buildAppMenuTemplate('B:SPACE', defaultState({ updateState: 'idle' }));
     const [appMenu] = template;
     const appSub = appMenu!.submenu as MenuItemConstructorOptions[];
     const item = appSub.find((i) => i.id === 'check-for-updates');
@@ -259,11 +259,11 @@ describe('buildAppMenuTemplate', () => {
   });
 
   it('App submenu inserts Restart to Install Update only when downloaded', () => {
-    const [idleAppMenu] = buildAppMenuTemplate('Backspace', defaultState({ updateState: 'idle' }));
+    const [idleAppMenu] = buildAppMenuTemplate('B:SPACE', defaultState({ updateState: 'idle' }));
     const idleSub = idleAppMenu!.submenu as MenuItemConstructorOptions[];
     expect(idleSub.find((i) => i.id === 'restart-to-install')).toBeUndefined();
 
-    const [dlAppMenu] = buildAppMenuTemplate('Backspace', defaultState({ updateState: 'downloaded' }));
+    const [dlAppMenu] = buildAppMenuTemplate('B:SPACE', defaultState({ updateState: 'downloaded' }));
     const dlSub = dlAppMenu!.submenu as MenuItemConstructorOptions[];
     const restartItem = dlSub.find((i) => i.id === 'restart-to-install');
     expect(restartItem).toBeDefined();
@@ -271,7 +271,7 @@ describe('buildAppMenuTemplate', () => {
   });
 
   it('App submenu omits updater actions when updates are managed externally', () => {
-    const [appMenu] = buildAppMenuTemplate('Backspace', defaultState({ updateState: 'external' }));
+    const [appMenu] = buildAppMenuTemplate('B:SPACE', defaultState({ updateState: 'external' }));
     const appSub = appMenu!.submenu as MenuItemConstructorOptions[];
     expect(appSub.find((i) => i.id === 'check-for-updates')).toBeUndefined();
     expect(appSub.find((i) => i.id === 'restart-to-install')).toBeUndefined();
@@ -368,7 +368,7 @@ describe('manual-download update state in the menus', () => {
     expect(ids).toContain('download-update');
     expect(ids).not.toContain('restart-to-install');
     expect(items.find((i) => i.id === 'download-update')!.label)
-      .toBe('Download Backspace 1.0.4…');
+      .toBe('Download B:SPACE 1.0.4…');
   });
 
   it('falls back to an unversioned label when no version is known', () => {
@@ -398,7 +398,7 @@ describe('manual-download update state in the menus', () => {
 
   it('applies the same treatment to the macOS app menu', () => {
     const template = buildAppMenuTemplate(
-      'Backspace',
+      'B:SPACE',
       defaultState({ updateState: 'available-manual', updateVersion: '1.0.4' }),
     );
     const appSubmenu = template[0]!.submenu as Array<{ id?: string; label?: string }>;

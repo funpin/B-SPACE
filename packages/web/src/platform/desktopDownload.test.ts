@@ -3,6 +3,7 @@ import {
   detectDesktopPlatform,
   buildDesktopDownloads,
   RELEASES_URL,
+  releaseAssetPrefix,
   type DetectedPlatform,
   type NavigatorLike,
 } from './desktopDownload';
@@ -248,5 +249,21 @@ describe('buildDesktopDownloads', () => {
     for (const download of links.others) {
       expect(download.url).toBe(RELEASES_URL);
     }
+  });
+});
+
+describe('releaseAssetPrefix', () => {
+  it('names assets Backspace before 2.3.0 and B-SPACE from 2.3.0 on', () => {
+    expect(releaseAssetPrefix('1.2.1')).toBe('Backspace');
+    expect(releaseAssetPrefix('1.11.0-f.1.1')).toBe('Backspace');
+    expect(releaseAssetPrefix('2.2.9')).toBe('Backspace');
+    expect(releaseAssetPrefix('2.3.0')).toBe('B-SPACE');
+    expect(releaseAssetPrefix('2.10.0')).toBe('B-SPACE');
+    expect(releaseAssetPrefix('3.0.0')).toBe('B-SPACE');
+  });
+
+  it('links a B-SPACE build for an instance on 2.3.0', () => {
+    const links = buildDesktopDownloads('2.3.0', { os: 'mac', arch: 'arm64' });
+    expect(links.primary?.filename).toBe('B-SPACE-2.3.0-mac-arm64.dmg');
   });
 });

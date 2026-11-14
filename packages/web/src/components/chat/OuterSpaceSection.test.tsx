@@ -122,7 +122,7 @@ describe('OuterSpaceSection', () => {
   it('renders the header and fetches the query on mount', () => {
     renderSection('nebula');
     expect(screen.getByText('Outer Space')).toBeInTheDocument();
-    expect(screen.getByText('Communities across Backspace')).toBeInTheDocument();
+    expect(screen.getByText('Communities across B:SPACE')).toBeInTheDocument();
     expect(fetchDirectory).toHaveBeenCalledTimes(1);
     expect(fetchDirectory).toHaveBeenCalledWith('nebula');
   });

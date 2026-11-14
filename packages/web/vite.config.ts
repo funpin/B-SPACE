@@ -18,8 +18,8 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['icons/favicon-32.png', 'icons/favicon-16.png', 'icons/apple-touch-icon.png'],
       manifest: {
-        name: 'Backspace',
-        short_name: 'Backspace',
+        name: 'B:SPACE',
+        short_name: 'B:SPACE',
         description: 'The self-hosted Discord and TeamSpeak alternative. HD voice, video, and screen share — open source and free (AGPL-3.0).',
         display: 'standalone',
         start_url: '/',

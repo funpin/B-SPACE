@@ -51,11 +51,11 @@ jobs:
         # exactly as before while this job reported success. Look first, create
         # only on a confirmed absence, and let anything else fail the job.
         #
-        # The title matches every release shipped so far ("Backspace 1.0.3").
+        # The title is "B:SPACE X.Y.Z" (releases before 2.3.0 said "Backspace").
         # electron-builder would name the draft after the bare version instead,
         # because `releaseInfo.releaseName` is not set in electron-builder.yml.
         #
-        # The body starts as a "# Backspace X.Y.Z" heading followed by a
+        # The body starts as a "# B:SPACE X.Y.Z" heading followed by a
         # download table: two badges, Windows x64 and macOS Apple Silicon, the
         # only builds this fork ships, then the install notes. It is written
         # before any asset exists (the draft is not visible until published)
@@ -88,14 +88,14 @@ jobs:
           badge() { printf '[![%s](https://img.shields.io/badge/%s?style=for-the-badge&logo=%s&logoColor=white)](%s/%s)' "$1" "$2" "$3" "$base" "$4"; }
           notes="$(mktemp)"
           {
-            echo "# Backspace $version"
+            echo "# B:SPACE $version"
             echo
             echo "### Скачать"
             echo
             echo "| ОС | Файл |"
             echo "|---|---|"
-            echo "| **Windows 10/11** | $(badge "Setup x64" "Setup-x64-2B6CB0" windows "Backspace-$version-win-x64.exe") |"
-            echo "| **macOS 12+** | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-111111" apple "Backspace-$version-mac-arm64.dmg") |"
+            echo "| **Windows 10/11** | $(badge "Setup x64" "Setup-x64-2B6CB0" windows "B-SPACE-$version-win-x64.exe") |"
+            echo "| **macOS 12+** | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-111111" apple "B-SPACE-$version-mac-arm64.dmg") |"
             echo
             echo "Файлы \`.blockmap\` и \`.yml\` читает автообновление, скачивать их вручную не нужно."
             echo
@@ -105,10 +105,10 @@ jobs:
             echo
             echo "**Windows.** Запустите установщик и следуйте шагам. Новую версию ставьте поверх старой: настройки и вход сохраняются. Если SmartScreen предупредит о неизвестном издателе: «Подробнее» → «Выполнить в любом случае»."
             echo
-            echo "**macOS (Apple Silicon).** Откройте DMG и перетащите Backspace в «Программы» (при обновлении — «Заменить»). Приложение не подписано сертификатом Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Если macOS пишет, что приложение повреждено, выполните в Терминале:"
+            echo "**macOS (Apple Silicon).** Откройте DMG и перетащите B-SPACE в «Программы» (при обновлении — «Заменить»; старый Backspace из «Программ» после первого перехода на B-SPACE можно удалить). Приложение не подписано сертификатом Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Если macOS пишет, что приложение повреждено, выполните в Терминале:"
             echo
             echo '```bash'
-            echo 'xattr -dr com.apple.quarantine "/Applications/Backspace.app"'
+            echo 'xattr -dr com.apple.quarantine "/Applications/B-SPACE.app"'
             echo '```'
             echo
             echo "Это форк [TheZwiss/backspace](https://github.com/TheZwiss/backspace). Лицензия — AGPL-3.0."
@@ -117,7 +117,7 @@ jobs:
           echo "No release carries $TAG yet — creating the draft."
           gh release create "$TAG" \
             --draft \
-            --title "Backspace $version" \
+            --title "B:SPACE $version" \
             --notes-file "$notes"
 
   build:
@@ -255,12 +255,12 @@ jobs:
           case "$RUNNER_OS" in
             macOS)
               artifacts=(
-                "dist-electron/mac-arm64/Backspace.app"
+                "dist-electron/mac-arm64/B-SPACE.app"
               )
               ;;
             Windows)
               artifacts=(
-                "dist-electron/win-unpacked/Backspace.exe"
+                "dist-electron/win-unpacked/B-SPACE.exe"
               )
               ;;
             Linux)
@@ -271,9 +271,9 @@ jobs:
               # linux.executableName explicitly. Keep this path in step with
               # packages/desktop/electron-builder.yml; nothing else couples them.
               if [ "$RUNNER_ARCH" = "ARM64" ]; then
-                artifacts=("dist-electron/linux-arm64-unpacked/Backspace")
+                artifacts=("dist-electron/linux-arm64-unpacked/B-SPACE")
               else
-                artifacts=("dist-electron/linux-unpacked/Backspace")
+                artifacts=("dist-electron/linux-unpacked/B-SPACE")
               fi
               ;;
             *)

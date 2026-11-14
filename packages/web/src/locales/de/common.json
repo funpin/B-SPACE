@@ -1,5 +1,5 @@
 {
-  "appName": "Backspace",
+  "appName": "B:SPACE",
   "actions": {
     "save": "Speichern",
     "cancel": "Abbrechen",
@@ -120,7 +120,7 @@
     "details": "Fehlerdetails"
   },
   "app": {
-    "loading": "Backspace wird geladen"
+    "loading": "B:SPACE wird geladen"
   },
   "chrome": {
     "toggleMemberList": "Mitgliederliste ein- oder ausblenden",

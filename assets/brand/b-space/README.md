@@ -86,6 +86,13 @@
 
 - **README на GitHub** (`README.md`, `README.en.md`): шапка с горизонтальным логотипом (`<picture>`: `png/lockup-128.png` для тёмной темы, `png/lockup-on-light-128.png` для светлой) и раздел о персонаже с `animated/states-row.svg` и `animated/<state>.svg`.
 
-## Что осталось
+## Название в сборках
 
-- Переименование Backspace → B:SPACE в текстах (5 языков), `productName` в `electron-builder.yml`, заголовках окон и подсказке трея — отдельная задача. `appId` (`com.backspace.desktop`) менять нельзя: от него зависит автообновление уже установленных копий. От `productName` зависит папка с данными пользователя (`~/Library/Application Support/Backspace`, `%APPDATA%\Backspace`): при переименовании нужно сохранить старое имя папки через `app.setPath('userData', …)`, иначе пользователи потеряют вход и настройки.
+Переименование сделано: тексты интерфейса на пяти языках, заголовок окна, подсказка трея, меню и About показывают «B:SPACE». В имени файла двоеточие невозможно (Finder показывает его как «/»), поэтому файлы и бандлы называются `B-SPACE` (`productName`): `B-SPACE.app`, `B-SPACE-2.3.0-mac-arm64.dmg`, `B-SPACE-2.3.0-win-x64.exe`. Все три написания собраны в `packages/desktop/src/appIdentity.ts`.
+
+Что осталось «Backspace» и почему:
+
+- `appId` `com.backspace.desktop` — по нему автообновление находит установленные копии, macOS хранит выданные разрешения, а Windows — запись об удалении.
+- Папка данных `~/Library/Application Support/Backspace`, `%APPDATA%\Backspace` — там вход и настройки; путь закреплён через `app.setPath('userData', …)`.
+- Имя записи автозапуска в Windows — иначе появилась бы вторая запись и приложение запускалось бы дважды. Путь в ней обновляется при запуске, если exe переименован.
+- Идентификаторы в коде, пакеты `@backspace/*`, Docker-образ и схема ссылок `backspace://`.

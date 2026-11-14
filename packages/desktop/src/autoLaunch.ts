@@ -50,3 +50,32 @@ export function shouldReapplyAppImage(
   if (!recordedExecPath) return false;
   return currentAppImagePath !== recordedExecPath;
 }
+
+/** The parts of an Electron `launchItems[]` entry (Windows) this module reads. */
+export interface WindowsLaunchItem {
+  name: string;
+  path: string;
+  args?: string[];
+  enabled: boolean;
+}
+
+/**
+ * The Windows login item that has to be re-pointed at the running executable,
+ * or null when nothing needs doing.
+ *
+ * The Run-key entry records the executable's full path. When an update renames
+ * the executable (Backspace.exe became B-SPACE.exe with the B:SPACE rename) or
+ * the install folder moves, the entry keeps pointing at a file that no longer
+ * exists and the app silently stops starting at login. Only an entry that is
+ * still enabled is returned: a disabled one is the user's choice in Task
+ * Manager and stays as it is.
+ */
+export function staleWindowsLoginItem(
+  items: readonly WindowsLaunchItem[],
+  itemName: string,
+  execPath: string,
+): WindowsLaunchItem | null {
+  const item = items.find((candidate) => candidate.name === itemName);
+  if (!item || !item.enabled) return null;
+  return item.path.toLowerCase() === execPath.toLowerCase() ? null : item;
+}

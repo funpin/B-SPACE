@@ -54,11 +54,28 @@ export interface NavigatorLike {
 }
 
 /** The release listing, not `releases/latest`: filenames carry the version, so there is no fixed-name asset. */
-export const RELEASES_URL = 'https://github.com/funpin/backspace/releases';
+export const RELEASES_URL = 'https://github.com/funpin/B-SPACE/releases';
 
 // A release is tagged `v<version>`: an upstream-style triple, or this fork's
 // form, the upstream release it is built on plus `-f.<major>.<minor>`.
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(-f\.\d+\.\d+)?$/;
+
+/**
+ * The release from which the assets are named B-SPACE-… (electron-builder's
+ * `productName`); every earlier release names them Backspace-…. The Desktop
+ * tab links to the build of the instance's own version, which can be older.
+ */
+const B_SPACE_ASSETS_SINCE: readonly [number, number, number] = [2, 3, 0];
+
+/** The asset file-name prefix of the release tagged `v<version>`. */
+export function releaseAssetPrefix(version: string): 'B-SPACE' | 'Backspace' {
+  const [major = 0, minor = 0, patch = 0] = version.split(/[.-]/, 3).map((part) => Number.parseInt(part, 10) || 0);
+  const current = [major, minor, patch];
+  for (let i = 0; i < 3; i++) {
+    if (current[i]! !== B_SPACE_ASSETS_SINCE[i]) return current[i]! > B_SPACE_ASSETS_SINCE[i]! ? 'B-SPACE' : 'Backspace';
+  }
+  return 'B-SPACE';
+}
 
 interface BuildSpec {
   os: Exclude<DesktopOs, 'other'>;
@@ -222,7 +239,7 @@ function primaryBuild(detected: DetectedPlatform): BuildSpec | null {
 }
 
 function toDownload(build: BuildSpec, version: string, versionIsReleasable: boolean): DesktopDownload {
-  const filename = `Backspace-${version}${build.fileSuffix}.${build.ext}`;
+  const filename = `${releaseAssetPrefix(version)}-${version}${build.fileSuffix}.${build.ext}`;
   return {
     os: build.os,
     arch: build.arch,
