@@ -42,7 +42,8 @@
     "previous": "Anterior",
     "next": "Próximo",
     "preview": "Pré-visualizar",
-    "logIn": "Entrar"
+    "logIn": "Entrar",
+    "download": "Baixar"
   },
   "states": {
     "loading": "Carregando…",

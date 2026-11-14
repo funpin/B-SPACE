@@ -15,7 +15,7 @@ const EXTENSION_LANGUAGE: Readonly<Record<string, string>> = {
   json: 'json', py: 'python', go: 'go', rs: 'rust',
   c: 'cpp', h: 'cpp', cc: 'cpp', cpp: 'cpp', hpp: 'cpp',
   html: 'markup', htm: 'markup', xml: 'markup', svg: 'markup',
-  css: 'css', yml: 'yaml', yaml: 'yaml', 'md': 'markdown',
+  css: 'css', yml: 'yaml', yaml: 'yaml', 'md': 'markdown', markdown: 'markdown',
   swift: 'swift', kt: 'kotlin', graphql: 'graphql', gql: 'graphql',
 };
 
@@ -38,6 +38,64 @@ function extensionOf(name: string): string | null {
 export function languageOfFilename(name: string): string {
   const extension = extensionOf(name);
   return (extension && EXTENSION_LANGUAGE[extension]) || 'text';
+}
+
+/**
+ * The grammar a fence's language tag names. Authors write file extensions and
+ * shell names as often as grammar names (```mjs, ```py, ```sh), so the tag
+ * goes through the same table as a file name. An unknown tag is kept as it is:
+ * it still labels the block, and the highlighter renders an unknown grammar
+ * as plain text.
+ */
+export function normalizeCodeLanguage(tag: string): string {
+  const lowered = tag.trim().toLowerCase();
+  if (!lowered) return 'text';
+  if (lowered in EXTENSION_LANGUAGE) return EXTENSION_LANGUAGE[lowered]!;
+  return FENCE_ALIASES[lowered] ?? lowered;
+}
+
+/** Fence names that are neither a grammar nor an extension in the table above. */
+const FENCE_ALIASES: Readonly<Record<string, string>> = {
+  node: 'javascript', py: 'python', python3: 'python',
+  golang: 'go', 'c++': 'cpp',
+  sh: 'bash', shell: 'bash', zsh: 'bash', console: 'bash', plaintext: 'text', txt: 'text',
+};
+
+/** A grammar's name as people say it, and its label colour (brandbook §3.4), if it has one. */
+export interface LanguageLabel {
+  name: string;
+  color: string | null;
+}
+
+/**
+ * The colour belongs to the language, not to the interface, so it stays the
+ * same under every accent theme. A language without one gets the neutral label.
+ */
+const LANGUAGE_LABELS: Readonly<Record<string, LanguageLabel>> = {
+  javascript: { name: 'JavaScript', color: '#e8c44a' },
+  jsx: { name: 'JSX', color: '#e8c44a' },
+  typescript: { name: 'TypeScript', color: '#6fb5ff' },
+  tsx: { name: 'TSX', color: '#6fb5ff' },
+  json: { name: 'JSON', color: '#7fd6a0' },
+  python: { name: 'Python', color: '#8ab6ff' },
+  go: { name: 'Go', color: '#6fd3d9' },
+  rust: { name: 'Rust', color: '#f0906c' },
+  cpp: { name: 'C/C++', color: '#8ab6ff' },
+  markup: { name: 'HTML', color: '#f0906c' },
+  css: { name: 'CSS', color: '#c79bff' },
+  yaml: { name: 'YAML', color: '#f3bd63' },
+  markdown: { name: 'Markdown', color: null },
+  swift: { name: 'Swift', color: '#f0906c' },
+  kotlin: { name: 'Kotlin', color: '#c79bff' },
+  graphql: { name: 'GraphQL', color: '#ff9cc2' },
+  bash: { name: 'Shell', color: null },
+  sql: { name: 'SQL', color: null },
+};
+
+/** The label for a grammar, or null for plain text. */
+export function languageLabel(grammar: string): LanguageLabel | null {
+  if (grammar === 'text') return null;
+  return LANGUAGE_LABELS[grammar] ?? { name: grammar, color: null };
 }
 
 /** Whether an attachment is a text file small enough to preview in chat. */

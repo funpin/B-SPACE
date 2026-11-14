@@ -42,7 +42,8 @@
     "previous": "上一页",
     "next": "下一页",
     "preview": "预览",
-    "logIn": "登录"
+    "logIn": "登录",
+    "download": "下载"
   },
   "states": {
     "loading": "正在加载…",

@@ -128,10 +128,11 @@
       "listPair": "{{first}} 和 {{second}}"
     },
     "preview": {
-      "show": "显示内容",
-      "hide": "隐藏内容",
       "failed": "无法加载文件，请下载查看。",
-      "truncated": "仅显示文件开头，下载后可查看其余内容。"
+      "truncated": "仅显示文件开头，下载后可查看其余内容。",
+      "showSource": "显示源文本",
+      "showRendered": "显示排版效果",
+      "loading": "正在加载文件…"
     }
   },
   "gif": {
@@ -222,6 +223,8 @@
   },
   "code": {
     "showAll_other": "显示全部，共 {{count}} 行",
-    "collapse": "收起"
+    "collapse": "收起",
+    "lines_other": "{{count}} 行",
+    "autoDetected": "已自动识别语言"
   }
 }
