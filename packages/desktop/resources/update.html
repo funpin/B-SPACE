@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:" />
+  <title>B:SPACE</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0c0c0e;
+      --surface: #121214;
+      --raised: #1b1b1f;
+      --raised-hover: #26262a;
+      --line: rgba(255, 255, 255, 0.06);
+      --text: #ededf0;
+      --muted: #a0a0a8;
+      --primary: #6e5bef;
+      --primary-hover: #7c6bf1;
+      --ok: #6fdc9a;
+      --warn: #f0a05a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+      overflow: hidden;
+    }
+    body { display: flex; flex-direction: column; }
+    .titlebar { height: 28px; min-height: 28px; -webkit-app-region: drag; }
+    main {
+      flex: 1;
+      display: flex;
+      gap: 18px;
+      padding: 4px 24px 20px;
+      -webkit-app-region: no-drag;
+    }
+    .mascot { width: 56px; height: 56px; flex-shrink: 0; margin-top: 2px; }
+    .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    h1 { font-size: 15px; font-weight: 650; margin: 0 0 4px; line-height: 1.35; }
+    .hint { font-size: 12.5px; color: var(--muted); margin: 0; line-height: 1.5; min-height: 1.5em; }
+    .error { color: var(--warn); word-break: break-word; }
+    .progress { margin-top: 14px; }
+    .bar { height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; }
+    .fill { height: 100%; width: 0; border-radius: 3px; background: var(--primary); transition: width 0.25s ease; }
+    .bar.indeterminate .fill { width: 30%; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+    .stats { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 16px; }
+    button {
+      font: inherit;
+      font-size: 13px;
+      padding: 7px 14px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: var(--raised);
+      color: var(--text);
+      cursor: pointer;
+    }
+    button:hover { background: var(--raised-hover); }
+    button.primary { background: var(--primary); border-color: transparent; color: #fff; }
+    button.primary:hover { background: var(--primary-hover); }
+    button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    /* The B:SPACE character (assets/brand/b-space): eyes only, as the brand asks. */
+    .mascot * { transform-box: fill-box; transform-origin: center; }
+    .mascot .eyes { transition: transform 0.3s ease; }
+    .mascot.look .eyes { animation: look 3s ease-in-out infinite; }
+    .mascot.idle .eye { animation: blink 3.6s infinite; }
+    .mascot.joy .all { animation: hop 1.6s 1; }
+    .mascot.sad .head { fill: #7e7e89; }
+    .mascot.sad .body-shape { fill: #4a4a52; }
+    @keyframes look { 0%, 15%, 85%, 100% { transform: translate(0, 0); } 25%, 45% { transform: translate(-4.5px, 1px); } 55%, 75% { transform: translate(4px, 0); } }
+    @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+    @keyframes hop { 0%, 30%, 100% { transform: translateY(0); } 15% { transform: translateY(-8px); } }
+    @media (prefers-reduced-motion: reduce) { .mascot * { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="titlebar"></div>
+  <main>
+    <svg class="mascot look" id="mascot" viewBox="16 6 68 88" aria-hidden="true">
+      <g class="all">
+        <path class="body-shape" fill="#6e5bef" d="M32.95 53.12Q35.07 51 38.07 51H60.5A19.5 19.5 0 0 1 60.5 90H26A6 6 0 0 1 20 84V69.07Q20 66.07 22.12 63.95Z"/>
+        <path class="head" fill="#ededf0" d="M26 10H57A18 18 0 0 1 57 46H36Q33 46 30.88 48.12L21.77 57.23Q20 59 20 56.5V16A6 6 0 0 1 26 10Z"/>
+        <g class="eyes" id="eyes">
+          <ellipse class="eye" cx="41" cy="26" rx="3.6" ry="5.6" fill="#0c0c0e"/>
+          <ellipse class="eye" cx="56" cy="26" rx="3.6" ry="5.6" fill="#0c0c0e"/>
+        </g>
+        <g id="happy-eyes" hidden>
+          <path d="M36.6 28Q41 20.4 45.4 28M51.6 28Q56 20.4 60.4 28" fill="none" stroke="#0c0c0e" stroke-width="3" stroke-linecap="round"/>
+        </g>
+      </g>
+    </svg>
+    <div class="body">
+      <h1 id="title"></h1>
+      <p class="hint" id="hint"></p>
+      <div class="progress" id="progress" hidden>
+        <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+        <div class="stats"><span id="percent"></span><span id="speed"></span></div>
+      </div>
+      <div class="actions">
+        <button id="btn-secondary" type="button" hidden></button>
+        <button id="btn-primary" class="primary" type="button" hidden></button>
+      </div>
+    </div>
+  </main>
+  <script>
+    'use strict';
+    (function () {
+      var STRINGS = {
+        en: {
+          windowTitle: 'B:SPACE Update',
+          checking: 'Checking for updates…',
+          checkingHint: 'Installed: B:SPACE {current}',
+          upToDate: 'You have the latest version',
+          upToDateHint: 'B:SPACE {current} is up to date.',
+          downloading: 'Downloading B:SPACE {version}',
+          downloadingHint: 'You can close this window, the download carries on.',
+          speed: '{speed} MB/s',
+          ready: 'B:SPACE {version} is ready',
+          readyHint: 'Restart the app to install it. It takes a few seconds.',
+          available: 'B:SPACE {version} is available',
+          availableHint: 'This build cannot install updates by itself. Download the new version from the releases page.',
+          failed: 'The update did not work',
+          failedNoVersion: 'Could not check for updates',
+          external: 'Updates come from your package manager',
+          externalHint: 'Use your software manager or flatpak update.',
+          restart: 'Restart',
+          later: 'Later',
+          close: 'Close',
+          download: 'Download',
+          retry: 'Try again',
+          downloadByHand: 'Download by hand'
+        },
+        ru: {
+          windowTitle: 'Обновление B:SPACE',
+          checking: 'Проверяем обновления…',
+          checkingHint: 'Установлена версия B:SPACE {current}',
+          upToDate: 'У вас последняя версия',
+          upToDateHint: 'B:SPACE {current} — самая новая.',
+          downloading: 'Загружается B:SPACE {version}',
+          downloadingHint: 'Окно можно закрыть — загрузка продолжится.',
+          speed: '{speed} МБ/с',
+          ready: 'B:SPACE {version} готова к установке',
+          readyHint: 'Перезапустите приложение, чтобы установить обновление. Это займёт несколько секунд.',
+          available: 'Доступна B:SPACE {version}',
+          availableHint: 'Эта сборка не умеет обновляться сама. Скачайте новую версию со страницы релизов.',
+          failed: 'Не удалось обновиться',
+          failedNoVersion: 'Не удалось проверить обновления',
+          external: 'Обновления приходят из менеджера пакетов',
+          externalHint: 'Обновите приложение через менеджер программ или flatpak update.',
+          restart: 'Перезапустить',
+          later: 'Позже',
+          close: 'Закрыть',
+          download: 'Скачать',
+          retry: 'Повторить',
+          downloadByHand: 'Скачать вручную'
+        },
+        de: {
+          windowTitle: 'B:SPACE-Update',
+          checking: 'Suche nach Updates…',
+          checkingHint: 'Installiert: B:SPACE {current}',
+          upToDate: 'Du hast die neueste Version',
+          upToDateHint: 'B:SPACE {current} ist aktuell.',
+          downloading: 'B:SPACE {version} wird heruntergeladen',
+          downloadingHint: 'Du kannst das Fenster schließen, der Download läuft weiter.',
+          speed: '{speed} MB/s',
+          ready: 'B:SPACE {version} ist bereit',
+          readyHint: 'Starte die App neu, um das Update zu installieren. Das dauert nur ein paar Sekunden.',
+          available: 'B:SPACE {version} ist verfügbar',
+          availableHint: 'Dieser Build kann sich nicht selbst aktualisieren. Lade die neue Version von der Release-Seite herunter.',
+          failed: 'Das Update hat nicht geklappt',
+          failedNoVersion: 'Suche nach Updates fehlgeschlagen',
+          external: 'Updates kommen über die Paketverwaltung',
+          externalHint: 'Aktualisiere über die Softwareverwaltung oder flatpak update.',
+          restart: 'Neu starten',
+          later: 'Später',
+          close: 'Schließen',
+          download: 'Herunterladen',
+          retry: 'Erneut versuchen',
+          downloadByHand: 'Manuell herunterladen'
+        },
+        pt: {
+          windowTitle: 'Atualização do B:SPACE',
+          checking: 'Verificando atualizações…',
+          checkingHint: 'Instalado: B:SPACE {current}',
+          upToDate: 'Você tem a versão mais recente',
+          upToDateHint: 'O B:SPACE {current} está atualizado.',
+          downloading: 'Baixando o B:SPACE {version}',
+          downloadingHint: 'Pode fechar esta janela, o download continua.',
+          speed: '{speed} MB/s',
+          ready: 'O B:SPACE {version} está pronto',
+          readyHint: 'Reinicie o app para instalar. Leva poucos segundos.',
+          available: 'O B:SPACE {version} está disponível',
+          availableHint: 'Esta versão não consegue se atualizar sozinha. Baixe a nova versão na página de releases.',
+          failed: 'A atualização não funcionou',
+          failedNoVersion: 'Não foi possível verificar atualizações',
+          external: 'As atualizações vêm do gerenciador de pacotes',
+          externalHint: 'Atualize pelo gerenciador de software ou com flatpak update.',
+          restart: 'Reiniciar',
+          later: 'Depois',
+          close: 'Fechar',
+          download: 'Baixar',
+          retry: 'Tentar de novo',
+          downloadByHand: 'Baixar manualmente'
+        },
+        zh: {
+          windowTitle: 'B:SPACE 更新',
+          checking: '正在检查更新…',
+          checkingHint: '已安装：B:SPACE {current}',
+          upToDate: '已是最新版本',
+          upToDateHint: 'B:SPACE {current} 已是最新。',
+          downloading: '正在下载 B:SPACE {version}',
+          downloadingHint: '可以关闭此窗口，下载会继续。',
+          speed: '{speed} MB/s',
+          ready: 'B:SPACE {version} 已就绪',
+          readyHint: '重启应用即可安装，只需几秒钟。',
+          available: '有新版本 B:SPACE {version}',
+          availableHint: '此版本无法自行更新。请从发布页面下载新版本。',
+          failed: '更新失败',
+          failedNoVersion: '无法检查更新',
+          external: '更新由软件包管理器提供',
+          externalHint: '请通过软件管理器或 flatpak update 更新。',
+          restart: '重启',
+          later: '稍后',
+          close: '关闭',
+          download: '下载',
+          retry: '重试',
+          downloadByHand: '手动下载'
+        }
+      };
+
+      var requested = (new URLSearchParams(location.search).get('lang') || 'en').toLowerCase();
+      var lang = Object.prototype.hasOwnProperty.call(STRINGS, requested) ? requested : 'en';
+      var S = STRINGS[lang];
+      document.documentElement.lang = lang;
+      document.title = S.windowTitle;
+
+      function t(key, vars) {
+        return (S[key] || STRINGS.en[key] || key).replace(/\{(\w+)\}/g, function (m, name) {
+          return vars && vars[name] != null ? String(vars[name]) : m;
+        });
+      }
+
+      var number = new Intl.NumberFormat(lang, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+      var percentFormat = new Intl.NumberFormat(lang, { style: 'percent', maximumFractionDigits: 0 });
+      var api = window.bspaceUpdate;
+      var el = function (id) { return document.getElementById(id); };
+      var primary = el('btn-primary');
+      var secondary = el('btn-secondary');
+      var primaryAction = null;
+      var secondaryAction = null;
+      primary.addEventListener('click', function () { if (primaryAction) primaryAction(); });
+      secondary.addEventListener('click', function () { if (secondaryAction) secondaryAction(); });
+      document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && api) api.close(); });
+
+      function buttons(p, s) {
+        primary.hidden = !p;
+        secondary.hidden = !s;
+        primaryAction = p ? p.run : null;
+        secondaryAction = s ? s.run : null;
+        if (p) primary.textContent = p.label;
+        if (s) secondary.textContent = s.label;
+        if (p) primary.focus();
+      }
+
+      function mascot(mood) {
+        el('mascot').setAttribute('class', 'mascot ' + mood);
+        // SVG elements have no `hidden` property, only the attribute.
+        el('eyes').toggleAttribute('hidden', mood === 'joy');
+        el('happy-eyes').toggleAttribute('hidden', mood !== 'joy');
+      }
+
+      function progress(mode, fraction, speedText) {
+        el('progress').hidden = mode === 'none';
+        el('bar').classList.toggle('indeterminate', mode === 'indeterminate');
+        el('fill').style.width = mode === 'determinate' ? (fraction * 100).toFixed(1) + '%' : '';
+        el('percent').textContent = mode === 'determinate' ? percentFormat.format(fraction) : '';
+        el('speed').textContent = speedText || '';
+      }
+
+      function text(title, hint, isError) {
+        el('title').textContent = title;
+        el('hint').textContent = hint;
+        el('hint').classList.toggle('error', Boolean(isError));
+      }
+
+      var close = { label: t('close'), run: function () { api.close(); } };
+
+      function render(state) {
+        if (!state || !state.snapshot) return;
+        var status = state.snapshot.status;
+        var current = state.currentVersion;
+        if (state.snapshot.capability === 'external') {
+          mascot('idle');
+          text(t('external'), t('externalHint'));
+          progress('none');
+          buttons(close, null);
+          return;
+        }
+        switch (status.phase) {
+          case 'idle':
+          case 'checking':
+            mascot('look');
+            text(t('checking'), t('checkingHint', { current: current }));
+            progress('indeterminate');
+            buttons(null, close);
+            return;
+          case 'up-to-date':
+            mascot('joy');
+            text(t('upToDate'), t('upToDateHint', { current: current }));
+            progress('none');
+            buttons(close, null);
+            return;
+          case 'downloading':
+            mascot('idle');
+            text(t('downloading', { version: status.version }), t('downloadingHint'));
+            progress(
+              'determinate',
+              Math.max(0, Math.min(1, status.percent / 100)),
+              status.bytesPerSecond > 0 ? t('speed', { speed: number.format(status.bytesPerSecond / 1e6) }) : ''
+            );
+            buttons(null, close);
+            return;
+          case 'ready':
+            mascot('joy');
+            text(t('ready', { version: status.version }), t('readyHint'));
+            progress('none');
+            buttons({ label: t('restart'), run: function () { api.install(); } }, { label: t('later'), run: function () { api.close(); } });
+            return;
+          case 'available':
+            mascot('idle');
+            text(t('available', { version: status.version }), t('availableHint'));
+            progress('none');
+            buttons({ label: t('download'), run: function () { api.openReleases(); api.close(); } }, close);
+            return;
+          case 'failed':
+            mascot('sad');
+            text(status.version ? t('failed') : t('failedNoVersion'), status.message, true);
+            progress('none');
+            buttons({ label: t('retry'), run: function () { api.check(); } }, { label: t('downloadByHand'), run: function () { api.openReleases(); api.close(); } });
+            return;
+        }
+      }
+
+      if (!api) {
+        text(t('failedNoVersion'), '', true);
+        return;
+      }
+      api.onState(render);
+      api.getState().then(render);
+    })();
+  </script>
+</body>
+</html>

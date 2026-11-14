@@ -31,6 +31,7 @@ import { listProcessCommands, runningAudioRouters } from './audioRouters';
 import { createSystemAudioController, withSystemAudioSource, type PatchBayModule } from './systemAudio';
 import { loadDismissedVersion, setDismissedVersion } from './updateDismissal';
 import { purgeUpdaterCache } from './updaterCache';
+import { taskbarProgress, UpdateWindow } from './updateWindow';
 import {
   UpdateStatusStore,
   RELEASES_URL,
@@ -781,44 +782,7 @@ function registerIpcHandlers(): void {
   });
 
   // Auto-update IPC
-  ipcMain.on('install-update', () => {
-    const store = getUpdateStore();
-    const snapshot = store.get();
-
-    // A build that cannot install in place has no in-place install to run. Send
-    // the user to the download instead of calling a method that returns without
-    // doing anything, which is the defect this whole path exists to remove.
-    if (snapshot.capability === 'external') return;
-    if (snapshot.capability === 'manual') {
-      void shell.openExternal(RELEASES_URL);
-      return;
-    }
-
-    try {
-      const { autoUpdater } = require('electron-updater');
-      autoUpdater.quitAndInstall();
-    } catch {
-      store.setStatus({
-        phase: 'failed',
-        version: statusVersion(snapshot.status),
-        message: 'The updater is not available in this build.',
-      });
-      return;
-    }
-
-    // If the install started, the app is gone before this fires. If it did not,
-    // the user is still looking at a Restart button that appears to have done
-    // nothing, and now the app says so instead of leaving them guessing.
-    setTimeout(() => {
-      const current = getUpdateStore().get();
-      if (current.status.phase !== 'ready') return;
-      getUpdateStore().setStatus({
-        phase: 'failed',
-        version: statusVersion(current.status),
-        message: 'Restarting to install the update did not start.',
-      });
-    }, INSTALL_WATCHDOG_MS);
-  });
+  ipcMain.on('install-update', () => installDownloadedUpdate());
 
   ipcMain.on('check-for-updates', () => {
     if (getUpdateCapability() === 'external') return;
@@ -1056,6 +1020,50 @@ function registerIpcHandlers(): void {
 // ─── Auto-Update ────────────────────────────────────────────────────────────
 
 /**
+ * Quits and installs the downloaded update. A build that cannot install in
+ * place is sent to the download page instead. Shared by the renderer's
+ * Restart button (`install-update`) and the update window.
+ */
+function installDownloadedUpdate(): void {
+  const store = getUpdateStore();
+  const snapshot = store.get();
+
+  // A build that cannot install in place has no in-place install to run. Send
+  // the user to the download instead of calling a method that returns without
+  // doing anything, which is the defect this whole path exists to remove.
+  if (snapshot.capability === 'external') return;
+  if (snapshot.capability === 'manual') {
+    void shell.openExternal(RELEASES_URL);
+    return;
+  }
+
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.quitAndInstall();
+  } catch {
+    store.setStatus({
+      phase: 'failed',
+      version: statusVersion(snapshot.status),
+      message: 'The updater is not available in this build.',
+    });
+    return;
+  }
+
+  // If the install started, the app is gone before this fires. If it did not,
+  // the user is still looking at a Restart button that appears to have done
+  // nothing, and now the app says so instead of leaving them guessing.
+  setTimeout(() => {
+    const current = getUpdateStore().get();
+    if (current.status.phase !== 'ready') return;
+    getUpdateStore().setStatus({
+      phase: 'failed',
+      version: statusVersion(current.status),
+      message: 'Restarting to install the update did not start.',
+    });
+  }, INSTALL_WATCHDOG_MS);
+}
+
+/**
  * How long to wait for `quitAndInstall()` to actually take the app down before
  * concluding it silently did nothing.
  *
@@ -1069,6 +1077,23 @@ function registerIpcHandlers(): void {
 const INSTALL_WATCHDOG_MS = 4_000;
 
 let updateStore: UpdateStatusStore | null = null;
+let updateWindow: UpdateWindow | null = null;
+
+/** The update window (updateWindow.ts), built on first use like the store. */
+function getUpdateWindow(): UpdateWindow {
+  if (updateWindow === null) {
+    updateWindow = new UpdateWindow({
+      getSnapshot: () => getUpdateStore().get(),
+      currentVersion: () => app.getVersion(),
+      language: () => getDesktopLanguage(),
+      check: () => handleRecoveryAction('check-update'),
+      install: () => installDownloadedUpdate(),
+      openReleases: () => { void shell.openExternal(RELEASES_URL); },
+      parent: () => mainWindow,
+    });
+  }
+  return updateWindow;
+}
 
 /**
  * The update status store, built on first use.
@@ -1083,6 +1108,9 @@ function getUpdateStore(): UpdateStatusStore {
     updateStore = new UpdateStatusStore(getUpdateCapability(), loadDismissedVersion());
     updateStore.subscribe((snapshot) => {
       mainWindow?.webContents.send('update-status-changed', snapshot);
+      getUpdateWindow().notify(snapshot);
+      // Download progress on the Dock icon / taskbar button, cleared otherwise.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(taskbarProgress(snapshot.status));
     });
   }
   return updateStore;
@@ -1525,7 +1553,8 @@ if (!gotTheLock) {
       // surface share one implementation path (avoids drift and ensures
       // recovery state is always cleared on a Change Instance action).
       onChangeInstance: () => handleRecoveryAction('change-instance'),
-      onCheckForUpdates: () => handleRecoveryAction('check-update'),
+      // The update window follows the check, the download and the restart.
+      onCheckForUpdates: () => getUpdateWindow().open(),
       onRestartToInstall: () => handleRecoveryAction('install-update'),
       onOpenReleases: () => handleRecoveryAction('open-releases'),
       onOpenSource: () => openSourceCode(),
