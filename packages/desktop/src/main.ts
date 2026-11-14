@@ -27,6 +27,7 @@ import {
 } from './instanceUrl';
 import { getUpdateCapability, isSandboxed } from './updateCapability';
 import { ownAudioInSystemAudio, systemAudioDeviceId, type SystemAudioDeviceId } from './systemAudioCapability';
+import { processLoopbackFailedOn, recordProcessLoopbackFailure } from './processLoopbackMemory';
 import { listProcessCommands, runningAudioRouters } from './audioRouters';
 import { createSystemAudioController, withSystemAudioSource, type PatchBayModule } from './systemAudio';
 import { loadDismissedVersion, setDismissedVersion } from './updateDismissal';
@@ -647,6 +648,19 @@ function trackSharedSource(source: Electron.DesktopCapturerSource): void {
   pointerOverlay?.setTarget(display ? display.id : null);
 }
 
+/** The last display-media grant, so a refused process loopback can be retried with the plain one. */
+let lastGrant: { sourceId: string; audio: SystemAudioDeviceId | null; at: number } | null = null;
+/** How long after a grant the renderer may still report that its audio failed. */
+const GRANT_RETRY_WINDOW_MS = 30_000;
+/** Read once from userData; set when Windows refuses process loopback on this OS version. */
+let processLoopbackFailed: boolean | null = null;
+
+function exclusionFailedHere(): boolean {
+  if (process.platform !== 'win32') return false;
+  processLoopbackFailed ??= processLoopbackFailedOn(process.getSystemVersion());
+  return processLoopbackFailed;
+}
+
 /**
  * Answers a display-media request. Electron hands the audio id to Chromium as
  * a string, but its `Streams` type lists only `loopback` and
@@ -660,7 +674,8 @@ function grantDisplayMedia(
   shareAudio: boolean,
 ): void {
   trackSharedSource(video);
-  const audio: SystemAudioDeviceId = systemAudioDeviceId(process.platform, process.getSystemVersion());
+  const audio: SystemAudioDeviceId = systemAudioDeviceId(process.platform, process.getSystemVersion(), exclusionFailedHere());
+  lastGrant = { sourceId: video.id, audio: shareAudio ? audio : null, at: Date.now() };
   console.log('[Main:ScreenShare] Granting', video.id, 'audio:', shareAudio ? audio : 'none');
   const streams: { video: Electron.DesktopCapturerSource; audio?: SystemAudioDeviceId } = shareAudio ? { video, audio } : { video };
   callback(streams as Electron.Streams);
@@ -869,7 +884,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('get-system-audio-capability', (event, clientUsesSource: unknown) => {
     if (event.sender !== mainWindow?.webContents) return 'unknown';
     return withSystemAudioSource(
-      ownAudioInSystemAudio(process.platform, process.getSystemVersion()),
+      ownAudioInSystemAudio(process.platform, process.getSystemVersion(), exclusionFailedHere()),
       clientUsesSource,
       () => systemAudio.isAvailable(),
     );
@@ -900,6 +915,22 @@ function registerIpcHandlers(): void {
     if (event.sender !== mainWindow?.webContents) return;
     if (typeof sourceId !== 'string' || !sourceId) return;
     pendingScreenSelection = { sourceId, shareAudio: shareAudio === true, at: Date.now() };
+  });
+  // A System Audio capture granted as `loopbackWithoutChrome` failed to start:
+  // Windows refused process loopback on this machine. Remember it for this OS
+  // version and arm the same source again with the plain loopback, so the
+  // renderer can retry once without another pick. Answers whether it did.
+  ipcMain.handle('system-audio-exclusion-failed', (event) => {
+    if (event.sender !== mainWindow?.webContents) return false;
+    const grant = lastGrant;
+    if (process.platform !== 'win32' || !grant || grant.audio !== 'loopbackWithoutChrome') return false;
+    if (Date.now() - grant.at > GRANT_RETRY_WINDOW_MS) return false;
+    console.warn('[Main:ScreenShare] Process loopback failed; falling back to the plain loopback on', process.getSystemVersion());
+    processLoopbackFailed = true;
+    recordProcessLoopbackFailure(process.getSystemVersion());
+    lastGrant = null;
+    pendingScreenSelection = { sourceId: grant.sourceId, shareAudio: true, at: Date.now() };
+    return true;
   });
   // Viewers' pointers on this client's screen share, drawn over the shared
   // display (pointerOverlay.ts). The renderer sends the whole list on every
@@ -1517,10 +1548,11 @@ if (!gotTheLock) {
 
         // Provide the selected source — Electron creates the MediaStream.
         // System audio loopback support varies:
-        //   - Windows: WASAPI loopback. On Windows 11 grantDisplayMedia asks
-        //     for `loopbackWithoutChrome`, a process loopback that leaves
-        //     Backspace's own playback out (systemAudioDeviceId); on Windows 10
-        //     the whole mix, this call included, is captured.
+        //   - Windows: WASAPI loopback. From Windows 10 2004 grantDisplayMedia
+        //     asks for `loopbackWithoutChrome`, a process loopback that leaves
+        //     B:SPACE's own playback out (systemAudioDeviceId); where Windows
+        //     refuses it the renderer reports `system-audio-exclusion-failed`
+        //     and the plain loopback (the whole mix) is used from then on.
         //   - macOS 13+: ScreenCaptureKit, or from 14.2 a CoreAudio Tap that
         //     `loopbackWithoutChrome` makes leave Backspace out; requires NSAudioCaptureUsageDescription
         //     in Info.plist (electron-builder injects it via mac.extendInfo).

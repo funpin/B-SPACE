@@ -1058,6 +1058,7 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `selectScreenSource(id, audio?)` | fire | R->M | |
 | `getSystemAudioCapability(usesAppSource?)` | invoke | R->M | Optional (older builds lack it, and builds before the Linux source ignore the argument). `usesAppSource` is `true` from a web client that opens the Linux system-audio source itself. Returns `Promise<'excluded' \| 'included' \| 'unavailable' \| 'unknown'>`; see "System audio and Backspace's own playback" |
 | `getAudioRouters()` | invoke | R->M | Optional (older builds lack it). Returns `Promise<string[]>`: display names of running audio routers that double the sound of a System Audio share; see "Audio routers" above |
+| `reportSystemAudioExclusionFailed()` | invoke | R->M | Optional. A System Audio capture granted as `loopbackWithoutChrome` failed to start; main records the refusal for this OS version and re-arms the same source with the plain loopback. Returns `Promise<boolean>`: whether to retry the capture once. See voice.md, "Fallback when Windows refuses process loopback" |
 | `startSystemAudio()` | invoke | R->M | Optional. Linux: routes every other app's playback into a virtual source. Returns `Promise<{ ok: true, label } \| { ok: false, reason }>`; the renderer opens the device named `label` as a microphone |
 | `stopSystemAudio()` | invoke | R->M | Optional. Unlinks the virtual source; idempotent |
 | `getInstanceUrl()` | invoke | R->M | Returns `Promise<string \| null>` |

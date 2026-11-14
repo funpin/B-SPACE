@@ -13,10 +13,17 @@ describe('ownAudioInSystemAudio', () => {
     expect(ownAudioInSystemAudio('win32', '10.0.26100')).toBe('excluded');
   });
 
-  it('captures Backspace too on Windows 10, 22H2 included, and on Server 2022', () => {
-    expect(ownAudioInSystemAudio('win32', '10.0.19045')).toBe('included');
+  it('leaves Backspace out from Windows 10 2004 (process loopback), 22H2 and Server 2022 included', () => {
+    expect(ownAudioInSystemAudio('win32', '10.0.19041')).toBe('excluded');
+    expect(ownAudioInSystemAudio('win32', '10.0.19045')).toBe('excluded');
+    expect(ownAudioInSystemAudio('win32', '10.0.20348')).toBe('excluded');
+  });
+
+  it('captures Backspace too before Windows 10 2004, and where Windows refused process loopback', () => {
+    expect(ownAudioInSystemAudio('win32', '10.0.18363')).toBe('included');
     expect(ownAudioInSystemAudio('win32', '10.0.17763')).toBe('included');
-    expect(ownAudioInSystemAudio('win32', '10.0.20348')).toBe('included');
+    expect(ownAudioInSystemAudio('win32', '10.0.19045', true)).toBe('included');
+    expect(ownAudioInSystemAudio('win32', '10.0.22631', true)).toBe('included');
   });
 
   it('leaves Backspace out on macOS 14.2 and later', () => {
@@ -51,12 +58,14 @@ describe('ownAudioInSystemAudio', () => {
 describe('systemAudioDeviceId', () => {
   it('names the loopback without Backspace where the OS can leave it out', () => {
     expect(systemAudioDeviceId('win32', '10.0.22631')).toBe('loopbackWithoutChrome');
+    expect(systemAudioDeviceId('win32', '10.0.19045')).toBe('loopbackWithoutChrome');
     expect(systemAudioDeviceId('darwin', '14.2.0')).toBe('loopbackWithoutChrome');
     expect(systemAudioDeviceId('darwin', '15.1')).toBe('loopbackWithoutChrome');
   });
 
   it('keeps the plain loopback where it cannot', () => {
-    expect(systemAudioDeviceId('win32', '10.0.19045')).toBe('loopback');
+    expect(systemAudioDeviceId('win32', '10.0.18363')).toBe('loopback');
+    expect(systemAudioDeviceId('win32', '10.0.19045', true)).toBe('loopback');
     expect(systemAudioDeviceId('darwin', '13.6')).toBe('loopback');
     expect(systemAudioDeviceId('linux', '6.8.0')).toBe('loopback');
     expect(systemAudioDeviceId('win32', 'garbage')).toBe('loopback');
