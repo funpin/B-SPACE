@@ -76,6 +76,11 @@ jobs:
         run: pnpm exec electron-builder ${{ matrix.args }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # Signed like a release when the secret is available (branches of this
+          # repository; never fork PRs), so a test build installed over a
+          # release keeps the macOS permissions. Without it: ad-hoc, as before.
+          MAC_SIGN_P12: ${{ runner.os == 'macOS' && secrets.MAC_SIGN_P12 || '' }}
+          MAC_SIGN_P12_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_SIGN_P12_PASSWORD || '' }}
 
       - name: Upload installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

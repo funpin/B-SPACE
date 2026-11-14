@@ -93,13 +93,41 @@ What this does **not** do is make a hostile instance safe: a web client the user
 
 No desktop release build carries a Developer ID or CA-issued signature, and there is no notarization step. Beyond that the posture differs per platform:
 
-- **macOS — ad-hoc signed, not unsigned.** `scripts/macSign.js` runs last in the `afterPack` hook and re-seals the packaged bundle with `codesign --force --sign - --timestamp=none`: first every `.node`/`.dylib` under `Contents/Resources` (which `--deep` does not reach), then `--deep` over the whole `.app`, then a `codesign --verify --deep --strict` so a bad seal fails the build. This exists because packaging *invalidates* the ad-hoc signatures the prebuilt Electron binaries ship with — it renames the executable, rewrites `Info.plist`, injects `app.asar`, and (in the same hook) deletes files under `Contents/Resources`. macOS reports an invalid signature as "Backspace.app is damaged and can't be opened", with no "Open Anyway" affordance anywhere in the UI, so re-sealing is what makes the app openable at all. What the ad-hoc signature gives is a valid bundle seal and nothing more. It does **not** give notarization (first launch still shows the Gatekeeper prompt, cleared via System Settings → Privacy & Security → Open Anyway), it does **not** give a team identifier (so macOS auto-update stays unavailable — see below), and it does **not** give a stable cdhash across releases (so macOS drops Input Monitoring and Screen Recording grants on every update, meaning global keybinds and screen sharing must be re-authorised each time).
+- **macOS — signed with the project's self-signed certificate** (from 2.3.0 on; see "Stable signing identity" below), or ad-hoc where the certificate is not available (local builds, fork PRs). `scripts/macSign.js` runs last in the `afterPack` hook and re-seals the packaged bundle: first every `.node`/`.dylib` under `Contents/Resources` (which `--deep` does not reach), then `--deep` over the whole `.app`, then a `codesign --verify --deep --strict` so a bad seal fails the build. Re-sealing is needed at all because packaging *invalidates* the signatures the prebuilt Electron binaries ship with — it renames the executable, rewrites `Info.plist`, injects `app.asar`, and (in the same hook) deletes files under `Contents/Resources`; macOS reports an invalid signature as "B-SPACE.app is damaged and can't be opened", with no "Open Anyway" affordance. Neither signature gives notarization: first launch still shows the Gatekeeper prompt, cleared via System Settings → Privacy & Security → Open Anyway.
 - **Windows — unsigned.** No certificate is configured, so installers carry no Authenticode signature and users meet the SmartScreen "Windows protected your PC" prompt.
 - **Linux — unsigned.** AppImage and `.deb` artifacts carry no signature, and releases are not served from a GPG-signed apt repository.
 
 `CSC_IDENTITY_AUTO_DISCOVERY: "false"` is set for every platform in the matrix and only stops electron-builder from hunting for an identity in the runner's keychain; it is not what makes the macOS bundle ad-hoc signed. `macSign.js` decides that for itself, from `CSC_LINK`/`CSC_NAME` (see step 5 below).
 
 Procuring real certificates is a real-money, real-identity action outside what can be done in code, so it remains a deliberate, previously-accepted gap — documented here so a maintainer can execute it later without re-deriving the steps.
+
+## Stable signing identity (self-signed, macOS)
+
+macOS keys two things to the **designated requirement** (DR) of the app's signature, not to its name or bundle id alone:
+
+- **TCC grants** (Screen & System Audio Recording, Input Monitoring, Accessibility): the grant is stored with the DR of the binary that received it, and a later binary keeps the grant only if it satisfies that DR.
+- **Squirrel.Mac**, which installs updates in place: it checks the downloaded bundle against the running app's DR.
+
+An ad-hoc signature's DR is the binary's own cdhash (`designated => cdhash H"…"`), which no other build can satisfy, so every update dropped the user's permissions and could not be installed automatically. Signing every release with one certificate makes the DR name the certificate instead:
+
+```
+designated => identifier "com.backspace.desktop" and certificate root = H"18a1302a31682d9b426c6297b4b642837ab22308"
+```
+
+(`root` because the certificate is self-signed, its own root; a chained certificate gives `certificate leaf`.) Every later build signed with it satisfies that requirement. Neither check evaluates trust, only the hash, so the certificate needs no Apple account and no trust settings; `security find-identity` lists it as `CSSMERR_TP_NOT_TRUSTED` and `codesign` signs with it all the same. Measured on 2026-11-14: two different binaries signed with one self-signed certificate, `codesign --verify -R "=<DR of build 1>" build2.app` → "explicit requirement satisfied"; the same check between two ad-hoc builds fails.
+
+| | |
+|---|---|
+| Certificate | `CN=B-SPACE Code Signing, O=B-SPACE`, RSA 3072, self-signed, EKU codeSigning, valid to 2056-11-13 |
+| SHA-1 (what the DR pins) | `18A1302A31682D9B426C6297B4B642837AB22308` |
+| CI secrets | `MAC_SIGN_P12` (base64 of the `.p12`), `MAC_SIGN_P12_PASSWORD` |
+| Used by | `release.yml` (macOS job; `MAC_SIGN_REQUIRED=1` fails the release if the secret is missing), `desktop-test-build.yml` (when the secret is available) |
+| Signing | `macSign.js` imports the `.p12` into a throwaway keychain (random password, codesign-only partition list), signs `--timestamp=none` without hardened runtime, checks the DR names a certificate hash, deletes the keychain |
+| Backup | The owner keeps the `.p12` and its password outside the repository. **Losing them is permanent**: a new certificate is a new DR, so every installed copy would need one manual reinstall and fresh permission grants, exactly like the switch from ad-hoc |
+
+**The switch itself costs one manual step**: copies signed ad-hoc (up to the first release signed with the certificate) cannot satisfy the new DR, and they classify themselves as `manual` anyway. Users install that release by hand from the DMG once and grant the permissions once; from then on updates install themselves and the grants stay.
+
+What this does not give: Gatekeeper still treats the app as from an unidentified developer (first launch needs Open Anyway or `xattr -dr com.apple.quarantine`), there is no notarization, and anyone holding the `.p12` can sign code that inherits the users' grants, which is why it lives only in the owner's hands and in Actions secrets. A Developer ID (below) would replace it; switching is again a one-time DR change for users.
 
 ### macOS: Apple Developer ID + notarization
 
@@ -126,7 +154,7 @@ AppImage/`.deb` distribution does not require a paid certificate; Linux package 
 `main.ts`'s `initAutoUpdater()` runs unconditionally on every platform (`electron-updater`'s GitHub provider, configured in `electron-builder.yml`'s `publish:` block; first check 10s after launch, then every 4 hours). What that buys differs per platform:
 
 - **Windows — updates install without a code-signature check**, because there is no signature to check: the app is unsigned, so `electron-updater`'s NSIS path has no publisher name to validate the downloaded installer against. A compromised GitHub release or publishing token could therefore ship a malicious update that installs with nothing to alert the user. (Releases are served over HTTPS, so a plain network MITM is not the concern here.)
-- **macOS — auto-update is unavailable, not merely unverified.** There *is* a signature, but it is ad-hoc. `electron-updater` checks and downloads, then hands the update to Electron's native `autoUpdater` (Squirrel.Mac), which will only swap in a bundle whose code signature matches the running app's. An ad-hoc signature carries no team identifier and its cdhash changes with every build, so no new release can ever match — the install step fails and the app stays on the old version. Until Developer ID signing lands, macOS users have to download new releases by hand. Measured on a shipped 1.0.3 build, and see "The exact mechanism" below.
+- **macOS — auto-update works for builds signed with the project certificate** (see "Stable signing identity"): Squirrel.Mac accepts a bundle that satisfies the running app's certificate-pinned DR. It verifies the signer, not a publisher Apple vouches for. The rest of this bullet describes ad-hoc builds, which still cannot update themselves. **Ad-hoc: auto-update is unavailable, not merely unverified.** There *is* a signature, but it is ad-hoc. `electron-updater` checks and downloads, then hands the update to Electron's native `autoUpdater` (Squirrel.Mac), which will only swap in a bundle whose code signature matches the running app's. An ad-hoc signature carries no team identifier and its cdhash changes with every build, so no new release can ever match — the install step fails and the app stays on the old version. Users of an ad-hoc build have to download new releases by hand. Measured on a shipped 1.0.3 build, and see "The exact mechanism" below.
 - **Linux — no signature check either.** `electron-updater` selects its AppImage or `.deb` updater from how the app was installed; neither verifies a signature, and the artifacts are unsigned.
 
 Once Developer ID / Authenticode signing (above) is wired up, `electron-updater` will verify the update package's signature before install on Windows, and Squirrel.Mac will be able to validate macOS updates at all. This is flagged as a known gap, not fixed by this plan.
@@ -155,7 +183,7 @@ designated => identifier "com.example.app" and anchor apple generic and
 
 `~/Library/Caches/com.backspace.desktop.ShipIt` exists but is empty on affected machines: Squirrel created its state directory, failed validation, and wrote nothing.
 
-**The app now measures this at runtime** rather than hardcoding "macOS cannot update". `packages/desktop/src/updateCapability.ts` runs the `codesign -d -r-` probe, classifies the requirement, and reports `manual` for a bare cdhash and `auto` for anything certificate-anchored. Consequences: `autoDownload` is off in manual mode (the ad-hoc build was otherwise pulling the full release archive on every check and storing it twice, 228 MB measured, for a file it could never apply), no Restart button is offered, and the copy says plainly that the build cannot update itself. **When a Developer ID lands in CI, that probe flips to `auto` on its own with no code change.** See [desktop.md](desktop.md) for the full update flow.
+**The app now measures this at runtime** rather than hardcoding "macOS cannot update". `packages/desktop/src/updateCapability.ts` runs the `codesign -d -r-` probe, classifies the requirement, and reports `manual` for a bare cdhash and `auto` for anything certificate-anchored. Consequences: `autoDownload` is off in manual mode (the ad-hoc build was otherwise pulling the full release archive on every check and storing it twice, 228 MB measured, for a file it could never apply), no Restart button is offered, and the copy says plainly that the build cannot update itself. Builds signed with the project certificate (`certificate root = H"…"`) classify as `auto` through the same probe, with no code change; so would a Developer ID. See [desktop.md](desktop.md) for the full update flow.
 
 ## Not verified
 

@@ -58,13 +58,15 @@ mac:
   extendInfo:
     CFBundleDisplayName: "B:SPACE"
     NSAudioCaptureUsageDescription: "B:SPACE needs access to system audio to share sound during screen sharing."
-  # dmg only. The zip target exists for Squirrel.Mac auto-update, and these
-  # builds are ad-hoc signed, which the updater classifies as `manual`
-  # (src/updateCapability.ts): nothing on a Mac ever downloads the zip, so it
-  # was 250 MB of dead weight per release. The zip target comes back the day a
-  # Developer ID certificate makes in-place updates possible on macOS.
+  # dmg for people, zip for Squirrel.Mac. Release builds are signed with the
+  # project's stable certificate (scripts/macSign.js, MAC_SIGN_P12), which
+  # src/updateCapability.ts classifies as `auto`: electron-updater downloads
+  # the zip named in latest-mac.yml and Squirrel.Mac installs it in place.
+  # (Before 2.3.0 builds were ad-hoc signed and could not update themselves,
+  # so the zip was left out as dead weight.)
   target:
     - dmg
+    - zip
 win:
   icon: ./build/icon.ico
   target:

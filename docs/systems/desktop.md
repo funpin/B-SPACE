@@ -350,16 +350,18 @@ works, so guessing "manual" wrongly costs one extra click, while guessing "auto"
 wrongly produces a button that silently does nothing.
 
 **Nothing here hardcodes "macOS cannot update".** It measures the property that
-actually decides the outcome, so the day CI signs with a Developer ID this
-returns `auto` with no code change. See [desktop-security.md](desktop-security.md)
-for why the ad-hoc signature makes it impossible today.
+actually decides the outcome. Release builds from 2.3.0 on are signed with the
+project's self-signed certificate (`certificate root = H"…"`), so they classify
+as `auto` and update in place through Squirrel.Mac; a local or fork build signed
+ad-hoc stays `manual`. See [desktop-security.md](desktop-security.md), "Stable
+signing identity", for the certificate and why the ad-hoc signature cannot update.
 
 ### Configuration (`initAutoUpdater()`)
 
 ```
 autoDownload         = capability === 'auto'
 autoInstallOnAppQuit = capability === 'auto'
-Publish: GitHub (TheZwiss/backspace)
+Publish: GitHub (funpin/B-SPACE); macOS targets dmg + zip (the zip and latest-mac.yml feed Squirrel.Mac)
 ```
 
 In `manual` mode nothing is downloaded, so no proxy server is created, Squirrel

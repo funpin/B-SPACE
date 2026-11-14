@@ -45,6 +45,14 @@ describe('classifyDesignatedRequirement', () => {
     expect(classifyDesignatedRequirement(output)).toBe('adhoc');
   });
 
+  it('classifies the project\'s self-signed certificate requirement as identified', () => {
+    const output = [
+      'Executable=/Applications/B-SPACE.app/Contents/MacOS/B-SPACE',
+      'designated => identifier "com.backspace.desktop" and certificate root = H"18a1302a31682d9b426c6297b4b642837ab22308"',
+    ].join('\n');
+    expect(classifyDesignatedRequirement(output)).toBe('identified');
+  });
+
   it('classifies a Developer ID requirement as identified', () => {
     const output = [
       'Executable=/Applications/Backspace.app/Contents/MacOS/Backspace',
