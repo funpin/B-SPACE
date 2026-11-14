@@ -16,6 +16,7 @@ import { ScreenShareSettingsPopover } from './ScreenShareSettingsPopover';
 import { useVoiceParticipantMeta } from '../../hooks/useVoiceParticipantMeta';
 import { StreamViewerCount, StreamViewersItem } from './StreamViewers';
 import { StreamPointerLayer } from './StreamPointers';
+import { VolumeSliderItem } from './voiceMenuItems';
 import { useStreamPointerStore } from '../../stores/streamPointerStore';
 import type { StreamTile as StreamTileType } from '../../hooks/useLiveKit';
 import type { TrackStatsSnapshot } from '../../hooks/useTrackStats';
@@ -338,7 +339,9 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
           render: () => React.createElement(StreamQualityItem),
         });
       } else {
-        // Remote stream: watch/unwatch, mute, volume, attenuation
+        // Remote stream: watch/unwatch, then the sharer's own sound (their
+        // mic) beside the stream's, so both are set from the tile without a
+        // second trip to the voice list, then attenuation.
         const currentIsWatching = useVoiceStore.getState().watchingStreams.has(userId);
         const identity = participant.identity;
 
@@ -370,7 +373,15 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
 
         items.push({ key: 'watch-sep', type: 'separator' });
 
-        // Mute Stream checkbox
+        // Mute the sharer's mic and mute the stream, side by side
+        items.push({
+          key: 'mute-user',
+          type: 'checkbox',
+          label: t('voice:participantMenu.muteUser'),
+          subscribe: useVoiceStore.subscribe,
+          getChecked: () => useVoiceStore.getState().participantMutes.get(userId) ?? false,
+          onChange: (checked) => useVoiceStore.getState().setParticipantMute(userId, checked),
+        });
         items.push({
           key: 'mute-stream',
           type: 'checkbox',
@@ -382,7 +393,12 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
 
         items.push({ key: 'vol-sep', type: 'separator' });
 
-        // Stream volume slider
+        // The sharer's mic volume above the stream's volume
+        items.push({
+          key: 'user-volume',
+          type: 'custom',
+          render: () => React.createElement(VolumeSliderItem, { userId }),
+        });
         items.push({
           key: 'stream-volume',
           type: 'custom',
