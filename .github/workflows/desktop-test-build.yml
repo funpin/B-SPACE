@@ -22,13 +22,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: desktop-test-build-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'desktop-build')
+    # On the job, not the workflow: a run whose job is skipped (a push to an
+    # unlabelled PR) must not cancel the labelled run it raced.
+    concurrency:
+      group: desktop-test-build-${{ github.event.pull_request.number || github.ref }}-${{ matrix.os }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
