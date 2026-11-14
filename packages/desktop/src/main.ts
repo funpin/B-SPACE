@@ -26,7 +26,7 @@ import {
   getPickerPath,
 } from './instanceUrl';
 import { getUpdateCapability, isSandboxed } from './updateCapability';
-import { ownAudioInSystemAudio } from './systemAudioCapability';
+import { ownAudioInSystemAudio, systemAudioDeviceId, type SystemAudioDeviceId } from './systemAudioCapability';
 import { listProcessCommands, runningAudioRouters } from './audioRouters';
 import { createSystemAudioController, withSystemAudioSource, type PatchBayModule } from './systemAudio';
 import { loadDismissedVersion, setDismissedVersion } from './updateDismissal';
@@ -645,6 +645,25 @@ let pointerOverlay: PointerOverlay | null = null;
 function trackSharedSource(source: Electron.DesktopCapturerSource): void {
   const display = displayForSource(source, screen.getAllDisplays());
   pointerOverlay?.setTarget(display ? display.id : null);
+}
+
+/**
+ * Answers a display-media request. Electron hands the audio id to Chromium as
+ * a string, but its `Streams` type lists only `loopback` and
+ * `loopbackWithMute`; `loopbackWithoutChrome` is a Chromium id it forwards
+ * unchanged (shell/browser/electron_browser_context.cc). The type is widened
+ * here, at the one place that calls back, and nowhere else.
+ */
+function grantDisplayMedia(
+  callback: (streams: Electron.Streams) => void,
+  video: Electron.DesktopCapturerSource,
+  shareAudio: boolean,
+): void {
+  trackSharedSource(video);
+  const audio: SystemAudioDeviceId = systemAudioDeviceId(process.platform, process.getSystemVersion());
+  console.log('[Main:ScreenShare] Granting', video.id, 'audio:', shareAudio ? audio : 'none');
+  const streams: { video: Electron.DesktopCapturerSource; audio?: SystemAudioDeviceId } = shareAudio ? { video, audio } : { video };
+  callback(streams as Electron.Streams);
 }
 
 /** Last enumeration, so a preselected id resolves to its DesktopCapturerSource without a second scan. */
@@ -1446,8 +1465,7 @@ if (!gotTheLock) {
             return;
           }
           console.log('[Main:ScreenShare] Using preselected source:', pending.sourceId, 'audio:', pending.shareAudio);
-          trackSharedSource(selected);
-          callback({ video: selected, ...(pending.shareAudio ? { audio: 'loopback' } : {}) });
+          grantDisplayMedia(callback, selected, pending.shareAudio);
           return;
         }
 
@@ -1470,8 +1488,7 @@ if (!gotTheLock) {
           // captured against the setting it thinks is in force.
           const shareAudio = lastSystemPickerShareAudio ?? false;
           console.log('[Main:ScreenShare] System picker returned one source:', sources[0]!.id, 'audio:', shareAudio);
-          trackSharedSource(sources[0]!);
-          callback({ video: sources[0]!, ...(shareAudio ? { audio: 'loopback' } : {}) });
+          grantDisplayMedia(callback, sources[0]!, shareAudio);
           return;
         }
 
@@ -1500,19 +1517,18 @@ if (!gotTheLock) {
 
         // Provide the selected source — Electron creates the MediaStream.
         // System audio loopback support varies:
-        //   - Windows: WASAPI loopback. Backspace's own
-        //     playback is left out only on Windows 11, where Chromium honours
-        //     the renderer's restrictOwnAudio (see systemAudioCapability.ts);
-        //     on Windows 10 the whole mix, this call included, is captured.
-        //   - macOS 13+: ScreenCaptureKit, or CoreAudio Tap from 14.2, which
-        //     also leaves Backspace out; requires NSAudioCaptureUsageDescription
+        //   - Windows: WASAPI loopback. On Windows 11 grantDisplayMedia asks
+        //     for `loopbackWithoutChrome`, a process loopback that leaves
+        //     Backspace's own playback out (systemAudioDeviceId); on Windows 10
+        //     the whole mix, this call included, is captured.
+        //   - macOS 13+: ScreenCaptureKit, or from 14.2 a CoreAudio Tap that
+        //     `loopbackWithoutChrome` makes leave Backspace out; requires NSAudioCaptureUsageDescription
         //     in Info.plist (electron-builder injects it via mac.extendInfo).
         //   - Linux: PulseAudio loopback, gated behind the
         //     `PulseaudioLoopbackForScreenShare` feature flag we enable above.
         //     Fails on PipeWire-only systems without pulse compat — the
         //     renderer catches that and toasts the user.
-        trackSharedSource(selected);
-        callback({ video: selected, ...(shareAudio ? { audio: 'loopback' } : {}) });
+        grantDisplayMedia(callback, selected, shareAudio);
       } catch (err) {
         console.error('[Main:ScreenShare] Handler error:', err);
         // @ts-ignore — deny the request without crashing

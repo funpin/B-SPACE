@@ -347,6 +347,22 @@ export function isCaptureCancellation(err: unknown): boolean {
   return err.name === 'NotAllowedError' || err.name === 'AbortError';
 }
 
+/**
+ * Records which device a system-audio track came from. `loopbackWithoutChrome`
+ * means the capture leaves this app's own playback (the call, its sounds) out;
+ * plain `loopback` means the whole output mix, the call included. The one
+ * place to look when viewers report hearing themselves.
+ */
+function logSystemAudioDevice(track: MediaStreamTrack | undefined): void {
+  if (!track) return;
+  try {
+    const settings = track.getSettings() as MediaTrackSettings & { restrictOwnAudio?: boolean };
+    console.info('[ScreenShare] System audio device:', settings.deviceId ?? 'unknown', 'restrictOwnAudio:', settings.restrictOwnAudio ?? 'unreported');
+  } catch {
+    // A diagnostic: a track that cannot report its settings must not fail the capture.
+  }
+}
+
 /** Must run inside a user gesture in browsers (getDisplayMedia requires transient activation). */
 export async function stageScreenCapture(): Promise<MediaStream> {
   const config = useVoiceStore.getState().screenShareConfig;
@@ -368,6 +384,7 @@ export async function stageScreenCapture(): Promise<MediaStream> {
       throw err;
     }
     if (ownFree) stream.addTrack(ownFree);
+    logSystemAudioDevice(stream.getAudioTracks()[0]);
     const video = stream.getVideoTracks()[0];
     if (video) video.contentHint = opts.contentHint;
     return stream;
@@ -767,6 +784,7 @@ async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTra
     stopStagedCapture(stream);
     throw new DOMException('The capture returned no audio track', 'NotFoundError');
   }
+  logSystemAudioDevice(audio);
   return audio;
 }
 

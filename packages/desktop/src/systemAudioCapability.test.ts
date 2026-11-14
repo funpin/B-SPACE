@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ownAudioInSystemAudio } from './systemAudioCapability';
+import { ownAudioInSystemAudio, systemAudioDeviceId } from './systemAudioCapability';
 
 /**
  * Chromium leaves the app's own playback out of a system-audio capture only
@@ -45,5 +45,20 @@ describe('ownAudioInSystemAudio', () => {
     expect(ownAudioInSystemAudio('win32', 'Windows')).toBe('unknown');
     expect(ownAudioInSystemAudio('darwin', 'garbage')).toBe('unknown');
     expect(ownAudioInSystemAudio('freebsd', '14.0')).toBe('unknown');
+  });
+});
+
+describe('systemAudioDeviceId', () => {
+  it('names the loopback without Backspace where the OS can leave it out', () => {
+    expect(systemAudioDeviceId('win32', '10.0.22631')).toBe('loopbackWithoutChrome');
+    expect(systemAudioDeviceId('darwin', '14.2.0')).toBe('loopbackWithoutChrome');
+    expect(systemAudioDeviceId('darwin', '15.1')).toBe('loopbackWithoutChrome');
+  });
+
+  it('keeps the plain loopback where it cannot', () => {
+    expect(systemAudioDeviceId('win32', '10.0.19045')).toBe('loopback');
+    expect(systemAudioDeviceId('darwin', '13.6')).toBe('loopback');
+    expect(systemAudioDeviceId('linux', '6.8.0')).toBe('loopback');
+    expect(systemAudioDeviceId('win32', 'garbage')).toBe('loopback');
   });
 });

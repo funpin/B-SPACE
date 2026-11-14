@@ -44,3 +44,22 @@ export function ownAudioInSystemAudio(platform: NodeJS.Platform, systemVersion: 
   }
   return 'unknown';
 }
+
+/**
+ * The audio device id the display-media handler answers a System Audio share
+ * with. Where the OS can leave Backspace's own playback out (`excluded`), the
+ * handler names Chromium's `loopbackWithoutChrome` itself instead of returning
+ * plain `loopback` and relying on Electron to swap it: that swap (Electron
+ * 43.4+) only happens when Blink forwarded the renderer's `restrictOwnAudio`
+ * constraint, and in practice the share still carried the voice chat. On
+ * Windows 11 Chromium then opens a WASAPI process loopback that excludes the
+ * audio service's process tree; on macOS 14.2+ a CoreAudio Tap excluding it.
+ * Everywhere else (`included`, `unavailable`, `unknown`) the id would fail or
+ * mean nothing, so the plain loopback stays.
+ */
+export type SystemAudioDeviceId = 'loopback' | 'loopbackWithoutChrome';
+
+export function systemAudioDeviceId(platform: NodeJS.Platform, systemVersion: string): SystemAudioDeviceId {
+  if (platform !== 'win32' && platform !== 'darwin') return 'loopback';
+  return ownAudioInSystemAudio(platform, systemVersion) === 'excluded' ? 'loopbackWithoutChrome' : 'loopback';
+}
