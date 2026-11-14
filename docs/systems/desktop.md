@@ -616,6 +616,8 @@ the summary paragraph directly under that heading before publishing. Flathub
 shows that paragraph, so write it as the store-facing summary of the release.
 
 CI publishes via `.github/workflows/release.yml` (tag `v*` on the public repo).
+
+Test builds without a release: `.github/workflows/desktop-test-build.yml` builds the same two installers with `--publish never` and keeps them as workflow artifacts for 7 days. It runs when a pull request carries the `desktop-build` label (and on every push to it while labelled), or by hand (`workflow_dispatch`, once the file is on `main`).
 A `create-release` job runs first and creates the draft for the tag, then four
 native build jobs fan out (mac arm64+x64, win x64+arm64, linux x64, linux
 arm64), each uploading its installers, `.blockmap`s, and platform `latest*.yml`
