@@ -1,7 +1,8 @@
 {
   "message": {
     "edit": {
-      "hint": "Esc zum <cancel>Abbrechen</cancel> • Enter zum <save>Speichern</save>"
+      "hint": "Esc zum Abbrechen • Enter zum Speichern",
+      "label": "Nachricht bearbeiten"
     },
     "edited": "(bearbeitet)",
     "rowLabel": "{{author}}, {{time}}",
