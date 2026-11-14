@@ -1,5 +1,5 @@
 {
-  "appName": "Backspace",
+  "appName": "B:SPACE",
   "actions": {
     "save": "Сохранить",
     "cancel": "Отмена",
@@ -120,7 +120,7 @@
     "details": "Подробности ошибки"
   },
   "app": {
-    "loading": "Загрузка Backspace"
+    "loading": "Загрузка B:SPACE"
   },
   "chrome": {
     "toggleMemberList": "Показать или скрыть список участников",

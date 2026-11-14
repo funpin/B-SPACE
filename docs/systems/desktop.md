@@ -4,7 +4,7 @@
 >
 > **The releases before 2.0.0** were named after the upstream release they were built on plus the fork's own revision: `1.11.0-f.1.0`, `1.11.0-f.1.1`. `compareVersions` in `packages/server/src/utils/releaseCheck.ts` and `scripts/bump-version.mjs` still read that form, so an instance on one of them is told about 2.0.0. **The desktop app on one of them is not.** electron-updater takes the first prerelease identifier of the running version (`f`) as its update channel, and with a custom channel it considers only releases whose tag carries the same one (`GitHubProvider`, the `isNextPreRelease` branch): `v2.0.0` has none, so a 1.11.0-f.x install never sees it and has to be replaced by hand once. From 2.0.0 on the running version has no prerelease identifier, the updater asks GitHub for the latest release, and this does not come up again. It is also the reason not to put a prerelease identifier in a release version again.
 >
-> **Fork builds (funpin/backspace).** This fork ships two desktop builds and no others: **Windows x64** (NSIS installer) and **macOS Apple Silicon** (DMG). The release matrix in `.github/workflows/release.yml`, the build list in `packages/web/src/platform/desktopDownload.ts` and the download table in the release notes name exactly those two; wherever this document describes Linux, Windows arm64 or Intel Mac artifacts it describes the upstream project, not this fork. `publish.owner` in `electron-builder.yml`, `RELEASES_URL` (desktop and web), the server's release check and the default AGPL section 13 source offer all point at `funpin/backspace`. The Desktop tab draws a tile only for a platform the build list has, a picker only when there is more than one choice, and a hero only when a build runs on the visitor's machine (Windows on ARM gets the x64 installer, which runs under emulation; an Intel Mac and Linux get none).
+> **Fork builds (funpin/B-SPACE).** This fork ships two desktop builds and no others: **Windows x64** (NSIS installer) and **macOS Apple Silicon** (DMG). The release matrix in `.github/workflows/release.yml`, the build list in `packages/web/src/platform/desktopDownload.ts` and the download table in the release notes name exactly those two; wherever this document describes Linux, Windows arm64 or Intel Mac artifacts it describes the upstream project, not this fork. `publish.owner` in `electron-builder.yml`, `RELEASES_URL` (desktop and web), the server's release check and the default AGPL section 13 source offer all point at `funpin/B-SPACE`. The Desktop tab draws a tile only for a platform the build list has, a picker only when there is more than one choice, and a hero only when a build runs on the visitor's machine (Windows on ARM gets the x64 installer, which runs under emulation; an Intel Mac and Linux get none).
 
 Source files:
 - `packages/desktop/src/main.ts` — Main process: window management, tray, IPC handlers, auto-update, deep links, app lifecycle
@@ -28,6 +28,20 @@ Source files:
 - `packages/desktop/resources/games.json` — Bundled game dictionary seed (versioned)
 
 ---
+
+## Names (`src/appIdentity.ts`)
+
+The product is **B:SPACE**. A colon cannot be part of a macOS file name, so:
+
+| Constant / key | Value | Used for |
+|---|---|---|
+| `APP_DISPLAY_NAME` | `B:SPACE` | `app.setName()`, window title, tray tooltip, About panel, update notifications; `CFBundleDisplayName` in `electron-builder.yml` |
+| `productName` (electron-builder) | `B-SPACE` | Bundle and executable names (`B-SPACE.app`, `B-SPACE.exe`, `B-SPACE Helper`), release asset names (`B-SPACE-<version>-<os>-<arch>.<ext>`), Linux `executableName` |
+| `USER_DATA_DIR_NAME` | `Backspace` | `app.setPath('userData', <appData>/Backspace)`: the folder every build before the rename used. `app.setName()` no longer derives it, so it is pinned explicitly before any `getPath('userData')` |
+| `LOGIN_ITEM_NAME` | `Backspace` | Windows Run-key value name (see Startup Re-Apply) |
+| `appId` | `com.backspace.desktop` | Unchanged: the updater, macOS TCC grants and the Windows uninstall entry are keyed by it |
+
+Release assets before 2.3.0 are named `Backspace-…`; `releaseAssetPrefix()` in `packages/web/src/platform/desktopDownload.ts` picks the prefix from the instance's version.
 
 ## Architecture Overview
 
@@ -186,7 +200,11 @@ capabilities even though `FLATPAK_ID` currently affects both.
 
 ### Startup Re-Apply
 
-The unconditional startup re-apply was removed (it was overwriting user changes made via Task Manager / System Settings). Today the only re-apply happens on Linux/AppImage and only when needed:
+The unconditional startup re-apply was removed (it was overwriting user changes made via Task Manager / System Settings). Today a re-apply happens only to fix a stale executable path, and only when needed.
+
+**Windows.** The Run-key entry (named `LOGIN_ITEM_NAME`, still `Backspace`) records the executable's full path. 2.3.0 renamed `Backspace.exe` to `B-SPACE.exe`, so an entry written by an earlier build points at a file the update removed. At startup `staleWindowsLoginItem()` returns our entry when it is **enabled** and its path differs (case-insensitively) from `process.execPath`; the app then re-applies with `openAtLogin: true` and the entry's own `--hidden` flag. A disabled entry is the user's choice in Task Manager and is left alone.
+
+**Linux/AppImage:**
 
 ```
 if linux AND $APPIMAGE is set:

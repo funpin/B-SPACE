@@ -17,7 +17,7 @@ import os from 'os';
 import { pathToFileURL } from 'url';
 import { startActivityDetection, stopActivityDetection, getCurrentActivity } from './activityDetector';
 import { KeybindManager } from './keybindManager';
-import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
+import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage, staleWindowsLoginItem } from './autoLaunch';
 import {
   loadInstanceUrl,
   saveInstanceUrl,
@@ -64,11 +64,17 @@ import {
   type ScreenSharePickerMode,
 } from './screenSharePolicy';
 import { getDesktopLanguage, isDesktopLanguage, saveStoredLanguage, translateDesktop } from './l10n';
+import { APP_DISPLAY_NAME, LOGIN_ITEM_NAME, USER_DATA_DIR_NAME } from './appIdentity';
 
-// Override Electron's package.json-derived app name so userData lives at
-// "<appData>/Backspace" instead of leaking the monorepo's "@backspace/desktop"
-// package name. Must run before any app.getPath('userData') consumer.
-app.setName('Backspace');
+// The app's name in menus, the About panel and notifications. Electron would
+// otherwise use the monorepo package name ("@backspace/desktop").
+app.setName(APP_DISPLAY_NAME);
+
+// userData stays at "<appData>/Backspace", the folder every build before the
+// B:SPACE rename used: moving it would sign everyone out and drop their
+// settings. Pinned explicitly, because app.setName() above no longer derives
+// it. Must run before any app.getPath('userData') consumer.
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR_NAME));
 
 // One-time migration from the historical scoped path. After the move the old
 // folder is gone, so subsequent launches hit the old-missing no-op branch.
@@ -77,7 +83,7 @@ app.setName('Backspace');
   const oldParent = path.join(appDataDir, '@backspace');
   const result = migrateUserData({
     oldDir: path.join(oldParent, 'desktop'),
-    newDir: path.join(appDataDir, 'Backspace'),
+    newDir: path.join(appDataDir, USER_DATA_DIR_NAME),
     oldParent,
   });
   if (result.kind === 'migrated') {
@@ -99,7 +105,7 @@ const knownInstanceOrigins = new Set<string>();
 // Fallback for the "Source code" menu items and the About panel: the
 // repository this desktop build is made from (the funpin fork).
 // Used when the connected instance can't be reached or advertises no source URL.
-const PROJECT_SOURCE_URL = 'https://github.com/funpin/backspace';
+const PROJECT_SOURCE_URL = 'https://github.com/funpin/B-SPACE';
 
 /**
  * Resolve the Corresponding Source URL for the instance the desktop app is
@@ -268,7 +274,7 @@ function applyLoginItemSettings(openAtLogin: boolean, startMinimized: boolean): 
       enabled: openAtLogin,
       path: process.execPath,
       args: startMinimized ? ['--hidden'] : [],
-      name: 'Backspace',
+      name: LOGIN_ITEM_NAME,
     });
   } else {
     // Linux: setLoginItemSettings creates ~/.config/autostart/<name>.desktop.
@@ -366,7 +372,7 @@ function createWindow(): void {
       : {}),
     minWidth: 940,
     minHeight: 500,
-    title: 'Backspace',
+    title: APP_DISPLAY_NAME,
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     ...(process.platform !== 'darwin' ? {
@@ -532,7 +538,7 @@ function createWindow(): void {
 function createTray(): void {
   tray = new Tray(loadTrayIcon(currentTrayState));
 
-  tray.setToolTip('Backspace');
+  tray.setToolTip(APP_DISPLAY_NAME);
   // Context menu is set by the recoveryStore subscriber in app.whenReady,
   // which keeps the menu in sync with update/recovery state.
 
@@ -905,7 +911,7 @@ function registerIpcHandlers(): void {
       // executableWillLaunchAtLogin to honour Task Manager's StartupApproved state.
       const osState = app.getLoginItemSettings({ path: process.execPath });
       const ownEntry = osState.launchItems?.find(
-        (item) => item.name === 'Backspace' || item.path?.toLowerCase() === process.execPath.toLowerCase(),
+        (item) => item.name === LOGIN_ITEM_NAME || item.path?.toLowerCase() === process.execPath.toLowerCase(),
       );
       // When the Run entry exists, its args are the source of truth for startMinimized.
       // When the entry is absent (autostart is off), there is no OS state to read, so we
@@ -944,7 +950,7 @@ function registerIpcHandlers(): void {
     if (process.platform === 'win32') {
       const osState = app.getLoginItemSettings({ path: process.execPath });
       const ownEntry = osState.launchItems?.find(
-        (item) => item.name === 'Backspace' || item.path?.toLowerCase() === process.execPath.toLowerCase(),
+        (item) => item.name === LOGIN_ITEM_NAME || item.path?.toLowerCase() === process.execPath.toLowerCase(),
       );
       currentOpenAtLogin = osState.executableWillLaunchAtLogin ?? false;
       // See `get-auto-launch-settings`: when the entry is absent, fall back to disk
@@ -1065,7 +1071,7 @@ function notifyAboutUpdate(
 
   if (snapshot.status.phase === 'ready' && snapshot.capability === 'auto') {
     showNotification(
-      'Backspace update ready',
+      `${APP_DISPLAY_NAME} update ready`,
       `Click to restart and install version ${version}.`,
       () => updater.quitAndInstall(),
     );
@@ -1073,7 +1079,7 @@ function notifyAboutUpdate(
   }
 
   showNotification(
-    `Backspace ${version} is available`,
+    `${APP_DISPLAY_NAME} ${version} is available`,
     'Click to open the download page.',
     () => { void shell.openExternal(RELEASES_URL); },
   );
@@ -1464,7 +1470,7 @@ if (!gotTheLock) {
 
     // AGPL-3.0 § 13: native About panel advertises the version + source repo.
     app.setAboutPanelOptions({
-      applicationName: 'Backspace',
+      applicationName: APP_DISPLAY_NAME,
       applicationVersion: app.getVersion(),
       copyright: `AGPL-3.0-only · Source: ${PROJECT_SOURCE_URL}`,
       website: PROJECT_SOURCE_URL,
@@ -1526,7 +1532,23 @@ if (!gotTheLock) {
 
     ipcMain.handle('get-current-activity', () => getCurrentActivity());
 
-    // Linux/AppImage path-refresh ONLY. On Windows and macOS the OS is the source
+    // Windows: re-point an enabled login item whose executable was renamed or
+    // moved by an update (see staleWindowsLoginItem). The entry stays enabled
+    // or disabled exactly as the OS has it; only its path changes.
+    if (process.platform === 'win32') {
+      try {
+        const stale = staleWindowsLoginItem(
+          app.getLoginItemSettings({ path: process.execPath }).launchItems ?? [],
+          LOGIN_ITEM_NAME,
+          process.execPath,
+        );
+        if (stale) applyLoginItemSettings(true, deriveStartMinimizedFromArgs(stale.args));
+      } catch (err) {
+        console.error('[autoLaunch] Windows path-refresh check failed:', err);
+      }
+    }
+
+    // Linux/AppImage path-refresh. On Windows and macOS the OS is the source
     // of truth for openAtLogin (Task 4) and we must not override user changes made
     // via Task Manager / System Settings by re-applying disk state here.
     //

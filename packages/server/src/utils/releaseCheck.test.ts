@@ -58,7 +58,7 @@ describe('parseLatestRelease', () => {
       tag_name: 'v1.0.4',
       html_url: 'https://evil.example.com/phish',
     });
-    expect(result?.url).toBe('https://github.com/funpin/backspace/releases/tag/v1.0.4');
+    expect(result?.url).toBe('https://github.com/funpin/B-SPACE/releases/tag/v1.0.4');
   });
 
   it('tolerates a missing published_at', () => {
@@ -110,7 +110,7 @@ describe('fork versions (upstream release plus -f.<major>.<minor>)', () => {
   });
 
   it('reports an update between two fork releases and accepts a fork tag', () => {
-    const latest = parseLatestRelease({ tag_name: 'v1.11.0-f.1.1', html_url: 'https://github.com/funpin/backspace/releases/tag/v1.11.0-f.1.1' });
+    const latest = parseLatestRelease({ tag_name: 'v1.11.0-f.1.1', html_url: 'https://github.com/funpin/B-SPACE/releases/tag/v1.11.0-f.1.1' });
     expect(latest?.version).toBe('1.11.0-f.1.1');
     expect(deriveState('1.11.0-f.1.0', { latest, checkedAt: 0, error: null } as never)).toBe('update-available');
     expect(deriveState('1.11.0-f.1.1', { latest, checkedAt: 0, error: null } as never)).toBe('up-to-date');

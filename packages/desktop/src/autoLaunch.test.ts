@@ -3,6 +3,7 @@ import {
   deriveStartMinimizedFromArgs,
   parseExecPathFromDesktopFile,
   shouldReapplyAppImage,
+  staleWindowsLoginItem,
 } from './autoLaunch';
 
 describe('deriveStartMinimizedFromArgs', () => {
@@ -74,5 +75,28 @@ describe('shouldReapplyAppImage', () => {
   it('returns false when there is no current AppImage env (not in AppImage runtime)', () => {
     expect(shouldReapplyAppImage(null, '/anything')).toBe(false);
     expect(shouldReapplyAppImage(null, null)).toBe(false);
+  });
+});
+
+describe('staleWindowsLoginItem', () => {
+  const now = 'C:\\Users\\a\\AppData\\Local\\Programs\\backspace\\B-SPACE.exe';
+  const old = 'C:\\Users\\a\\AppData\\Local\\Programs\\backspace\\Backspace.exe';
+
+  it('returns the enabled entry that still points at the old executable', () => {
+    const item = { name: 'Backspace', path: old, args: ['--hidden'], enabled: true };
+    expect(staleWindowsLoginItem([item], 'Backspace', now)).toBe(item);
+  });
+
+  it('leaves an entry that already points here, whatever the case of the path', () => {
+    expect(staleWindowsLoginItem([{ name: 'Backspace', path: now.toUpperCase(), enabled: true }], 'Backspace', now)).toBeNull();
+  });
+
+  it('leaves an entry the user disabled in Task Manager', () => {
+    expect(staleWindowsLoginItem([{ name: 'Backspace', path: old, enabled: false }], 'Backspace', now)).toBeNull();
+  });
+
+  it('ignores entries of other apps and the absence of ours', () => {
+    expect(staleWindowsLoginItem([{ name: 'Other', path: old, enabled: true }], 'Backspace', now)).toBeNull();
+    expect(staleWindowsLoginItem([], 'Backspace', now)).toBeNull();
   });
 });

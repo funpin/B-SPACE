@@ -26,7 +26,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { MobileYouScreen } from './MobileYouScreen';
 import { HubUpdateDot } from '../projectHub/HubUpdateDot';
 
-const DOT = 'Backspace was updated';
+const DOT = 'B:SPACE was updated';
 
 const self: User = {
   id: 'user-self',
@@ -66,23 +66,23 @@ afterEach(() => {
   useAuthStore.setState({ user: null });
 });
 
-describe('MobileYouScreen: Backspace row', () => {
-  it('renders a Backspace row that pushes the backspace screen', () => {
+describe('MobileYouScreen: B:SPACE row', () => {
+  it('renders a B:SPACE row that pushes the backspace screen', () => {
     render(<MobileYouScreen />);
 
-    fireEvent.click(row('Backspace'));
+    fireEvent.click(row('B:SPACE'));
 
     expect(pushMobileScreen).toHaveBeenCalledTimes(1);
     expect(pushMobileScreen).toHaveBeenCalledWith('backspace');
   });
 
-  it('shows the updated dot on the Backspace row when the instance updated since the last visit', () => {
+  it('shows the updated dot on the B:SPACE row when the instance updated since the last visit', () => {
     hubState.state = 'updated';
 
     render(<MobileYouScreen />);
 
     const dot = screen.getByRole('img', { name: DOT });
-    expect(row('Backspace')).toContainElement(dot);
+    expect(row('B:SPACE')).toContainElement(dot);
     expect(screen.getAllByRole('img', { name: DOT })).toHaveLength(1);
   });
 
@@ -102,7 +102,7 @@ describe('MobileYouScreen: Backspace row', () => {
     render(<MobileYouScreen />);
 
     expect(screen.queryByRole('img', { name: DOT })).toBeNull();
-    expect(within(row('Backspace')).queryByRole('img')).toBeNull();
+    expect(within(row('B:SPACE')).queryByRole('img')).toBeNull();
   });
 
   it('puts the dot on no other row', () => {

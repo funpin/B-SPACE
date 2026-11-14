@@ -1,10 +1,10 @@
 {
   "nav": {
-    "label": "Backspace",
-    "updatedDot": "Backspace wurde aktualisiert"
+    "label": "B:SPACE",
+    "updatedDot": "B:SPACE wurde aktualisiert"
   },
   "header": {
-    "title": "Backspace",
+    "title": "B:SPACE",
     "tagline": "Open-Source-Chat, den du selbst hosten kannst."
   },
   "whatsNew": {
@@ -15,8 +15,8 @@
     "action": "Versionshinweise lesen"
   },
   "community": {
-    "title": "Der Backspace-Community beitreten",
-    "body": "Sprich mit den Leuten, die Backspace entwickeln, stell Fragen und gib Feedback.",
+    "title": "Der B:SPACE-Community beitreten",
+    "body": "Sprich mit den Leuten, die B:SPACE entwickeln, stell Fragen und gib Feedback.",
     "join": "Beitreten",
     "open": "Öffnen",
     "pending": "Anfrage gesendet",
@@ -42,7 +42,7 @@
   },
   "host": {
     "title": "Eigene Instanz hosten",
-    "body": "Betreibe Backspace auf deinem eigenen Server und lade ein, wen du willst.",
+    "body": "Betreibe B:SPACE auf deinem eigenen Server und lade ein, wen du willst.",
     "action": "Installationsanleitung lesen"
   },
   "desktop": {
