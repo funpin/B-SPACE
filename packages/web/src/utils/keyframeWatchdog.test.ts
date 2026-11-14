@@ -61,9 +61,13 @@ describe('KeyframeRequestTracker', () => {
 });
 
 describe('readLayerSamples', () => {
-  it('reads the active video layers and their tallest frame', () => {
+  it('reads the active H.264 layers and their tallest frame, and nothing of VP9', () => {
     const entries: RTCStats[] = [
-      { id: 'a', type: 'outbound-rtp', timestamp: 0, kind: 'video', pliCount: 2, firCount: 1, keyFramesEncoded: 4, frameHeight: 1080, active: true } as RTCStats,
+      { id: 'h264', type: 'codec', timestamp: 0, mimeType: 'video/H264' } as RTCStats,
+      { id: 'vp9', type: 'codec', timestamp: 0, mimeType: 'video/VP9' } as RTCStats,
+      { id: 'a', type: 'outbound-rtp', timestamp: 0, kind: 'video', codecId: 'h264', pliCount: 2, firCount: 1, keyFramesEncoded: 4, frameHeight: 1080, active: true } as RTCStats,
+      // VP9 resizes without a keyframe: never nudged.
+      { id: 'v', type: 'outbound-rtp', timestamp: 0, kind: 'video', codecId: 'vp9', pliCount: 9, keyFramesEncoded: 0, frameHeight: 1440, active: true } as RTCStats,
       { id: 'b', type: 'outbound-rtp', timestamp: 0, kind: 'video', pliCount: 0, keyFramesEncoded: 1, frameHeight: 540, active: false } as RTCStats,
       { id: 'c', type: 'outbound-rtp', timestamp: 0, kind: 'audio', pliCount: 9 } as RTCStats,
     ];

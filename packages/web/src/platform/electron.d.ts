@@ -103,6 +103,8 @@ interface BackspaceElectronAPI {
    */
   setStreamPointerOverlay?: (pointers: import('../utils/streamPointerOverlay').OverlayPointer[]) => void;
   endStreamPointerOverlay?: () => void;
+  /** Whether the share captures the overlay after all; absent on builds before the check. */
+  onStreamPointerOverlayCaptured?: (callback: (captured: boolean) => void) => () => void;
 
   // Auto-update, legacy per-event channels.
   //
@@ -170,6 +172,13 @@ interface BackspaceElectronAPI {
    * renderer opens as a microphone (`label` names the device). Optional: only
    * desktop builds that ship it have it.
    */
+  /**
+   * A System Audio capture without B:SPACE's own playback failed to start
+   * (Windows refused process loopback). Main re-arms the same source with the
+   * plain loopback; resolves true when the capture may be retried once.
+   * Absent on desktop builds older than the Windows 10 exclusion.
+   */
+  reportSystemAudioExclusionFailed?: () => Promise<boolean>;
   startSystemAudio?: () => Promise<
     | { ok: true; label: string }
     | { ok: false; reason: 'unsupported-platform' | 'sandboxed' | 'module-missing' | 'no-pipewire' | 'link-failed' }

@@ -94,6 +94,13 @@ contextBridge.exposeInMainWorld('backspace', {
   endStreamPointerOverlay: (): void => {
     ipcRenderer.send('stream-pointer-overlay-end');
   },
+  // Whether the share turned out to capture the overlay (Windows can ignore
+  // the exclusion for it). Once per overlay window.
+  onStreamPointerOverlayCaptured: (callback: (captured: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, captured: unknown) => callback(captured === true);
+    ipcRenderer.on('stream-pointer-overlay-captured', handler);
+    return () => { ipcRenderer.removeListener('stream-pointer-overlay-captured', handler); };
+  },
 
   // Window focus
   onWindowFocusChange: (callback: (focused: boolean) => void) => {
@@ -134,6 +141,10 @@ contextBridge.exposeInMainWorld('backspace', {
     ipcRenderer.invoke('get-system-audio-capability', usesAppSource === true),
   // Names of audio routers running now that double the sound of a System Audio share.
   getAudioRouters: () => ipcRenderer.invoke('get-audio-routers'),
+  // A System Audio capture without B:SPACE's own playback failed to start
+  // (Windows refused process loopback). Main re-arms the same source with the
+  // plain loopback; true when the renderer may retry the capture once.
+  reportSystemAudioExclusionFailed: (): Promise<boolean> => ipcRenderer.invoke('system-audio-exclusion-failed'),
   startSystemAudio: () => ipcRenderer.invoke('system-audio-start'),
   stopSystemAudio: () => ipcRenderer.invoke('system-audio-stop'),
   setScreenShareAudioPreference: (shareAudio: boolean) => {

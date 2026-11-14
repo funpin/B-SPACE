@@ -84,3 +84,56 @@ describe('stageScreenCapture with an app-excluded system-audio source', () => {
     expect(getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ audio: false }));
   });
 });
+
+describe('stageScreenCapture when Windows refuses audio without B:SPACE', () => {
+  afterEach(() => {
+    delete (window as unknown as { backspace?: unknown }).backspace;
+  });
+
+  function withDesktop(report: () => Promise<boolean>) {
+    const reportSystemAudioExclusionFailed = vi.fn(report);
+    (window as unknown as { backspace: unknown }).backspace = { platform: 'win32', reportSystemAudioExclusionFailed };
+    return reportSystemAudioExclusionFailed;
+  }
+
+  it('reports the failure and captures once more, with no second pick', async () => {
+    const report = withDesktop(async () => true);
+    const { stream } = fakeStream();
+    const getDisplayMedia = stubDisplayMedia(async () => stream);
+    getDisplayMedia.mockRejectedValueOnce(new DOMException('Could not start audio source', 'NotReadableError'));
+
+    expect(await stageScreenCapture()).toBe(stream);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(getDisplayMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries when the audio track is dead on arrival, stopping the first capture', async () => {
+    const report = withDesktop(async () => true);
+    const first = fakeStream();
+    const dead = { kind: 'audio', readyState: 'ended', stop: vi.fn() };
+    first.added.push(dead);
+    const second = fakeStream();
+    const getDisplayMedia = stubDisplayMedia(async () => second.stream);
+    getDisplayMedia.mockResolvedValueOnce(first.stream);
+
+    expect(await stageScreenCapture()).toBe(second.stream);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(first.video.stop).toHaveBeenCalled();
+  });
+
+  it('does not retry a cancelled pick, nor when the app has nothing to fall back to', async () => {
+    const report = withDesktop(async () => false);
+    const getDisplayMedia = stubDisplayMedia(async () => {
+      throw new DOMException('Could not start audio source', 'NotReadableError');
+    });
+    await expect(stageScreenCapture()).rejects.toThrow('Could not start audio source');
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+
+    report.mockClear();
+    // A browser's DOMException is an Error; jsdom's is not, so the cancellation is built as one.
+    const cancelled = Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' });
+    getDisplayMedia.mockRejectedValueOnce(cancelled);
+    await expect(stageScreenCapture()).rejects.toThrow('Permission denied');
+    expect(report).not.toHaveBeenCalled();
+  });
+});

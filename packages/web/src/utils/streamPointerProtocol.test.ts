@@ -6,6 +6,7 @@ import {
   pointInPicture,
   streamPointerFor,
 } from './streamPointerProtocol';
+import { encodeStreamPointerOverlay, parseStreamPointerOverlay } from './streamPointerProtocol';
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
@@ -50,5 +51,13 @@ describe('stream pointer geometry', () => {
   it('gives no point on a letterbox band', () => {
     expect(pointInPicture(400, 100, { left: 0, top: 0, width: 800, height: 800 }, 1600, 900)).toBeNull();
     expect(pointInPicture(400, 400, { left: 0, top: 0, width: 800, height: 800 }, 1600, 900)).toEqual({ x: 0.5, y: 0.5 });
+  });
+});
+
+describe('stream_pointer_overlay', () => {
+  it('round-trips and rejects anything else', () => {
+    expect(parseStreamPointerOverlay(encodeStreamPointerOverlay(true))).toEqual({ type: 'stream_pointer_overlay', captured: true });
+    expect(parseStreamPointerOverlay(new TextEncoder().encode('{"type":"stream_pointer_overlay","captured":"yes"}'))).toBeNull();
+    expect(parseStreamPointerOverlay(new TextEncoder().encode('{"type":"stream_pointer","target":"a","x":0,"y":0}'))).toBeNull();
   });
 });

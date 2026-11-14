@@ -40,7 +40,7 @@ import {
   resolveNativeOverdrive,
   syncScreenShareAudio,
 } from '../utils/screenShare';
-import { parseStreamPointer } from '../utils/streamPointerProtocol';
+import { parseStreamPointer, parseStreamPointerOverlay } from '../utils/streamPointerProtocol';
 import { useStreamPointerStore } from '../stores/streamPointerStore';
 import { encodeStreamWatch, parseShareSignal, parseStreamWatch, streamWatchFor, streamWatchKey } from '../utils/streamWatchProtocol';
 import { StreamRepublishTracker } from '../utils/streamRepublish';
@@ -515,6 +515,12 @@ export function useLiveKit() {
         );
         return;
       }
+      const overlay = parseStreamPointerOverlay(payload);
+      if (overlay) {
+        // The sender is the sharer whose overlay this is.
+        useStreamPointerStore.getState().setOverlayCaptured(participant.identity, overlay.captured);
+        return;
+      }
       const signal = parseShareSignal(payload);
       if (signal === 'stream_republish') {
         // The sender's next screen-share unpublish is a codec swap, not the end.
@@ -904,6 +910,8 @@ export function useLiveKit() {
           useVoiceStore.getState().evictWatcher(participant.identity);
         }
         useStreamPointerStore.getState().clearSender(participant.identity);
+        // A sharer who left takes its overlay state with it.
+        useStreamPointerStore.getState().setOverlayCaptured(participant.identity, false);
         if (bridgedShareEnded) {
           rememberWatchedShare(resume, participant.identity);
           endRemoteStream(participant.identity);

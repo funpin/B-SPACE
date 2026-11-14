@@ -76,6 +76,35 @@ export function parseStreamPointer(payload: Uint8Array): StreamPointerPayload | 
 }
 
 /**
+ * From a sharer to everyone in the room: whether its desktop overlay of the
+ * pointers (packages/desktop/src/pointerOverlay.ts) is in the shared picture.
+ * Normally it is kept out of the capture; where Windows ignores that, the
+ * picture already shows every pointer, so viewers stop drawing their own
+ * copies over it and keep the system cursor. Clients that predate it ignore it.
+ */
+export interface StreamPointerOverlayPayload {
+  type: 'stream_pointer_overlay';
+  captured: boolean;
+}
+
+export function encodeStreamPointerOverlay(captured: boolean): Uint8Array<ArrayBuffer> {
+  const payload: StreamPointerOverlayPayload = { type: 'stream_pointer_overlay', captured };
+  return Uint8Array.from(new TextEncoder().encode(JSON.stringify(payload)));
+}
+
+export function parseStreamPointerOverlay(payload: Uint8Array): StreamPointerOverlayPayload | null {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const v = parsed as Record<string, unknown>;
+    if (v.type !== 'stream_pointer_overlay' || typeof v.captured !== 'boolean') return null;
+    return { type: 'stream_pointer_overlay', captured: v.captured };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Where an `object-fit: contain` picture of `pictureWidth`×`pictureHeight`
  * sits inside a box: centred, as large as fits, bands on the long side.
  */

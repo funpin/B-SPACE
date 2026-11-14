@@ -13,6 +13,7 @@ import {
   type OverlayPointer,
 } from '../../utils/streamPointerOverlay';
 import { pointerColor } from './StreamPointers';
+import { publishStreamPointerOverlay } from '../../utils/streamPointerActions';
 import type { ParticipantInfo } from '../../hooks/useLiveKit';
 
 /** How often fading and click rings are re-evaluated while pointers are shown. */
@@ -76,9 +77,25 @@ export function StreamPointerOverlayBridge() {
       if (state.pointers.get(localIdentity) !== previous.pointers.get(localIdentity)) push();
     });
 
+    // Where Windows puts the overlay in the shared picture after all, the
+    // viewers are told, so they stop drawing a second copy of every pointer
+    // over it. The state goes to the whole room again whenever someone joins,
+    // so a late joiner knows too.
+    let captured = false;
+    const stopListening = api.onStreamPointerOverlayCaptured?.((value) => {
+      captured = value;
+      publishStreamPointerOverlay(value);
+    });
+    const unsubscribeJoins = useVoiceStore.subscribe((state, previous) => {
+      if (captured && state.participants.length > previous.participants.length) publishStreamPointerOverlay(true);
+    });
+
     return () => {
       unsubscribe();
+      unsubscribeJoins();
+      stopListening?.();
       if (timer !== null) clearInterval(timer);
+      if (captured) publishStreamPointerOverlay(false);
       endOverlay();
     };
   }, [isScreenSharing, showPointers, localIdentity]);

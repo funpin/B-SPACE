@@ -347,6 +347,59 @@ export function isCaptureCancellation(err: unknown): boolean {
   return err.name === 'NotAllowedError' || err.name === 'AbortError';
 }
 
+/**
+ * Records which device a system-audio track came from. `loopbackWithoutChrome`
+ * means the capture leaves this app's own playback (the call, its sounds) out;
+ * plain `loopback` means the whole output mix, the call included. The one
+ * place to look when viewers report hearing themselves.
+ */
+function logSystemAudioDevice(track: MediaStreamTrack | undefined): void {
+  if (!track) return;
+  try {
+    const settings = track.getSettings() as MediaTrackSettings & { restrictOwnAudio?: boolean };
+    console.info('[ScreenShare] System audio device:', settings.deviceId ?? 'unknown', 'restrictOwnAudio:', settings.restrictOwnAudio ?? 'unreported');
+  } catch {
+    // A diagnostic: a track that cannot report its settings must not fail the capture.
+  }
+}
+
+/**
+ * getDisplayMedia for a capture that may carry System Audio. The desktop app
+ * asks Windows for audio without B:SPACE's own playback (process loopback);
+ * where Windows refuses it, the capture fails or its audio track is dead on
+ * arrival. Then the app is told, re-arms the same source with the plain
+ * loopback, and the capture is made once more, with no second pick.
+ */
+async function captureDisplayMedia(constraints: DisplayMediaStreamOptions): Promise<MediaStream> {
+  const wantsAudio = constraints.audio !== false && constraints.audio !== undefined;
+  const retryWithPlainLoopback = async (): Promise<boolean> => {
+    const report = getElectronAPI()?.reportSystemAudioExclusionFailed;
+    if (!wantsAudio || !report) return false;
+    try {
+      return await report();
+    } catch {
+      return false;
+    }
+  };
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+  } catch (err) {
+    if (isCaptureCancellation(err) || !(await retryWithPlainLoopback())) throw err;
+    console.warn('[ScreenShare] System audio without B:SPACE failed to start; retrying with the whole mix:', err);
+    return navigator.mediaDevices.getDisplayMedia(constraints);
+  }
+
+  const deadAudio = wantsAudio && stream.getAudioTracks().some((t) => t.readyState === 'ended');
+  if (deadAudio && await retryWithPlainLoopback()) {
+    console.warn('[ScreenShare] System audio without B:SPACE ended at once; retrying with the whole mix');
+    stopStagedCapture(stream);
+    return navigator.mediaDevices.getDisplayMedia(constraints);
+  }
+  return stream;
+}
+
 /** Must run inside a user gesture in browsers (getDisplayMedia requires transient activation). */
 export async function stageScreenCapture(): Promise<MediaStream> {
   const config = useVoiceStore.getState().screenShareConfig;
@@ -360,7 +413,7 @@ export async function stageScreenCapture(): Promise<MediaStream> {
     const ownFree = config.shareAudio ? await acquireAppExcludedSystemAudio() : null;
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia(
+      stream = await captureDisplayMedia(
         buildCaptureConstraints(ownFree ? { ...config, shareAudio: false } : config, opts),
       );
     } catch (err) {
@@ -368,6 +421,7 @@ export async function stageScreenCapture(): Promise<MediaStream> {
       throw err;
     }
     if (ownFree) stream.addTrack(ownFree);
+    logSystemAudioDevice(stream.getAudioTracks()[0]);
     const video = stream.getVideoTracks()[0];
     if (video) video.contentHint = opts.contentHint;
     return stream;
@@ -758,7 +812,7 @@ async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTra
   if (ownFree) return ownFree;
   await api.preselectScreenSource(sourceId, true);
   const config = useVoiceStore.getState().screenShareConfig;
-  const stream = await navigator.mediaDevices.getDisplayMedia(
+  const stream = await captureDisplayMedia(
     buildCaptureConstraints({ ...config, shareAudio: true }, buildScreenShareOptions(config)),
   );
   stream.getVideoTracks().forEach((t) => t.stop());
@@ -767,6 +821,7 @@ async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTra
     stopStagedCapture(stream);
     throw new DOMException('The capture returned no audio track', 'NotFoundError');
   }
+  logSystemAudioDevice(audio);
   return audio;
 }
 

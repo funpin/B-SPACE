@@ -26,6 +26,7 @@
  */
 import {
   BrowserWindow,
+  desktopCapturer,
   screen,
   type BrowserWindowConstructorOptions,
   type Display,
@@ -104,7 +105,9 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
 @keyframes ring{from{transform:scale(.4);opacity:1}to{transform:scale(1.8);opacity:0}}
 </style></head><body><script>
 const marks=new Map();
-window.render=function(list){
+let frame={x:0,y:0,w:0,h:0};
+window.render=function(list,f){
+  if(f)frame=f;
   const seen=new Set();
   for(const p of list){
     seen.add(p.id);
@@ -121,7 +124,7 @@ window.render=function(list){
       el.appendChild(svg);el.appendChild(name);document.body.appendChild(el);
       m={el,path,name,ping:0};marks.set(p.id,m);
     }
-    m.el.style.left=(p.x*100)+'%';m.el.style.top=(p.y*100)+'%';
+    m.el.style.left=(frame.x+p.x*frame.w)+'px';m.el.style.top=(frame.y+p.y*frame.h)+'px';
     m.el.style.opacity=p.idle?'0':'1';
     m.path.setAttribute('fill',p.color);
     m.name.style.backgroundColor=p.color;
@@ -134,6 +137,14 @@ window.render=function(list){
     }
   }
   for(const [id,m] of marks){if(!seen.has(id)){m.el.remove();marks.delete(id);}}
+};
+let probeEl=null;
+window.probe=function(on,x,y,size){
+  if(probeEl){probeEl.remove();probeEl=null;}
+  if(!on)return;
+  probeEl=document.createElement('div');
+  probeEl.style.cssText='position:absolute;left:'+x+'px;top:'+y+'px;width:'+size+'px;height:'+size+'px;background:#ff00ff';
+  document.body.appendChild(probeEl);
 };
 </script></body></html>`;
 
@@ -199,14 +210,77 @@ export const OVERLAY_WORKSPACES: VisibleOnAllWorkspacesOptions = {
  * Owns the overlay window. `setTarget` says which display is being shared
  * (null when nothing, or a window, is); `update` draws the renderer's list.
  */
+/**
+ * Where the shared display sits inside the overlay window, in the page's CSS
+ * pixels. Pointers are fractions of the display, not of the window: Windows
+ * keeps a window off the taskbar, so the overlay can come out shorter than the
+ * display, and a pointer placed as a percentage of the window then lands
+ * higher the lower it is — exactly at the top, far off at the bottom.
+ */
+export interface OverlayFrame {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export function overlayFrame(display: Rectangle, windowBounds: Rectangle): OverlayFrame {
+  return {
+    x: display.x - windowBounds.x,
+    y: display.y - windowBounds.y,
+    w: display.width,
+    h: display.height,
+  };
+}
+
+/** Side of the probe square, in DIP: large enough to survive a quarter-size thumbnail. */
+export const CAPTURE_PROBE_SIZE = 32;
+/** Where the probe goes, in DIP from the display's top-left: clear of the corners' hot spots. */
+export const CAPTURE_PROBE_OFFSET = 48;
+/** The thumbnail is this fraction of the display: cheap, and the probe stays 8 px across. */
+const PROBE_THUMBNAIL_SCALE = 0.25;
+/** How long the probe is drawn before the screen is read: a couple of compositor frames. */
+const PROBE_SETTLE_MS = 120;
+
+/**
+ * Whether a BGRA bitmap region shows the probe: most of its pixels close to
+ * pure magenta. Scaling smears the edges, so the middle decides.
+ */
+export function bitmapShowsProbe(bgra: Buffer, width: number, height: number): boolean {
+  if (width <= 0 || height <= 0 || bgra.length < width * height * 4) return false;
+  let magenta = 0;
+  let counted = 0;
+  for (let y = Math.floor(height / 4); y < Math.ceil((height * 3) / 4); y++) {
+    for (let x = Math.floor(width / 4); x < Math.ceil((width * 3) / 4); x++) {
+      const i = (y * width + x) * 4;
+      const b = bgra[i]!;
+      const g = bgra[i + 1]!;
+      const r = bgra[i + 2]!;
+      counted++;
+      if (r > 200 && b > 200 && g < 70) magenta++;
+    }
+  }
+  return counted > 0 && magenta / counted >= 0.5;
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
 export class PointerOverlay {
   private window: BrowserWindow | null = null;
   private ready: Promise<void> | null = null;
   private targetDisplayId: number | null = null;
   private latest: OverlayPointer[] = [];
+  /** The window the capture check ran for; one check per window. */
+  private probedWindow: BrowserWindow | null = null;
   private readonly onDisplaysChanged = (): void => this.placeOnTarget();
 
-  constructor() {
+  /**
+   * @param onCaptured Called once per overlay window with whether the share
+   *   captures it after all. Windows can ignore the exclusion for this
+   *   transparent, click-through (layered) window — Windows 10 does — and
+   *   then every viewer sees each pointer in the picture as well.
+   */
+  constructor(private readonly onCaptured: (captured: boolean) => void = () => undefined) {
     screen.on('display-metrics-changed', this.onDisplaysChanged);
     screen.on('display-removed', this.onDisplaysChanged);
   }
@@ -254,7 +328,10 @@ export class PointerOverlay {
       this.close();
       return;
     }
-    if (this.window && !this.window.isDestroyed()) this.window.setBounds(display.bounds);
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.setBounds(display.bounds);
+      this.draw();
+    }
   }
 
   private ensureWindow(display: Display): { win: BrowserWindow; ready: Promise<void> } {
@@ -296,10 +373,61 @@ export class PointerOverlay {
     const list = this.latest;
     void ready.then(() => {
       if (win.isDestroyed() || this.window !== win) return;
+      if (list.length > 0 && !win.isVisible()) {
+        win.showInactive();
+        // Windows may have kept the window off the taskbar when it was made;
+        // shown and on top it can take the whole display.
+        win.setBounds(display.bounds);
+      } else if (list.length === 0 && win.isVisible()) {
+        win.hide();
+      }
+      const frame = overlayFrame(display.bounds, win.getBounds());
       // JSON is a JavaScript expression; the list has been validated field by field.
-      void win.webContents.executeJavaScript(`window.render(${JSON.stringify(list)})`).catch(() => { });
-      if (list.length > 0 && !win.isVisible()) win.showInactive();
-      else if (list.length === 0 && win.isVisible()) win.hide();
+      void win.webContents.executeJavaScript(`window.render(${JSON.stringify(list)},${JSON.stringify(frame)})`).catch(() => { });
+      if (list.length > 0 && this.probedWindow !== win) {
+        this.probedWindow = win;
+        void this.checkCaptureExclusion(win, display);
+      }
     });
+  }
+
+  /**
+   * Draws a small magenta square on the overlay for a moment and looks at the
+   * screen as a capture sees it. If the square is there, the exclusion did not
+   * take and the share carries the overlay. Windows only: macOS honours
+   * `setContentProtection` for this window.
+   */
+  private async checkCaptureExclusion(win: BrowserWindow, display: Display): Promise<void> {
+    if (process.platform !== 'win32') return;
+    try {
+      const bounds = win.getBounds();
+      const x = display.bounds.x - bounds.x + CAPTURE_PROBE_OFFSET;
+      const y = display.bounds.y - bounds.y + CAPTURE_PROBE_OFFSET;
+      await win.webContents.executeJavaScript(`window.probe(true,${x},${y},${CAPTURE_PROBE_SIZE})`);
+      await delay(PROBE_SETTLE_MS);
+      const width = Math.max(1, Math.round(display.bounds.width * PROBE_THUMBNAIL_SCALE));
+      const height = Math.max(1, Math.round(display.bounds.height * PROBE_THUMBNAIL_SCALE));
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } });
+      if (!win.isDestroyed()) void win.webContents.executeJavaScript('window.probe(false)').catch(() => { });
+      const source = sources.find((candidate) => candidate.display_id === String(display.id))
+        ?? (sources.length === 1 ? sources[0] : undefined);
+      if (!source || source.thumbnail.isEmpty()) return;
+      const thumb = source.thumbnail.getSize();
+      const scaleX = thumb.width / display.bounds.width;
+      const scaleY = thumb.height / display.bounds.height;
+      const region = source.thumbnail.crop({
+        x: Math.round(CAPTURE_PROBE_OFFSET * scaleX),
+        y: Math.round(CAPTURE_PROBE_OFFSET * scaleY),
+        width: Math.max(1, Math.round(CAPTURE_PROBE_SIZE * scaleX)),
+        height: Math.max(1, Math.round(CAPTURE_PROBE_SIZE * scaleY)),
+      });
+      const size = region.getSize();
+      const captured = bitmapShowsProbe(region.toBitmap(), size.width, size.height);
+      if (captured) console.warn('[Main:PointerOverlay] The share captures the overlay; viewers are told to stop drawing pointers over it');
+      if (this.window === win) this.onCaptured(captured);
+    } catch (err) {
+      console.warn('[Main:PointerOverlay] Capture check failed:', err);
+      if (!win.isDestroyed()) void win.webContents.executeJavaScript('window.probe(false)').catch(() => { });
+    }
   }
 }

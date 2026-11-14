@@ -1,5 +1,6 @@
 # Dependencies
-node_modules/
+# No trailing slash: a node_modules symlink (a worktree sharing another one's install) is ignored too.
+node_modules
 .pnpm-store/
 
 # Build output
