@@ -1,7 +1,8 @@
 {
   "message": {
     "edit": {
-      "hint": "Esc для <cancel>отмены</cancel> • Enter для <save>сохранения</save>"
+      "hint": "Esc — отменить • Enter — сохранить",
+      "label": "Редактирование сообщения"
     },
     "edited": "(изменено)",
     "rowLabel": "{{author}}, {{time}}",

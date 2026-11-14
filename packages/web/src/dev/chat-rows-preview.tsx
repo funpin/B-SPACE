@@ -24,6 +24,11 @@
 //                   through the userViews cache), `focus` (keyboard focus
 //                   instead of hover), `escaped` (opened by hover, then
 //                   Escape pressed with the pointer still on the pill).
+//   markdown-layout a status post typed with plain line breaks and a numbered
+//                   list, edited, then reference Markdown: paragraphs split by
+//                   a blank line, a loose list, a nested list, a quote, a
+//                   code block and a heading.
+//   edit-box        the status post open in the inline editor.
 //
 // Hover and focus-visible cannot be produced by a headless screenshot, so the
 // harness copies every `:hover` / `:focus-visible` rule in the loaded
@@ -59,6 +64,8 @@ const STATES = {
   'reaction-remote': 'Tooltip: a remote stub named through the userViews cache.',
   'reaction-focus': 'Tooltip opened by keyboard focus, with the focus ring.',
   'reaction-escaped': 'Tooltip opened by hover, then closed with Escape.',
+  'markdown-layout': 'Plain line breaks, a numbered list and reference Markdown blocks.',
+  'edit-box': 'The status post open in the inline editor.',
 } as const;
 type RowState = keyof typeof STATES;
 
@@ -195,6 +202,35 @@ function reactionConversation(): MessageWithUser[] {
   return [...lead, release, windows, linux];
 }
 
+// The post that showed the layout bug: plain lines and a numbered list
+// indented by one space, nothing else.
+const STATUS_POST = [
+  'Release notes (we have begun)',
+  'Done:',
+  ' 1. Self-signed certificate: permissions survive an update',
+  ' 2. The client updates itself: one button downloads, another restarts the app',
+  ' 3. Voice and stream volume sit side by side in the stream context menu',
+  ' 4. The new name is used everywhere',
+].join('\n');
+
+function markdownConversation(): MessageWithUser[] {
+  const status = row(30, ME, STATUS_POST);
+  status.editedAt = BASE + 31 * 4 * 60_000;
+  return [
+    status,
+    row(31, MIRA, 'First paragraph.\n\nSecond paragraph, after one blank line.\nAnd a line of its own.'),
+    row(32, OSKAR, 'A loose list:\n\n- one\n\n- two\n\n- three\n\nAnd text after it.'),
+    row(33, TOVE, 'Nested:\n- fruit\n  - apple\n  - pear\n- bread'),
+    row(34, MIRA, '> a quoted line\n> and its second line\n\nThe reply under it.'),
+    row(35, OSKAR, 'Run this:\n```sh\npnpm install\npnpm dev\n```\nthen open the page.'),
+    row(36, TOVE, '## Checklist\nEverything above is done.'),
+  ];
+}
+
+function isMarkdownState(state: RowState): boolean {
+  return state === 'markdown-layout' || state === 'edit-box';
+}
+
 // ─── Stores ─────────────────────────────────────────────────────────────────
 
 function isReactionState(state: RowState): boolean {
@@ -220,10 +256,13 @@ function seedStores(state: RowState): void {
     }]]),
   });
   useChatStore.setState({
-    messages: new Map([[CHANNEL, isReactionState(state) ? reactionConversation() : conversation()]]),
+    messages: new Map([[CHANNEL, isReactionState(state)
+      ? reactionConversation()
+      : isMarkdownState(state) ? markdownConversation() : conversation()]]),
     hasMore: new Map([[CHANNEL, false]]),
     // present-failed starts in a window loaded by an earlier jump.
     detachedChannels: new Map(state === 'present-failed' ? [[CHANNEL, []]] : []),
+    editingMessageId: state === 'edit-box' ? String(1000 + 30) : null,
   });
 }
 
@@ -303,7 +342,7 @@ async function openTooltip(target: { row: number; emoji: string; via: 'hover' | 
 }
 
 async function drive(state: RowState): Promise<void> {
-  if (state === 'reply-rest' || state === 'reactions-rest') return;
+  if (state === 'reply-rest' || state === 'reactions-rest' || isMarkdownState(state)) return;
   // Let the list's initial snap to the bottom run first, as it has long
   // before a person points at anything.
   await new Promise((resolve) => setTimeout(resolve, 300));

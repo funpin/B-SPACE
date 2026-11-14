@@ -6,6 +6,7 @@ import { MemoizedCodeBlock } from './CodeBlock';
 import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
 import { remarkEmojiShortcodes } from '../../utils/remarkEmojiShortcodes';
+import { BLANK_LINE_BEFORE, BLANK_LINE_GAP_CLASS, rehypeBlockLayout } from '../../utils/rehypeBlockLayout';
 import { useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
 import { splitMentions } from '../../utils/mentionTokens';
 
@@ -71,6 +72,21 @@ function urlTransform(url: string): string {
 // ─── Markdown Component Overrides ──────────────────────────────────────────
 
 const REMARK_PLUGINS = [remarkGfm, remarkDefaultCodeLang, remarkEmojiShortcodes];
+// The message container renders text with `white-space: pre-wrap`, so the
+// tree must hold only what the author typed: see utils/rehypeBlockLayout.ts.
+const REHYPE_PLUGINS = [rehypeBlockLayout];
+
+// ─── Block Spacing ─────────────────────────────────────────────────────────
+// Blocks carry no vertical margin of their own: a block sits right under the
+// one before it, as the lines were typed, and a blank line typed between two
+// blocks shows as one empty line. Headings, rules and tables keep a small top
+// margin when no blank line precedes them.
+
+/** The classes of a block: its own, then its top spacing. */
+function blockClass(className: string | undefined, own: string, topWithoutBlankLine = ''): string {
+  const blankLineBefore = className?.split(/\s+/).includes(BLANK_LINE_BEFORE) ?? false;
+  return [own, blankLineBefore ? BLANK_LINE_GAP_CLASS : topWithoutBlankLine].filter(Boolean).join(' ');
+}
 
 // ─── Mentions: Channel Context ─────────────────────────────────────────────
 // The component overrides below are built once and shared by every message,
@@ -95,7 +111,7 @@ function ChannelMentionBadge({ userId }: { userId: string }) {
 function buildComponents(): Components {
   return {
     // Paragraphs → spans to avoid block nesting issues in chat messages
-    p: ({ children }) => <span className="block">{children}</span>,
+    p: ({ className, children }) => <span className={blockClass(className, 'block')}>{children}</span>,
 
     // Links & Mentions
     // remark-parse autolinks <@userId> into mailto:@userId before plugins run,
@@ -141,8 +157,12 @@ function buildComponents(): Components {
       );
     },
 
-    // Override <pre> to be a minimal wrapper — the CodeBlock handles all styling
-    pre: ({ children }) => <>{children}</>,
+    // Override <pre> to be a minimal wrapper — the CodeBlock handles all
+    // styling. A blank line typed above the fence spaces it like any block.
+    pre: ({ className, children }) => {
+      const spacing = blockClass(className, '');
+      return spacing ? <div className={spacing}>{children}</div> : <>{children}</>;
+    },
 
     // Bold / Italic / Strikethrough
     strong: ({ children }) => <strong className="font-semibold text-txt-primary">{children}</strong>,
@@ -150,24 +170,29 @@ function buildComponents(): Components {
     del: ({ children }) => <del className="line-through text-txt-secondary">{children}</del>,
 
     // Blockquotes
-    blockquote: ({ children }) => (
-      <blockquote className="pl-3 border-l-[3px] border-interactive-muted my-0.5">
+    blockquote: ({ className, children }) => (
+      <blockquote className={blockClass(className, 'pl-3 border-l-[3px] border-interactive-muted')}>
         {children}
       </blockquote>
     ),
 
     // Lists
-    ul: ({ children }) => <ul className="list-disc pl-6 my-0.5 space-y-0.5">{children}</ul>,
-    ol: ({ children }) => <ol className="list-decimal pl-6 my-0.5 space-y-0.5">{children}</ol>,
-    li: ({ children }) => <li>{children}</li>,
+    // Items follow each other line by line; a loose list (items separated by
+    // blank lines) gets its empty lines from blockClass.
+    ul: ({ className, children }) => <ul className={blockClass(className, 'list-disc pl-6')}>{children}</ul>,
+    ol: ({ className, children }) => <ol className={blockClass(className, 'list-decimal pl-6')}>{children}</ol>,
+    li: ({ className, children }) => {
+      const spacing = blockClass(className, '');
+      return <li className={spacing || undefined}>{children}</li>;
+    },
 
     // Headings — Discord renders these with slightly larger/bolder text
-    h1: ({ children }) => <div className="text-2xl font-semibold text-txt-primary mt-2 mb-1">{children}</div>,
-    h2: ({ children }) => <div className="text-xl font-semibold text-txt-primary mt-2 mb-1">{children}</div>,
-    h3: ({ children }) => <div className="text-lg font-semibold text-txt-primary mt-1 mb-0.5">{children}</div>,
+    h1: ({ className, children }) => <div className={blockClass(className, 'text-2xl font-semibold text-txt-primary mb-1', 'mt-2')}>{children}</div>,
+    h2: ({ className, children }) => <div className={blockClass(className, 'text-xl font-semibold text-txt-primary mb-1', 'mt-2')}>{children}</div>,
+    h3: ({ className, children }) => <div className={blockClass(className, 'text-lg font-semibold text-txt-primary mb-0.5', 'mt-1')}>{children}</div>,
 
     // Horizontal rules
-    hr: () => <hr className="border-border-soft my-2" />,
+    hr: ({ className }) => <hr className={blockClass(className, 'border-border-soft mb-2', 'mt-2')} />,
 
     // Images (in markdown content — not attachments)
     img: ({ src, alt }) => (
@@ -184,8 +209,8 @@ function buildComponents(): Components {
     ),
 
     // Tables (GFM)
-    table: ({ children }) => (
-      <div className="overflow-x-auto my-1">
+    table: ({ className, children }) => (
+      <div className={blockClass(className, 'overflow-x-auto mb-1', 'mt-1')}>
         <table className="border-collapse text-sm">{children}</table>
       </div>
     ),
@@ -216,7 +241,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({ content, 
   useEmojiShortcodeNames();
   return (
     <MentionChannelContext.Provider value={channelId}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={urlTransform}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={urlTransform}>
         {preprocessMentions(content)}
       </ReactMarkdown>
     </MentionChannelContext.Provider>

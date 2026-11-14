@@ -2,11 +2,12 @@ import { isStickerMessage } from '../../utils/stickerMessages';
 import { StickerMessage } from './StickerMessage';
 import { useAuthorMenu } from './useAuthorMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Trans, useTranslation } from 'react-i18next';
+import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { formatters, useFormatters } from '../../i18n/formatters';
 import type { MessageWithUser, Embed, Reaction, User } from '@backspace/shared';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { MessageEditor } from './MessageEditor';
 import { InlineMessageText } from './InlineMessageText';
 import { Avatar } from '../ui/Avatar';
 import { ProfileAvatar } from '../ui/ProfileAvatar';
@@ -150,7 +151,6 @@ function getImageEmbedSourceUrl(content: string | null, embeds: Embed[]): string
 export function Message({ message, isCompact, isFirstInGroup, previousMessageId }: MessageProps) {
   const { t } = useTranslation(['chat', 'common']);
   const fmt = useFormatters();
-  const [editContent, setEditContent] = useState(message.content ?? '');
   const [isHovered, setIsHovered] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // The reaction picker, and what opened it: the "+" of the hover bar, or the
@@ -159,7 +159,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const [reactionPicker, setReactionPicker] = useState<'button' | 'row' | null>(null);
   const showReactionPicker = reactionPicker !== null;
   const confirmDeleteTimeout = useRef<ReturnType<typeof setTimeout>>();
-  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const reactionPickerBtnRef = useRef<HTMLButtonElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const currentUser = useAuthStore((s) => s.user);
@@ -175,19 +174,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const pending = isPendingMessage(message) ? message.__pending : null;
   const showInteractions = !pending;
   const isEditing = !pending && editingMessageId === message.id;
-
-  useEffect(() => {
-    if (!isEditing) return;
-    const content = message.content ?? '';
-    setEditContent(content);
-    const frame = requestAnimationFrame(() => {
-      const textarea = editTextareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(content.length, content.length);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isEditing, message.content]);
 
   const transfersForRow = useTransferStore((s) => s.transfers);
   const inMemoryFiles = useTransferStore((s) => s.hasInMemoryFile);
@@ -219,11 +205,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const selfIdHere = useSelfIdInChannel(mentionChannelId);
   const myRoleIdsHere = useSpaceStore((s) => (mentionChannelId ? selectMyRoleIdsInChannel(s, mentionChannelId) : undefined));
   const startEditing = () => {
-    setEditContent(message.content ?? '');
     setEditingMessage(message.id);
   };
   const stopEditing = () => {
-    setEditContent(message.content ?? '');
+    setEditingMessage(null);
+  };
+  const saveEdit = async (content: string) => {
+    await editMessage(message.id, content, channelKey);
     setEditingMessage(null);
   };
   const channelPermissions = useSpaceStore((s) => s.channelPermissions);
@@ -395,19 +383,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
     if (items.length === 0) return;
     useContextMenuStore.getState().open(menuPositionFor(e), items);
-  };
-
-  const handleEditSubmit = async (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (editContent.trim()) {
-        await editMessage(message.id, editContent.trim(), channelKey);
-        setEditingMessage(null);
-      }
-    }
-    if (e.key === 'Escape') {
-      stopEditing();
-    }
   };
 
   // Display identity: the user's own messages, from any instance, show their
@@ -600,37 +575,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
         )}
 
         {isEditing ? (
-          <div className="mt-1 w-full">
-            <textarea
-              ref={editTextareaRef}
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              onKeyDown={handleEditSubmit}
-              className="input-standard w-full p-3 rounded-lg resize-none text-sm leading-[21px]"
-              rows={2}
-              autoFocus
-            />
-            <p className="text-xs text-txt-tertiary mt-1.5 ml-1">
-              <Trans
-                t={t}
-                i18nKey="chat:message.edit.hint"
-                components={{ // i18n-check: allow-literal (the next line is an object key after a JSX element, not text)
-                  cancel: <button onClick={stopEditing} className="text-txt-link hover:underline" />,
-                  save: (
-                    <button
-                      onClick={() => {
-                        if (editContent.trim()) {
-                          editMessage(message.id, editContent.trim(), channelKey);
-                          setEditingMessage(null);
-                        }
-                      }}
-                      className="text-txt-link hover:underline"
-                    />
-                  ),
-                }}
-              />
-            </p>
-          </div>
+          <MessageEditor initialContent={message.content ?? ''} onSave={saveEdit} onCancel={stopEditing} />
         ) : (
           <div className="flex flex-col gap-1">
             {isGifOnly ? (

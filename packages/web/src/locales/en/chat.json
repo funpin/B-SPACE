@@ -1,7 +1,8 @@
 {
   "message": {
     "edit": {
-      "hint": "escape to <cancel>cancel</cancel> • enter to <save>save</save>"
+      "hint": "Esc to cancel • Enter to save",
+      "label": "Edit message"
     },
     "edited": "(edited)",
     "rowLabel": "{{author}}, {{time}}",

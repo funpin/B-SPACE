@@ -1,7 +1,8 @@
 {
   "message": {
     "edit": {
-      "hint": "按 Esc <cancel>取消</cancel> • 按 Enter <save>保存</save>"
+      "hint": "按 Esc 取消 • 按 Enter 保存",
+      "label": "编辑消息"
     },
     "edited": "(已编辑)",
     "rowLabel": "{{author}}，{{time}}",
