@@ -136,6 +136,10 @@ Dev-mode caveat: if a developer runs Electron pointed at the Vite dev server (`h
 
 ---
 
+## Developer tools
+
+The console is where the renderer logs screen-share and audio diagnostics (`[ScreenShare] System audio device: …` and the like), so it can be opened in a packaged build: **Ctrl+Shift+I** on Windows and Linux, through a `toggleDevTools` item in the never-shown application menu (`applyEditOnlyMenu` in `main.ts`), and **Cmd+Alt+I** or Window → Toggle Developer Tools on macOS (`buildAppMenuTemplate`, `recovery.ts`). The DevTools frontend asks before code is pasted into the console. Main-process logs (`[Main:…]`) go to the process's stdout and are not in this console.
+
 ## Stream pointer overlay (`src/pointerOverlay.ts`)
 
 Viewers' stream pointers (voice.md, *Stream pointer*) drawn over the sharer's real screen.

@@ -261,6 +261,10 @@ export function buildAppMenuTemplate(
         { role: 'zoom' },
         { type: 'separator' },
         { role: 'front' },
+        // Cmd+Alt+I. The console is where screen-share and audio diagnostics
+        // are logged; the DevTools frontend guards against pasted code itself.
+        { type: 'separator' },
+        { role: 'toggleDevTools' },
       ],
     },
   ];

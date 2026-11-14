@@ -1463,6 +1463,13 @@ if (!gotTheLock) {
             { role: 'selectAll' },
           ],
         },
+        {
+          // Never shown (the window is frameless); here for its accelerator,
+          // Ctrl+Shift+I, which opens the console where screen-share and
+          // audio diagnostics are logged.
+          label: translateDesktop(getDesktopLanguage(), 'menu.window'),
+          submenu: [{ role: 'toggleDevTools' }],
+        },
       ]));
     };
     if (process.platform !== 'darwin') {
