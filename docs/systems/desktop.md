@@ -356,6 +356,28 @@ as `auto` and update in place through Squirrel.Mac; a local or fork build signed
 ad-hoc stays `manual`. See [desktop-security.md](desktop-security.md), "Stable
 signing identity", for the certificate and why the ad-hoc signature cannot update.
 
+### Update window (`src/updateWindow.ts`, `resources/update.html`)
+
+"Check for Updates…" in the tray menu and in the macOS app menu opens a small window that follows the updater live, instead of only changing a menu label:
+
+| `UpdateStatus` phase | The window shows | Buttons |
+|---|---|---|
+| `idle`, `checking` | "Checking for updates…", installed version, indeterminate bar; the character looks around | Close |
+| `up-to-date` | "You have the latest version" with the installed version; the character's "^ ^" | Close |
+| `downloading` | Version, progress bar, percent and MB/s (formatted for the app language); closing the window does not stop the download | Close |
+| `ready` | "B:SPACE *x* is ready" | **Restart** → `installDownloadedUpdate()`, Later |
+| `available` (a `manual` build) | The version and that this build cannot update itself | Download → releases page |
+| `failed` | The error message; grey character | Try again, Download by hand |
+| capability `external` | Updates come from the package manager | Close |
+
+Opening it starts a check through the same path as the menus (`handleRecoveryAction('check-update')`), except while a check, a download or a pending restart is in progress (`shouldCheckOnOpen`): reopening the window then just shows that progress. One window at most; reopening focuses it.
+
+The window is the desktop app's own page, so it does not depend on the web client the instance serves and works over the instance picker and the recovery page too. It is sandboxed with its own preload (`updatePreload.ts`, `window.bspaceUpdate`); its IPC channels (`update-window:get|status|check|install|releases|close`) answer only that window's `webContents`. It refuses every navigation and pop-up, and its CSP allows only its inline style and script. The language comes from `getDesktopLanguage()` as `?lang=`.
+
+While a download runs, the Dock icon (macOS) or the taskbar button (Windows) shows its progress (`mainWindow.setProgressBar(taskbarProgress(status))`, cleared with -1 in every other phase).
+
+`installDownloadedUpdate()` is shared by the window and the renderer's `install-update` IPC: `manual` builds open the releases page, `auto` builds call `quitAndInstall()` with the watchdog described under "The `update-downloaded` trap".
+
 ### Configuration (`initAutoUpdater()`)
 
 ```
