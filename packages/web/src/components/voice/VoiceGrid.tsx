@@ -332,13 +332,20 @@ export function VoiceGrid({ participants, chromeRevealed = false }: VoiceGridPro
     const otherCells = focusable.filter((cell) => cell !== focusedCell);
     const hasStrip = otherCells.length > 0 || layout.ribbon.some((entry) => entry.kind !== 'self');
     const isPointing = canPoint && pointing;
-    // Fullscreen floats the control bar over the bottom edge. The strip keeps
-    // clear of it; with the strip hidden the picture takes the whole height
-    // and the bar passes over it, as fullscreen means.
+    // Fullscreen gives the picture the whole screen. The control bar, the
+    // strip and its toggle are chrome floating over the bottom edge: they come
+    // with the pointer and leave with it (usePointerReveal), so nothing
+    // reserves a band of empty space under the picture.
     const stripOpen = hasStrip && !stripHidden;
-    const stripToggleFloats = voiceFullscreen && hasStrip && stripHidden;
+    const stripToggleFloats = voiceFullscreen && hasStrip;
+    const fullscreenChromeVisibility = chromeRevealed
+      ? 'opacity-100'
+      : 'opacity-0 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100';
+    // On a pointer that cannot hover the chrome never hides; the strip then
+    // keeps the toggle's slot above it, as the toggle keeps the bar's.
+    const floatingToggleBottom = stripOpen ? 'bottom-[13.5rem]' : 'bottom-24';
     return (
-      <div className={`flex-1 flex flex-col overflow-hidden relative ${voiceFullscreen && stripOpen ? 'pb-20' : ''}`}>
+      <div className="flex-1 flex flex-col overflow-hidden relative">
         {/* Main focused view. A click anywhere on it returns to the grid,
             unless the picture is zoomed: then the click belongs to the pan. */}
         <div
@@ -421,9 +428,7 @@ export function VoiceGrid({ participants, chromeRevealed = false }: VoiceGridPro
             // With the strip hidden in fullscreen the toggle is chrome like
             // the bar: it floats just above it and comes and goes with it.
             className={stripToggleFloats
-              ? `absolute inset-x-0 bottom-24 z-float flex justify-center pointer-events-none transition-opacity duration-slow ease-out ${
-                chromeRevealed ? 'opacity-100' : 'opacity-0 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
-              }`
+              ? `absolute inset-x-0 ${floatingToggleBottom} z-float flex justify-center pointer-events-none transition-opacity duration-slow ease-out ${fullscreenChromeVisibility}`
               : 'flex justify-center flex-shrink-0 py-1'}
             {...(stripToggleFloats ? { [VOICE_CHROME_ATTR]: '' } : {})}
           >
@@ -444,13 +449,30 @@ export function VoiceGrid({ participants, chromeRevealed = false }: VoiceGridPro
         )}
 
         {/* Bottom strip: the other pictures, then the people without one */}
-        {stripOpen && (
+        {stripOpen && !voiceFullscreen && (
           <div
             data-testid="voice-strip"
             className={`${otherCells.length > 0 ? 'h-[120px] max-h-[calc(20*var(--app-vh))] min-h-[80px]' : 'h-[76px]'} flex-shrink-0 flex items-center justify-center gap-2 p-2 bg-surface-base/50 overflow-x-auto no-scrollbar`}
           >
             {otherCells.map((cell) => renderThumbnail(cell))}
             <VoiceRibbon entries={layout.ribbon} />
+          </div>
+        )}
+        {/* Fullscreen: the same strip, floating just above the control bar
+            and fading with it. It is chrome, so resting the pointer on it
+            holds it open while choosing a picture. */}
+        {stripOpen && voiceFullscreen && (
+          <div
+            className={`absolute inset-x-0 bottom-24 z-float flex justify-center px-4 pointer-events-none transition-opacity duration-slow ease-out ${fullscreenChromeVisibility}`}
+            {...{ [VOICE_CHROME_ATTR]: '' }}
+          >
+            <div
+              data-testid="voice-strip"
+              className={`${otherCells.length > 0 ? 'h-[120px]' : 'h-[76px]'} max-w-full flex items-center gap-2 p-2 rounded-2xl glass-bubble overflow-x-auto no-scrollbar pointer-events-auto`}
+            >
+              {otherCells.map((cell) => renderThumbnail(cell))}
+              <VoiceRibbon entries={layout.ribbon} />
+            </div>
           </div>
         )}
       </div>

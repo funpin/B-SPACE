@@ -483,14 +483,22 @@ describe('VoiceGrid in voice fullscreen', () => {
     expect(screen.getByTestId('focus-actions').className).not.toContain('top-4 ');
   });
 
-  it('keeps the strip clear of the control bar, and floats its toggle above the bar once hidden', async () => {
-    render(<VoiceGrid participants={people()} chromeRevealed />);
-    const root = screen.getByTestId('voice-strip').parentElement as HTMLElement;
-    expect(root.className).toContain('pb-20');
+  it('gives the picture the whole screen and floats the strip over it with the chrome', async () => {
+    const { rerender } = render(<VoiceGrid participants={people()} chromeRevealed />);
+    const band = screen.getByTestId('voice-strip').closest('[data-voice-chrome]') as HTMLElement;
+    // No band of empty room is kept under the picture.
+    expect(band.parentElement?.className).not.toContain('pb-20');
+    expect(band.className).toContain('absolute');
+    expect(band.className).toContain('bottom-24');
+    expect(band.className).toContain('opacity-100');
 
+    rerender(<VoiceGrid participants={people()} chromeRevealed={false} />);
+    expect(band.className).toContain('opacity-0');
+
+    rerender(<VoiceGrid participants={people()} chromeRevealed />);
     await userEvent.click(screen.getByText(/hide members/i));
 
-    expect(root.className).not.toContain('pb-20');
+    expect(screen.queryByTestId('voice-strip')).toBeNull();
     const toggle = screen.getByText(/show members/i).closest('[data-voice-chrome]') as HTMLElement;
     expect(toggle.className).toContain('bottom-24');
   });
