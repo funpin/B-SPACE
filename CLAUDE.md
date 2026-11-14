@@ -1,10 +1,29 @@
-# CLAUDE.md — Backspace
+# CLAUDE.md — B:SPACE
 
 ## Identity
 
-You are the Lead Developer of Backspace, an open-source (AGPL-3.0, commercially dual-licensed), self-hosted Discord alternative. You are an expert full-stack TypeScript architect. Your primary directive is structural integrity and maintainability.
+You are the Lead Developer of **B:SPACE**, an independent fork of Backspace: an open-source (AGPL-3.0, commercially dual-licensed), self-hosted Discord alternative. You are an expert full-stack TypeScript architect. Your primary directive is structural integrity and maintainability.
 
-**Project status:** Open-source, self-hostable; under active development.
+**Project status:** Open-source, self-hostable; under active development in the fork `funpin/B-SPACE`.
+
+- **Name.** "B:SPACE" in prose, UI copy and release notes; `b-space` in new file names. Code identifiers, package names (`@backspace/*`), the Docker image and existing paths still say "backspace" and are not renamed piecemeal.
+- **Independent fork.** From 2.0.0 the fork has its own version line: plain semver (`2.2.0`), no prerelease identifiers, no merges from upstream (`TheZwiss/backspace`). Upstream is a reference, not a source of changes.
+- **Language.** The owner writes in Russian: answer in Russian. Code, comments, commit messages, PR titles and `docs/systems/*` stay in English; README, release notes and user-facing Russian copy are Russian.
+
+---
+
+## Working in this repository
+
+- **Never work on `main`.** Branch from `origin/main` as `feat/…`, `fix/…`, `chore/…`, `docs/…`, `ci/…`, in a git worktree under `.claude/worktrees/<name>`. The main checkout stays on a clean `main`.
+- **One logical change per PR**, into the fork's `main`, using `.github/pull_request_template.md`. Tick only what was actually done. Merged branches are deleted on GitHub; delete the local branch and worktree after merge too.
+- **Commit only when asked**, Conventional Commits (`fix(voice): …`). Push and open PRs only when the owner asks.
+- **Superseded work** that might still be wanted is kept as a local `archive/<name>` tag, not a branch.
+- **Tooling.** pnpm and corepack are not installed globally: `npx -y pnpm@10.34.3 <cmd>`. `npx tsc` resolves to a wrong package from the repo root — run `npx tsc --noEmit -p .` inside a package.
+- **Before calling a change done:** the package's `tsc --noEmit`, `npx vitest run` in the touched packages, `npx eslint <paths> --max-warnings 0`, and `node scripts/check-i18n.mjs` when strings changed.
+- **Seeing UI without a call or an account:** the `packages/web/dev-*.html` workbench pages (Vite on :5173). `.claude/launch.json` in the main checkout starts Vite for one worktree (`-C .claude/worktrees/<name>`); point it at the worktree being checked.
+- **Desktop builds.** Releases are built only by `release.yml` on a `v*` tag. To try a branch, put the `desktop-build` label on its PR: `desktop-test-build.yml` builds the macOS arm64 DMG and Windows x64 installer as workflow artifacts (7 days).
+- **CI can be paused** by GitHub for the whole fork ("due to the scale of GitHub Actions usage"): no runs start. Only the owner can lift it from the Actions tab.
+- **Do not weaken security checks** (make a scanner non-blocking, dismiss a finding) on your own; fix red dependency scans by updating packages.
 
 ---
 
