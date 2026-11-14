@@ -91,6 +91,19 @@ function stableIdentityFromEnv() {
 }
 
 /**
+ * The user's keychain search list, as paths.
+ *
+ * @returns {string[]}
+ */
+function userKeychainSearchList() {
+  const out = execFileSync('security', ['list-keychains', '-d', 'user'], { encoding: 'utf8' });
+  return out
+    .split('\n')
+    .map((line) => line.trim().replace(/^"(.*)"$/, '$1'))
+    .filter(Boolean);
+}
+
+/**
  * Imports the certificate into a throwaway keychain that only codesign may
  * use, and returns the identity's SHA-1 and a cleanup function. The login
  * keychain is never touched, so a developer's machine is left as it was.
@@ -103,7 +116,16 @@ function importIdentity({ p12, password }) {
   const keychain = path.join(dir, 'signing.keychain-db');
   const p12Path = path.join(dir, 'identity.p12');
   const keychainPassword = crypto.randomBytes(24).toString('hex');
+  // codesign finds an identity only in a keychain on the user's search list,
+  // even with --keychain (on a GitHub runner it answers "no identity found"
+  // otherwise). The list is put back exactly as it was when signing is done.
+  const searchList = userKeychainSearchList();
   const dispose = () => {
+    try {
+      execFileSync('security', ['list-keychains', '-d', 'user', '-s', ...searchList], { stdio: 'ignore' });
+    } catch {
+      console.warn('[macSign] Could not restore the keychain search list');
+    }
     try {
       execFileSync('security', ['delete-keychain', keychain], { stdio: 'ignore' });
     } catch {
@@ -121,6 +143,7 @@ function importIdentity({ p12, password }) {
     // Lets codesign use the key without a GUI prompt (macOS 10.12+).
     execFileSync('security', ['set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', keychainPassword, keychain], { stdio: 'ignore' });
     fs.rmSync(p12Path, { force: true });
+    execFileSync('security', ['list-keychains', '-d', 'user', '-s', keychain, ...searchList], { stdio: 'ignore' });
 
     // The self-signed certificate is listed as CSSMERR_TP_NOT_TRUSTED, which
     // is expected: codesign signs with it all the same, and nothing that reads
