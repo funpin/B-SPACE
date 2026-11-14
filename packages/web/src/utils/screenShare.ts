@@ -11,6 +11,7 @@ import { openScreenShareSetup } from '../stores/screenShareSetupStore';
 import i18n from '../i18n';
 import { isElectron, getElectronAPI } from '../platform/platform';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
+import { startKeyframeWatchdog } from './keyframeWatchdog';
 import type { InstanceStreamingLimits } from '@backspace/shared';
 import {
   STANDARD_RESOLUTIONS, STANDARD_FRAMERATES, WIDTH_MAP,
@@ -512,6 +513,7 @@ export async function publishScreenShare(
     });
     scheduleScreenShareOverdrive(room);
     scheduleEncoderDetection(room, config.codec, videoTrack.id);
+    watchKeyframes(room, videoTrack.id);
     return true;
   } catch (err) {
     console.error('[ScreenShare] Failed to publish screen share:', err);
@@ -1058,6 +1060,28 @@ function scheduleEncoderDetection(
     setTimeout(() => { void inspect(); }, delay);
   };
   void inspect();
+}
+
+// ---------------------------------------------------------------------------
+// Keyframe watchdog — answers keyframe requests the encoder ignored
+// ---------------------------------------------------------------------------
+
+let _stopKeyframeWatchdog: (() => void) | null = null;
+
+/**
+ * Watch the published screen track for keyframe requests its encoder leaves
+ * unanswered (see keyframeWatchdog.ts). It stops by itself once the share
+ * ends or another capture replaces this track; a new publish also ends the
+ * previous watch at once.
+ */
+function watchKeyframes(room: Room, trackId: string): void {
+  _stopKeyframeWatchdog?.();
+  _stopKeyframeWatchdog = startKeyframeWatchdog(room, trackId, () => {
+    if (!useVoiceStore.getState().isScreenSharing) return false;
+    const screenPub = room.localParticipant.getTrackPublications()
+      .find((p) => p.source === Track.Source.ScreenShare);
+    return getMediaStreamTrack(screenPub?.track)?.id === trackId;
+  });
 }
 
 // ---------------------------------------------------------------------------

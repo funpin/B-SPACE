@@ -413,6 +413,19 @@ ScreenShareConfig {
   `minBitrate` member was removed because Chromium discarded it during WebIDL
   dictionary conversion; it never enforced a bitrate floor.
 
+### Keyframe watchdog (`utils/keyframeWatchdog.ts`)
+- A viewer can draw a share only from a keyframe; starting to watch, or
+  adaptive stream resuming a paused tile, makes its browser send a PLI/FIR that
+  the SFU forwards to the sharer.
+- Some hardware H.264 encoders (Media Foundation on Windows) ignore those
+  requests, so the viewer showed black until the encoder's next periodic
+  keyframe. While sharing, the sharer polls its screen sender's `outbound-rtp`
+  stats every second; a layer whose `pliCount + firCount` rose without
+  `keyFramesEncoded` rising within 1.5 s gets a forced keyframe: every
+  encoding's `scaleResolutionDownBy` takes 4 px off the height for 400 ms and is
+  then restored. A resolution change always starts with an IDR. Forced at most
+  once per 4 s; an encoder that answers its requests is never touched.
+
 ### Instance-Level Limits (admin-configured)
 - `allowedResolutions`, `allowedFramerates` (CSV in instance_settings)
 - `maxResolution`, `maxFramerate`, `maxBitrateKbps`, `minBitrateKbps`
