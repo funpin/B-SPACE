@@ -119,6 +119,7 @@ export class KeyframeRequestTracker {
 }
 
 interface OutboundVideoStats extends RTCStats {
+  codecId?: string;
   kind?: string;
   mediaType?: string;
   active?: boolean;
@@ -133,12 +134,26 @@ function isOutboundVideo(report: RTCStats): report is OutboundVideoStats {
   return entry.type === 'outbound-rtp' && (entry.kind === 'video' || entry.mediaType === 'video');
 }
 
-/** The active layers of `sender`, and the tallest frame any of them is encoding. */
+/**
+ * The active H.264 layers of `sender`, and the tallest frame any of them is
+ * encoding. Only H.264 is watched: the forced keyframe is a resolution change,
+ * which H.264 can only make with an IDR. VP9 makes it with reference scaling,
+ * inside an ordinary inter frame — no keyframe for the stalled viewer, and
+ * hardware VP9 decoders on Windows are known to draw such a frame as blocks of
+ * garbage. libvpx (VP8 and VP9) answers keyframe requests itself anyway.
+ */
 export function readLayerSamples(stats: RTCStatsReport): { samples: LayerSample[]; frameHeight: number } {
   const samples: LayerSample[] = [];
   let frameHeight = 0;
+  const mimeTypes = new Map<string, string>();
+  stats.forEach((report: RTCStats) => {
+    const codec = report as RTCStats & { mimeType?: string };
+    if (codec.type === 'codec' && typeof codec.mimeType === 'string') mimeTypes.set(codec.id, codec.mimeType.toLowerCase());
+  });
   stats.forEach((report: RTCStats) => {
     if (!isOutboundVideo(report) || report.active === false) return;
+    const mimeType = report.codecId ? mimeTypes.get(report.codecId) : undefined;
+    if (mimeType !== 'video/h264') return;
     samples.push({
       id: report.id,
       keyRequests: (report.pliCount ?? 0) + (report.firCount ?? 0),

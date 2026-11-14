@@ -439,6 +439,7 @@ Persist migration v15: version 14 wrote `codec: 'vp9'` into every saved config, 
   encoding's `scaleResolutionDownBy` takes 4 px off the height for 400 ms and is
   then restored. A resolution change always starts with an IDR. Forced at most
   once per 4 s; an encoder that answers its requests is never touched.
+- Only H.264 layers are watched (`readLayerSamples` reads each layer's codec). A resolution change is an IDR only in H.264; VP9 resizes inside an inter frame (reference scaling), which gives a stalled viewer nothing and which hardware VP9 decoders on Windows draw as 64 px blocks of garbage. libvpx answers keyframe requests itself.
 
 ### Instance-Level Limits (admin-configured)
 - `allowedResolutions`, `allowedFramerates` (CSV in instance_settings)
