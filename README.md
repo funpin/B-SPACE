@@ -1,27 +1,33 @@
 <p align="center">
-  <img src="packages/web/public/icons/logo.png" alt="Backspace" width="140">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/b-space/png/lockup-128.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/b-space/png/lockup-on-light-128.png">
+    <img src="assets/brand/b-space/png/lockup-on-light-128.png" alt="B:SPACE" height="64">
+  </picture>
 </p>
 
 <p align="center">
   <strong>Свой Discord на своём сервере. Текст, голос, видео, демонстрация экрана.</strong><br>
-  Форк <a href="https://github.com/TheZwiss/backspace">TheZwiss/backspace</a> со своими правками интерфейса и своими сборками приложения.
+  Самостоятельный форк <a href="https://github.com/TheZwiss/backspace">TheZwiss/backspace</a> со своим интерфейсом и своими сборками приложения.
 </p>
 
 <p align="center">
-  <a href="https://github.com/funpin/backspace/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/funpin/backspace?style=flat-square&amp;label=release&amp;color=86EFAC&amp;labelColor=17191D"></a>
-  <a href="https://github.com/funpin/backspace/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/funpin/backspace/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <img alt="Windows | macOS" src="https://img.shields.io/badge/Windows%20%7C%20macOS-desktop-777C83?style=flat-square&amp;labelColor=17191D">
-  <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-777C83?style=flat-square&amp;labelColor=17191D"></a>
+  <a href="https://github.com/funpin/B-SPACE/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/funpin/B-SPACE?style=flat-square&amp;label=release&amp;color=6E5BEF&amp;labelColor=121214"></a>
+  <a href="https://github.com/funpin/B-SPACE/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/funpin/B-SPACE/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <img alt="Windows | macOS" src="https://img.shields.io/badge/Windows%20%7C%20macOS-desktop-8A8A94?style=flat-square&amp;labelColor=121214">
+  <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-8A8A94?style=flat-square&amp;labelColor=121214"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/funpin/backspace/releases/latest"><b>Скачать</b></a> ·
+  <a href="https://github.com/funpin/B-SPACE/releases/latest"><b>Скачать</b></a> ·
   <a href="#быстрый-старт"><b>Быстрый старт</b></a> ·
+  <a href="#персонаж-b">Персонаж B</a> ·
   <a href="#чем-форк-отличается-от-оригинала">Отличия от оригинала</a> ·
-  <a href="docs/systems">Как устроено</a>
+  <a href="docs/systems">Как устроено</a> ·
+  <a href="README.en.md">English</a>
 </p>
 
-<p align="center"><img src="docs/screenshots/voice-video-grid.webp" alt="Голосовой канал Backspace: камеры и демонстрации экрана в одной сетке" width="100%"></p>
+<p align="center"><img src="docs/screenshots/chat.webp" alt="Текстовый канал B:SPACE: список каналов, сообщения с реакциями и блоком кода, участники онлайн" width="100%"></p>
 
 ## Что умеет
 
@@ -29,27 +35,51 @@
 |---|---|
 | **Голос и видео** | Каналы и звонки в личных сообщениях. Громкость от 0 до 200 % отдельно для каждого человека и каждой трансляции, шумоподавление RNNoise, сведения о соединении в реальном времени. |
 | **Демонстрация экрана** | Разрешение, частота кадров, кодек (VP9 или аппаратный H.264) и битрейт — на выбор, до 4K при 120 кадрах в секунду в пределах, заданных администратором. Звук системы передаётся вместе с картинкой. |
-| **Чат** | Каналы и категории, ответы, реакции, упоминания, стикеры, вложения, предпросмотр ссылок, поиск по сообщениям с фильтрами. |
+| **Чат** | Каналы и категории, ответы, реакции, упоминания, стикеры, вложения, предпросмотр ссылок, подсветка кода, поиск по сообщениям с фильтрами. |
 | **Личные сообщения** | Один на один и группы до 10 человек, звонки, друзья и заявки в друзья. |
 | **Роли и модерация** | Права по ролям с переопределением для категорий и каналов, баны с причиной, отключение микрофона и звука участнику, заявки на вступление. |
 | **Федерация** | Независимые серверы связываются между собой: друзья, личные сообщения и звонки работают между серверами, каждый остаётся у своего владельца. |
 | **Где работает** | Браузер, приложение для Windows и macOS, телефон — как устанавливаемое веб-приложение. |
 
+## Интерфейс «Камень»
+
+Графитовые поверхности без оттенка, цвет — только там, где он что-то значит: непрочитанное, упоминание, «в эфире», говорит. Содержимое лежит на матовых панелях, всё, что всплывает поверх, — плотное стекло. Шрифт Onest, иконки Lucide.
+
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/chat.webp" alt="Текстовый канал"><br><sub><b>Чат</b> — каналы, ответы, реакции</sub></td>
-    <td width="50%"><img src="docs/screenshots/screen-share-settings.webp" alt="Настройки демонстрации экрана"><br><sub><b>Демонстрация экрана</b> — качество выбирает тот, кто показывает</sub></td>
+    <td colspan="2"><img src="docs/screenshots/voice-screen-share.webp" alt="Голосовой канал: демонстрация экрана в фокусе, остальные трансляции и участники в ленте снизу, сообщения чата звонка поверх"><br><sub><b>Голосовой канал</b> — трансляция в фокусе, остальные экраны и участники в ленте, чат звонка поверх картинки</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/group-dm.webp" alt="Групповые личные сообщения"><br><sub><b>Личные сообщения</b> — в том числе между серверами</sub></td>
-    <td width="50%"><img src="docs/screenshots/admin-federation.webp" alt="Панель федерации"><br><sub><b>Федерация</b> — связанные серверы в панели администратора</sub></td>
+    <td width="72%" valign="top"><img src="docs/screenshots/appearance-accent-themes.webp" alt="Настройки оформления: шесть акцентных тем, выбрана «Изумруд»"><br><sub><b>Оформление</b> — шесть акцентных тем: Лаванда, Изумруд, Янтарь, Лёд, Роза, Моно</sub></td>
+    <td width="28%" valign="top"><img src="docs/screenshots/mobile-chat.webp" alt="Чат на телефоне"><br><sub><b>Телефон</b> — тот же клиент как веб-приложение</sub></td>
   </tr>
 </table>
+
+## Персонаж B
+
+<p align="center"><img src="assets/brand/b-space/animated/states-row.svg" alt="Все состояния персонажа B в ряд: моргает, оглядывается, новое сообщение, пишет, говорит, демонстрация экрана, радуется, не беспокоить, нет связи" width="100%"></p>
+
+Знак B:SPACE — буква **B из двух реплик**: верхняя говорит, нижняя отвечает. У верхней есть глаза, поэтому знак одновременно и персонаж. Эмоции он показывает только глазами и движением, без рта и бровей. Персонаж встречает на экране входа и в пустых состояниях интерфейса, а в трее — строке меню macOS и панели задач Windows — показывает, что происходит: непрочитанное, демонстрация экрана, «Не беспокоить», нет связи.
+
+| | Состояние | Когда | Движение |
+|:---:|---|---|---|
+| <img src="assets/brand/b-space/animated/blink.svg" width="56" alt=""> | **Ожидание** | По умолчанию | Моргает раз в 3–4 с |
+| <img src="assets/brand/b-space/animated/look.svg" width="56" alt=""> | **Оглядывается** | Загрузка, подключение, поиск | Взгляд влево, потом вправо |
+| <img src="assets/brand/b-space/animated/notify.svg" width="56" alt=""> | **Новое сообщение** | Непрочитанное, упоминание | Прыжок, глаза шире, красная точка |
+| <img src="assets/brand/b-space/animated/typing.svg" width="56" alt=""> | **Пишет** | Кто-то печатает | Взгляд вниз, точки в теле бегут по очереди |
+| <img src="assets/brand/b-space/animated/voice.svg" width="56" alt=""> | **Говорит** | Голосовой канал, говорит пользователь | Тело пульсирует, зелёное кольцо |
+| <img src="assets/brand/b-space/animated/screen.svg" width="56" alt=""> | **Демонстрация экрана** | Пользователь показывает экран | Тело становится экраном, в углу мигает красная точка |
+| <img src="assets/brand/b-space/animated/joy.svg" width="56" alt=""> | **Радуется** | Сообщение отправлено, вход выполнен | Глаза «^ ^», один прыжок |
+| <img src="assets/brand/b-space/animated/dnd.svg" width="56" alt=""> | **Не беспокоить** | Статус «Не беспокоить» или «Отошёл» | Глаза закрыты |
+| <img src="assets/brand/b-space/animated/offline.svg" width="56" alt=""> | **Нет связи** | Сервер недоступен | Серый, глаза «× ×» |
+
+В трее пять из них — ожидание, новое сообщение, демонстрация экрана, «Не беспокоить» и нет связи; там значок статичный и только меняет кадр. Если в системе включено «Уменьшить движение», персонаж не двигается. Файлы знака, правила использования и цвета — в [assets/brand/b-space](assets/brand/b-space/README.md).
 
 ## Чем форк отличается от оригинала
 
 | | |
 |---|---|
+| **Имя и облик** | Свой логотип и персонаж, свой интерфейс «Камень» с акцентными темами на выбор. |
 | **Сборки приложения** | Две, без лишнего: **Windows x64** (установщик) и **macOS Apple Silicon** (DMG). Linux, Windows на ARM и Intel-Mac здесь не собираются — их выпускает [оригинальный проект](https://github.com/TheZwiss/backspace/releases). |
 | **Ссылки и обновления** | Приложение, панель «Скачать» и проверка обновлений ведут на этот репозиторий, а не на оригинал: версии расходятся, и исходный код должен быть тот, что реально запущен (AGPL, раздел 13). |
 | **Сервер** | Свой образ Docker (`ghcr.io/funpin/backspace`) и три необязательные настройки: создание пространств только администратором, срок хранения вложений, отключение миниатюр. |
@@ -59,12 +89,12 @@
 
 ## Быстрый старт
 
-**Приложение.** Скачайте сборку со страницы [последнего релиза](https://github.com/funpin/backspace/releases/latest): **Windows** — установщик, **macOS (Apple Silicon)** — DMG. При первом запуске укажите адрес своего сервера. Новую версию ставьте поверх старой: вход и настройки сохраняются.
+**Приложение.** Скачайте сборку со страницы [последнего релиза](https://github.com/funpin/B-SPACE/releases/latest): **Windows** — установщик, **macOS (Apple Silicon)** — DMG. При первом запуске укажите адрес своего сервера. Новую версию ставьте поверх старой: вход и настройки сохраняются.
 
 **Сервер.** Нужен Linux-хост с Docker и домен:
 
 ```bash
-git clone https://github.com/funpin/backspace.git && cd backspace
+git clone https://github.com/funpin/B-SPACE.git backspace && cd backspace
 ./install.sh
 ```
 
@@ -76,12 +106,12 @@ git clone https://github.com/funpin/backspace.git && cd backspace
 <summary><b>Как устроено</b></summary>
 
 - **Сервер** — Node.js, Fastify, SQLite через Drizzle; один контейнер, данные в `data/`.
-- **Клиент** — React, Vite, Tailwind, Zustand; интерфейс «Aether Drift»: тёплые матовые поверхности и матовое стекло для плавающих элементов.
+- **Клиент** — React, Vite, Tailwind, Zustand; интерфейс «Камень»: графитовые матовые панели для содержимого и плотное стекло для всего, что всплывает поверх.
 - **Голос и видео** — LiveKit; сервер только выдаёт токены, медиа идёт через SFU.
-- **Приложение** — Electron: глобальные сочетания клавиш, запуск при входе в систему, значок в трее, определение запущенной игры.
+- **Приложение** — Electron: глобальные сочетания клавиш, запуск при входе в систему, значок-персонаж в трее, определение запущенной игры.
 - **Федерация** — запросы между серверами подписаны HMAC, события доставляются через очередь с повторами.
 
-Подробно по каждой подсистеме — в [docs/systems](docs/systems): [голос](docs/systems/voice.md), [федерация](docs/systems/federation.md), [права](docs/systems/permissions.md), [база данных](docs/systems/database.md), [приложение](docs/systems/desktop.md), [дизайн-система](docs/systems/design-system.md).
+Подробно по каждой подсистеме — в [docs/systems](docs/systems): [голос](docs/systems/voice.md), [федерация](docs/systems/federation.md), [права](docs/systems/permissions.md), [база данных](docs/systems/database.md), [приложение](docs/systems/desktop.md), [дизайн-система](docs/systems/design-system.md). Брендбук — в [docs/brand](docs/brand/brandbook.md).
 </details>
 
 <details>
@@ -110,6 +140,6 @@ pnpm typecheck && pnpm test
 
 ## Лицензия
 
-[GNU AGPL-3.0](LICENSE): пользуйтесь, меняйте и распространяйте свободно, если ваши изменения тоже открыты. Это форк [Backspace](https://github.com/TheZwiss/backspace) © TheZwiss и участники проекта; оригинал также предлагает [коммерческую лицензию](LICENSE-COMMERCIAL.md) — она относится к оригинальному коду и выдаётся его автором.
+[GNU AGPL-3.0](LICENSE): пользуйтесь, меняйте и распространяйте свободно, если ваши изменения тоже открыты. B:SPACE — форк [Backspace](https://github.com/TheZwiss/backspace) © TheZwiss и участники проекта; оригинал также предлагает [коммерческую лицензию](LICENSE-COMMERCIAL.md) — она относится к оригинальному коду и выдаётся его автором. Шрифт Onest в надписи логотипа — SIL OFL 1.1.
 
 Правки форка © 2026 funpin
