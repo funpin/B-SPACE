@@ -1481,7 +1481,11 @@ if (!gotTheLock) {
     //   2. Prompted (older web clients, or nothing preselected): push the
     //      sources to the renderer and wait for screen-share-selected.
     // Audio loopback controlled by user's shareAudio toggle.
-    pointerOverlay = new PointerOverlay();
+    // The overlay tells the renderer whether the share captures it after all
+    // (Windows can ignore the exclusion); the renderer tells the viewers.
+    pointerOverlay = new PointerOverlay((captured) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream-pointer-overlay-captured', captured);
+    });
     session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
       console.log('[Main:ScreenShare] Handler invoked');
       try {

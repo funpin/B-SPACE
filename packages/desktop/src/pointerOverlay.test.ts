@@ -26,6 +26,10 @@ const electron = vi.hoisted(() => {
     setIgnoreMouseEvents(...args: unknown[]): void { this.record('setIgnoreMouseEvents', args); }
     setContentProtection(...args: unknown[]): void { this.record('setContentProtection', args); }
     setBounds(...args: unknown[]): void { this.record('setBounds', args); }
+    getBounds(): { x: number; y: number; width: number; height: number } {
+      const o = this.options as { x?: number; y?: number; width?: number; height?: number };
+      return { x: o.x ?? 0, y: o.y ?? 0, width: o.width ?? 0, height: o.height ?? 0 };
+    }
     loadURL(): Promise<void> { return Promise.resolve(); }
     on(): void { }
     isDestroyed(): boolean { return this.destroyed; }
@@ -44,7 +48,7 @@ const electron = vi.hoisted(() => {
   };
 });
 
-vi.mock('electron', () => ({ BrowserWindow: electron.FakeWindow, screen: electron.screen }));
+vi.mock('electron', () => ({ BrowserWindow: electron.FakeWindow, screen: electron.screen, desktopCapturer: { getSources: vi.fn(async () => []) } }));
 
 import {
   sanitizeOverlayPointers,
@@ -53,6 +57,8 @@ import {
   OVERLAY_WORKSPACES,
   MAX_OVERLAY_POINTERS,
   PointerOverlay,
+  overlayFrame,
+  bitmapShowsProbe,
 } from './pointerOverlay';
 
 describe('sanitizeOverlayPointers', () => {
@@ -164,5 +170,32 @@ describe('PointerOverlay window', () => {
     expect(win.calls).toContainEqual({ method: 'setContentProtection', args: [true] });
     const shown = win.calls.map((call) => call.method).filter((method) => ['showInactive', 'show', 'focus'].includes(method));
     expect(shown).toEqual(['showInactive']);
+  });
+});
+
+describe('overlayFrame', () => {
+  it('places the display inside a window Windows kept off the taskbar', () => {
+    // A 1080p display whose overlay came out 1040 tall: the display still
+    // spans 1080 px of the page, so a pointer at the bottom lands at the bottom.
+    expect(overlayFrame({ x: 0, y: 0, width: 1920, height: 1080 }, { x: 0, y: 0, width: 1920, height: 1040 }))
+      .toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+    // A secondary display left of the primary, window placed exactly on it.
+    expect(overlayFrame({ x: -1280, y: 0, width: 1280, height: 1024 }, { x: -1280, y: 0, width: 1280, height: 1024 }))
+      .toEqual({ x: 0, y: 0, w: 1280, h: 1024 });
+  });
+});
+
+describe('bitmapShowsProbe', () => {
+  const fill = (w: number, h: number, bgra: [number, number, number, number]) => {
+    const buffer = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < w * h; i++) buffer.set(bgra, i * 4);
+    return buffer;
+  };
+
+  it('finds the magenta probe and nothing else', () => {
+    expect(bitmapShowsProbe(fill(8, 8, [255, 0, 255, 255]), 8, 8)).toBe(true);
+    expect(bitmapShowsProbe(fill(8, 8, [30, 30, 30, 255]), 8, 8)).toBe(false);
+    expect(bitmapShowsProbe(fill(8, 8, [255, 255, 255, 255]), 8, 8)).toBe(false);
+    expect(bitmapShowsProbe(Buffer.alloc(4), 8, 8)).toBe(false);
   });
 });

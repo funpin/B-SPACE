@@ -2,7 +2,7 @@ import { getActiveRoom } from '../hooks/useLiveKit';
 import type { ParticipantInfo } from '../hooks/useLiveKit';
 import { useVoiceStore } from '../stores/voiceStore';
 import { streamViewers } from './streamViewers';
-import { encodeStreamPointer, streamPointerFor, type PicturePoint } from './streamPointerProtocol';
+import { encodeStreamPointer, encodeStreamPointerOverlay, streamPointerFor, type PicturePoint } from './streamPointerProtocol';
 
 /**
  * Sends this client's pointer on `sharer`'s share to the people who can see
@@ -26,5 +26,19 @@ export function publishStreamPointer(sharer: ParticipantInfo, point: PicturePoin
       reliable: point === null || ping,
       destinationIdentities,
     })
+    .catch(() => { });
+}
+
+/**
+ * Tells everyone in the room whether this client's desktop overlay of the
+ * pointers is in its shared picture. Reliable: it changes rarely and nothing
+ * follows to correct a lost one. Sent to the whole room rather than the
+ * watchers, so someone who starts watching later already knows.
+ */
+export function publishStreamPointerOverlay(captured: boolean): void {
+  const room = getActiveRoom();
+  if (!room) return;
+  room.localParticipant
+    .publishData(encodeStreamPointerOverlay(captured), { reliable: true })
     .catch(() => { });
 }

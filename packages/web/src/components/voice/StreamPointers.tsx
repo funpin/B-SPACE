@@ -118,7 +118,10 @@ export function StreamPointerLayer({ rootRef, videoRef, sharer, canPoint }: Stre
   const layerRef = useRef<HTMLDivElement>(null);
   const pointing = useStreamPointerStore((s) => s.pointing);
   const remote = useStreamPointerStore((s) => s.pointers.get(sharer.identity)) ?? EMPTY_POINTERS;
-  const showRemote = useVoiceStore((s) => s.showStreamPointers);
+  // The sharer's desktop overlay is in the picture (Windows ignored its
+  // exclusion): every pointer is already in the video, so none is drawn on top.
+  const overlayInPicture = useStreamPointerStore((s) => s.capturedOverlays.has(sharer.identity));
+  const showRemote = useVoiceStore((s) => s.showStreamPointers) && !overlayInPicture;
   const participants = useVoiceStore((s) => s.participants);
   const localParticipant = participants.find((p) => p.isLocal) ?? null;
   const sending = canPoint && pointing;
@@ -280,7 +283,7 @@ export function StreamPointerLayer({ rootRef, videoRef, sharer, canPoint }: Stre
               />
             );
           })}
-          {own && localParticipant && (
+          {own && localParticipant && !overlayInPicture && (
             <PointerMark
               own
               participant={localParticipant}

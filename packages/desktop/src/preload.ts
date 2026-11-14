@@ -94,6 +94,13 @@ contextBridge.exposeInMainWorld('backspace', {
   endStreamPointerOverlay: (): void => {
     ipcRenderer.send('stream-pointer-overlay-end');
   },
+  // Whether the share turned out to capture the overlay (Windows can ignore
+  // the exclusion for it). Once per overlay window.
+  onStreamPointerOverlayCaptured: (callback: (captured: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, captured: unknown) => callback(captured === true);
+    ipcRenderer.on('stream-pointer-overlay-captured', handler);
+    return () => { ipcRenderer.removeListener('stream-pointer-overlay-captured', handler); };
+  },
 
   // Window focus
   onWindowFocusChange: (callback: (focused: boolean) => void) => {

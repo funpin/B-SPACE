@@ -103,6 +103,8 @@ interface BackspaceElectronAPI {
    */
   setStreamPointerOverlay?: (pointers: import('../utils/streamPointerOverlay').OverlayPointer[]) => void;
   endStreamPointerOverlay?: () => void;
+  /** Whether the share captures the overlay after all; absent on builds before the check. */
+  onStreamPointerOverlayCaptured?: (callback: (captured: boolean) => void) => () => void;
 
   // Auto-update, legacy per-event channels.
   //

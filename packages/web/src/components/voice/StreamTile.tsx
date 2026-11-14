@@ -192,6 +192,9 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
   const watchingStreams = useVoiceStore((s) => s.watchingStreams);
 
   const { participant } = tile;
+  // With the sharer's overlay in the picture the viewer keeps the system cursor:
+  // its own labelled pointer comes back in the video, not drawn here.
+  const overlayInPicture = useStreamPointerStore((s) => s.capturedOverlays.has(participant.identity));
   const isLocal = participant.isLocal;
   const userId = participant.userId;
   const avatarUserId = participant.homeUserId ?? userId;
@@ -442,7 +445,7 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
           playsInline
           muted
           // While pointing, the labelled pointer drawn over the picture is the cursor.
-          className={`w-full h-full object-contain bg-black ${large && !isLocal && pointing ? 'cursor-none' : ''}`}
+          className={`w-full h-full object-contain bg-black ${large && !isLocal && pointing && !overlayInPicture ? 'cursor-none' : ''}`}
         />
       ) : (
         <div data-testid="stream-tile-placeholder" className={`w-full h-full min-h-0 flex items-center justify-center bg-surface-channel ${large ? 'px-4 py-6' : 'px-4 pt-9 pb-3'}`}>

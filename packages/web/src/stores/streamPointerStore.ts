@@ -29,6 +29,13 @@ interface StreamPointerState {
    */
   pointers: Map<string, Map<string, RemotePointer>>;
   record: (sharerIdentity: string, senderIdentity: string, point: PicturePoint | null, ping: boolean) => void;
+  /**
+   * Sharers whose desktop overlay of the pointers is in their shared picture
+   * (`stream_pointer_overlay`): over those shares the pointers are already in
+   * the video, so none are drawn on top.
+   */
+  capturedOverlays: ReadonlySet<string>;
+  setOverlayCaptured: (sharerIdentity: string, captured: boolean) => void;
   /** A participant left: their pointers go with them. */
   clearSender: (senderIdentity: string) => void;
   /** A share ended: nothing is left to point at. */
@@ -41,6 +48,16 @@ export const useStreamPointerStore = create<StreamPointerState>((set) => ({
   pointing: false,
   setPointing: (pointing) => set({ pointing }),
   pointers: new Map(),
+  capturedOverlays: new Set(),
+  setOverlayCaptured: (sharerIdentity, captured) => {
+    set((state) => {
+      if (state.capturedOverlays.has(sharerIdentity) === captured) return state;
+      const capturedOverlays = new Set(state.capturedOverlays);
+      if (captured) capturedOverlays.add(sharerIdentity);
+      else capturedOverlays.delete(sharerIdentity);
+      return { capturedOverlays };
+    });
+  },
   record: (sharerIdentity, senderIdentity, point, ping) => {
     set((state) => {
       const current = state.pointers.get(sharerIdentity);
@@ -82,11 +99,13 @@ export const useStreamPointerStore = create<StreamPointerState>((set) => ({
   },
   clearSharer: (sharerIdentity) => {
     set((state) => {
-      if (!state.pointers.has(sharerIdentity)) return state;
+      if (!state.pointers.has(sharerIdentity) && !state.capturedOverlays.has(sharerIdentity)) return state;
       const pointers = new Map(state.pointers);
       pointers.delete(sharerIdentity);
-      return { pointers };
+      const capturedOverlays = new Set(state.capturedOverlays);
+      capturedOverlays.delete(sharerIdentity);
+      return { pointers, capturedOverlays };
     });
   },
-  reset: () => set({ pointing: false, pointers: new Map() }),
+  reset: () => set({ pointing: false, pointers: new Map(), capturedOverlays: new Set() }),
 }));

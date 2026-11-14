@@ -464,6 +464,19 @@ describe('VoiceGrid stream pointer', () => {
       vi.useRealTimers();
     }
   });
+
+  it('draws no pointer over a share whose desktop overlay is already in the picture', () => {
+    render(<VoiceGrid participants={people()} />);
+    act(() => useStreamPointerStore.getState().record('bob', 'eve', { x: 0.25, y: 0.75 }, false));
+    expect(screen.getByTestId('stream-pointer')).toBeInTheDocument();
+
+    act(() => useStreamPointerStore.getState().setOverlayCaptured('bob', true));
+    expect(screen.queryByTestId('stream-pointer')).toBeNull();
+
+    act(() => useStreamPointerStore.getState().setOverlayCaptured('bob', false));
+    expect(screen.getByTestId('stream-pointer')).toBeInTheDocument();
+    act(() => useStreamPointerStore.getState().setOverlayCaptured('bob', false));
+  });
 });
 
 describe('VoiceGrid in voice fullscreen', () => {
