@@ -16,12 +16,22 @@
  *   twice — the drawn one and the captured one, a frame behind.
  * - It never takes focus or the mouse: pointing must not get in the way of
  *   whatever the sharer is doing.
+ * - It is on every Space, the full-screen ones included (see
+ *   `overlayWindowOptions`): a viewer keeps pointing at whatever the stream
+ *   shows, and on macOS that can be an app the sharer swiped to full screen.
  *
  * The renderer owns the pointer state (who is pointing, idle fading, colours,
  * names) and sends the full list on every change; this module only validates
  * it and draws it.
  */
-import { BrowserWindow, screen, type Display } from 'electron';
+import {
+  BrowserWindow,
+  screen,
+  type BrowserWindowConstructorOptions,
+  type Display,
+  type Rectangle,
+  type VisibleOnAllWorkspacesOptions,
+} from 'electron';
 
 /** One pointer as the renderer sends it. Coordinates are fractions of the shared picture. */
 export interface OverlayPointer {
@@ -128,6 +138,64 @@ window.render=function(list){
 </script></body></html>`;
 
 /**
+ * The overlay window's options for `bounds` on `platform`.
+ *
+ * On macOS a full-screen app has a Space of its own, and an ordinary window
+ * cannot join another application's full-screen Space, whatever its
+ * collection behaviour, unless the whole app is an agent (no Dock icon, no
+ * menu bar). A non-activating panel can: `type: 'panel'` makes Electron add
+ * `NSWindowStyleMaskNonactivatingPanel` and always keep the
+ * `CanJoinAllSpaces | FullScreenAuxiliary` collection behaviour, so the
+ * overlay is on every Space the sharer swipes to, above a full-screen app.
+ * Electron's panel is still an `NSWindow`, not an `NSPanel`, so it does not
+ * hide when the app deactivates — which it is whenever the sharer works in
+ * another app. `hiddenInMissionControl` (the `Transient` behaviour) keeps an
+ * empty, screen-sized tile for it out of Mission Control.
+ *
+ * Windows and Linux have no such Spaces; their window stays a plain one.
+ */
+export function overlayWindowOptions(bounds: Rectangle, platform: NodeJS.Platform): BrowserWindowConstructorOptions {
+  return {
+    ...bounds,
+    ...(platform === 'darwin' ? { type: 'panel', hiddenInMissionControl: true } : {}),
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    focusable: false,
+    skipTaskbar: true,
+    enableLargerThanScreen: true,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      javascript: true,
+      spellcheck: false,
+      backgroundThrottling: false,
+    },
+  };
+}
+
+/**
+ * Every workspace, full-screen ones included. Without
+ * `skipTransformProcessType`, `visibleOnFullScreen` makes Electron turn the
+ * whole app into a UI element (`app.dock.hide()`): the Dock icon and the menu
+ * bar vanish for as long as the app runs, and the asynchronous transform still
+ * did not put an ordinary window onto a full-screen Space. The panel needs no
+ * transform. Windows ignores the call; Linux reads only `visible`.
+ */
+export const OVERLAY_WORKSPACES: VisibleOnAllWorkspacesOptions = {
+  visibleOnFullScreen: true,
+  skipTransformProcessType: true,
+};
+
+/**
  * Owns the overlay window. `setTarget` says which display is being shared
  * (null when nothing, or a window, is); `update` draws the renderer's list.
  */
@@ -193,33 +261,10 @@ export class PointerOverlay {
     if (this.window && !this.window.isDestroyed() && this.ready) {
       return { win: this.window, ready: this.ready };
     }
-    const win = new BrowserWindow({
-      ...display.bounds,
-      show: false,
-      frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
-      hasShadow: false,
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      focusable: false,
-      skipTaskbar: true,
-      enableLargerThanScreen: true,
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        javascript: true,
-        spellcheck: false,
-        backgroundThrottling: false,
-      },
-    });
+    const win = new BrowserWindow(overlayWindowOptions(display.bounds, process.platform));
     // Above full-screen apps and every other window, on every Space.
     win.setAlwaysOnTop(true, 'screen-saver');
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setVisibleOnAllWorkspaces(true, OVERLAY_WORKSPACES);
     // Clicks and the wheel go through to whatever is underneath.
     win.setIgnoreMouseEvents(true);
     // Not captured, so the share does not carry a second copy of each pointer.
