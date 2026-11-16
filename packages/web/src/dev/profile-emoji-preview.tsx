@@ -112,7 +112,7 @@ function Rows({ user }: { user: User }) {
   return (
     <div className="flex gap-6 p-4">
       <div className="w-[240px] bg-surface-channel rounded-lg p-2">
-        <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-[4px]">
+        <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm">
           <Avatar src={null} name={displayName} size={32} status="online" user={user} />
           <div className="flex-1 min-w-0">
             <span className="text-[13.5px] leading-[1.2] font-medium truncate text-txt-primary">{displayName}</span>
@@ -121,9 +121,9 @@ function Rows({ user }: { user: User }) {
         </div>
       </div>
       <div className="w-[520px] bg-surface-chat rounded-lg p-4">
-        <div className="text-[13px] text-txt-tertiary mb-1">{displayName}</div>
+        <div className="text-compact text-txt-tertiary mb-1">{displayName}</div>
         {/* The message body's own classes, from Message.tsx. */}
-        <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap">
+        <div className="text-txt-message text-sm break-words whitespace-pre-wrap">
           <MarkdownRenderer content={user.bio ?? ''} />
         </div>
       </div>

@@ -172,7 +172,8 @@ through the input tiers.
 |----------|-------|
 | Radius | `rounded` 6 (tags) · `rounded-md` 8 · `rounded-lg` 10 (buttons, fields, rows) · `rounded-xl` 14 (tiles, cards, popovers) · `rounded-2xl` 16 (dialogs) · `rounded-full`. Tailwind's own steps are redefined, so existing classes follow. |
 | Text | `text-2xs` 11/16 · `text-xs` 12/16 · `text-compact` 13/18 · `text-sm` 14/20 (body) · `text-lg` 16/24 · `text-xl` 20/28 · `text-2xl` 24/32. Weights 400 / 500 / 600. |
-| Layer | `z-raised` 10 · `z-float` 20 · `z-popover` 200 · `z-modal` 300 · `z-toast` 400 · `z-confirm` 500 |
+| Layer | `z-raised` 10 · `z-float` 20 · `z-chrome` 30 (edge chrome over a fullscreen stage) · `z-popover` 200 · `z-modal` 200 (same layer: overlays stack by portal order) · `z-toast` 400 · `z-confirm` 500 |
+| Layer use | Only the named layers: no `z-[…]` and no bare `z-10`. Stacking inside one component (a badge over a banner, a drop line over a row) takes `z-raised` / `z-float`; drop the class when DOM order already paints the element on top. |
 | Duration | `duration-fast` 120ms · `duration-base` 220ms · `duration-slow` 320ms |
 | Easing | `ease-out` (.22, 1, .36, 1) · `ease-pop` (.3, 1.5, .55, 1) |
 
@@ -397,6 +398,7 @@ Workbench: `dev-ui-kit.html`. How to move a file onto these: `docs/brand/migrati
 | `Button` | `variant` `primary` / `secondary` / `ghost` / `danger` / `danger-solid`, `size` `sm` 28 / `md` 34 / `lg` 40, optional `icon`, `loading`, `fullWidth`. Defaults to `type="button"`. |
 | `IconButton` | An icon-only button; `label` is required and becomes the accessible name and title. `tone` `default` / `off` / `on` / `danger` / `danger-solid`. |
 | `Tag`, `Badge` | `Tag`: `live`, `neutral`, `onMedia`, `accent`, or a content `color`. `Badge`: the unread dot or count in `accent-secondary`. |
+| `Spinner`, `LoadingSpinner` | The one progress spinner (ring + turning arc, `currentColor`). `Spinner` is inline (`size` px, optional `label`); `LoadingSpinner` centres it in a block. `Button`'s `loading` uses it; never draw another. |
 | `Options`, `Tabs` | Mutually exclusive chips; a segmented switch between views. |
 | `Card`, `Field`, `Progress` | A grouped surface; a label + description + control + error wired by id; the 3px transfer bar. |
 

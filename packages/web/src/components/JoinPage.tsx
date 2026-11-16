@@ -14,6 +14,7 @@ import { sendInviteJoinRequest, type InviteRequestOutcome } from '../utils/invit
 import { FallbackNotice } from './modals/RemotePasswordStep';
 import { Button } from './ui/Button';
 import { Icon } from './ui/Icon';
+import { Spinner } from './ui/LoadingSpinner';
 import { Mascot } from './ui/Mascot';
 
 /**
@@ -284,10 +285,7 @@ export function JoinPage() {
       <div className="h-full overflow-y-auto flex flex-col items-center bg-surface-base relative">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgb(var(--accent-primary)/0.06)_0%,transparent_50%)]" />
         <div className="my-auto flex-shrink-0 text-center relative z-raised">
-          <svg className="animate-spin w-10 h-10 text-accent-tone mx-auto mb-4" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size={40} className="text-accent-tone mx-auto mb-4" />
           <p className="text-txt-tertiary">{t('auth:join.loading')}</p>
         </div>
       </div>

@@ -59,7 +59,7 @@ export function Badge({ count, tone = 'attention', className, label }: BadgeProp
   }
   return (
     <span
-      className={`inline-grid place-items-center min-w-4 h-4 px-1 rounded-full text-[10px] leading-none font-bold tabular-nums ${ground} ${className ?? ''}`}
+      className={`inline-grid place-items-center min-w-4 h-4 px-1 rounded-full text-2xs leading-none font-bold tabular-nums ${ground} ${className ?? ''}`}
       aria-label={label}
     >
       {count > 99 ? '99+' : count}

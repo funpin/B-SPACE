@@ -93,7 +93,7 @@ export function IncomingCallModal() {
         </div>
 
         {/* Content */}
-        <div className="relative z-[2] p-8 flex flex-col items-center gap-4">
+        <div className="relative z-float p-8 flex flex-col items-center gap-4">
           {/* Caller avatar */}
           <div className="rounded-full animate-call-glow">
             <Avatar

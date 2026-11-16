@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useUIStore } from '../../stores/uiStore';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
+import { Icon } from './Icon';
 
 interface ModalProps {
   isOpen: boolean;
@@ -60,9 +61,7 @@ function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, m
               className="text-txt-tertiary hover:text-txt-primary transition-colors p-1"
               aria-label={closeLabel}
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M18.4 4L12 10.4L5.6 4L4 5.6L10.4 12L4 18.4L5.6 20L12 13.6L18.4 20L20 18.4L13.6 12L20 5.6L18.4 4Z" />
-              </svg>
+              <Icon name="x" size="lg" />
             </button>
           </div>
         )}
@@ -90,9 +89,7 @@ function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, m
                 className="text-txt-tertiary hover:text-txt-primary transition-colors p-1"
                 aria-label={closeLabel}
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.4 4L12 10.4L5.6 4L4 5.6L10.4 12L4 18.4L5.6 20L12 13.6L18.4 20L20 18.4L13.6 12L20 5.6L18.4 4Z" />
-                </svg>
+                <Icon name="x" size="lg" />
               </button>
             </div>
           )}
@@ -116,12 +113,10 @@ function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, m
           {/* Floating close button */}
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 z-10 p-1.5 rounded-full bg-surface-elevated/50 backdrop-blur-sm text-txt-tertiary hover:text-txt-primary transition-colors"
+            className="absolute top-4 right-4 z-raised p-1.5 rounded-full glass text-txt-tertiary hover:text-txt-primary transition-colors"
             aria-label={closeLabel}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.4 4L12 10.4L5.6 4L4 5.6L10.4 12L4 18.4L5.6 20L12 13.6L18.4 20L20 18.4L13.6 12L20 5.6L18.4 4Z" />
-            </svg>
+            <Icon name="x" size="md" />
           </button>
           {children}
         </div>
@@ -145,9 +140,7 @@ function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, m
               className="text-txt-tertiary hover:text-txt-primary transition-colors p-1"
               aria-label={closeLabel}
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M18.4 4L12 10.4L5.6 4L4 5.6L10.4 12L4 18.4L5.6 20L12 13.6L18.4 20L20 18.4L13.6 12L20 5.6L18.4 4Z" />
-              </svg>
+              <Icon name="x" size="lg" />
             </button>
           </div>
         )}

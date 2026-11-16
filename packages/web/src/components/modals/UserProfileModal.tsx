@@ -9,6 +9,7 @@ import type { User } from '@backspace/shared';
 import { Avatar } from '../ui/Avatar';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
+import { Spinner } from '../ui/LoadingSpinner';
 import { Username } from '../ui/Username';
 import { ProfileBio } from '../ui/ProfileBio';
 import { useUIStore, type ProfileMemberContext } from '../../stores/uiStore';
@@ -342,10 +343,7 @@ export function UserProfileModal() {
             <div>
               {loadingMutuals ? (
                 <div className="flex items-center justify-center py-8">
-                  <svg className="animate-spin w-5 h-5 text-txt-tertiary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <Spinner size={20} className="text-txt-tertiary" />
                 </div>
               ) : mutualFriends.length === 0 ? (
                 <div className="text-center py-8 text-txt-tertiary text-compact">
@@ -395,10 +393,7 @@ export function UserProfileModal() {
             <div>
               {loadingMutuals ? (
                 <div className="flex items-center justify-center py-8">
-                  <svg className="animate-spin w-5 h-5 text-txt-tertiary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <Spinner size={20} className="text-txt-tertiary" />
                 </div>
               ) : mutualSpaces.length === 0 ? (
                 <div className="text-center py-8 text-txt-tertiary text-compact">

@@ -7,6 +7,7 @@ import { api } from '../../api/client';
 import { describeError } from '../../i18n/errors';
 import { Button } from '../ui/Button';
 import { IconButton } from '../ui/IconButton';
+import { Spinner } from '../ui/LoadingSpinner';
 import { Icon } from '../ui/Icon';
 import { deleteAccountOnRemotes, type FederationOpResult } from '../../utils/federationOps';
 
@@ -351,10 +352,7 @@ export function DeleteAccountModal({ isOpen, onClose }: DeleteAccountModalProps)
                     <div key={inst.origin} className="flex items-center justify-between px-3 h-10 rounded-lg bg-surface-elevated">
                       <span className="text-sm text-txt-primary">{inst.label || new URL(inst.origin).host}</span>
                       {!result ? (
-                        <svg className="animate-spin w-4 h-4 text-txt-tertiary" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
+                        <Spinner size={16} className="text-txt-tertiary" />
                       ) : result.success ? (
                         <Icon name="check" size="sm" className="text-status-ok" />
                       ) : (

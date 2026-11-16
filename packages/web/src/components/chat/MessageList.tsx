@@ -1197,7 +1197,7 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
 
       {showInitialSkeleton && (
         <div
-          className="absolute inset-0 z-10 bg-surface-chat flex flex-col justify-end px-4 pb-6 pointer-events-none"
+          className="absolute inset-0 z-raised bg-surface-chat flex flex-col justify-end px-4 pb-6 pointer-events-none"
           role="status"
           aria-label={t('chat:list.loading')}
         >
@@ -1251,7 +1251,7 @@ function LoadFailedNotice({ title, detail, retryLabel, onRetry }: {
   onRetry: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface-chat px-6">
+    <div className="absolute inset-0 z-raised flex items-center justify-center bg-surface-chat px-6">
       <div role="alert" className="flex max-w-sm flex-col items-center gap-1 text-center">
         <p className="text-base font-semibold text-txt-primary">{title}</p>
         <p className="text-compact text-txt-tertiary break-words">{detail}</p>

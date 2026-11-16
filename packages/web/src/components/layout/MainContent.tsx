@@ -60,7 +60,7 @@ function voiceHeaderClassName(fullscreen: boolean, revealed: boolean): string {
     return `${base} border-b border-border-hard flex-shrink-0`;
   }
   const overlay =
-    'pointer-events-none absolute inset-x-0 top-0 z-30 border-b border-white/5 bg-gradient-to-b from-black/90 via-black/70 to-transparent';
+    'pointer-events-none absolute inset-x-0 top-0 z-chrome border-b border-white/5 bg-gradient-to-b from-black/90 via-black/70 to-transparent';
   const visibility = revealed
     ? 'opacity-100'
     : 'opacity-0 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100';
@@ -458,7 +458,7 @@ export function MainContent() {
           </div>
           <div className="flex-1 flex flex-col items-center justify-center gap-8 relative">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgb(var(--accent-tone)/0.10)_0%,transparent_70%)] animate-gradient-pulse pointer-events-none" />
-            <div className="text-center relative z-[1]">
+            <div className="text-center relative">
               <h2 className="text-2xl font-semibold text-txt-primary mb-2">{channel.name}</h2>
               <p className="text-txt-tertiary text-sm">{t('spaces:main.voice.empty')}</p>
             </div>
@@ -466,7 +466,7 @@ export function MainContent() {
               variant="primary"
               size="lg"
               icon="volume-2"
-              className="relative z-[1] px-6"
+              className="relative px-6"
               onClick={() => joinVoiceChannel(currentChannelId, useVoiceStore.getState().connectFn ?? undefined)}
             >
               {t('spaces:main.voice.join')}

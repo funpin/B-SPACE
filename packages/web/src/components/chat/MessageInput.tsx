@@ -26,6 +26,7 @@ import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
 import { describeError } from '../../i18n/errors';
 import { IconButton } from '../ui/IconButton';
+import { Spinner } from '../ui/LoadingSpinner';
 
 interface MessageInputProps {
   channelId: string;
@@ -864,10 +865,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           {/* Active-upload indicator */}
           {anyActiveOrQueued && (
             <div className="p-3 text-txt-tertiary" title={t('chat:composer.uploading')} aria-label={t('chat:composer.uploadingLabel')}>
-              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+              <Spinner size={20} />
             </div>
           )}
 
