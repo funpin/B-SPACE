@@ -1,6 +1,7 @@
 import { handleChannelPoke } from './channelPoke.js';
 import type { WebSocket } from 'ws';
 import { addsMassMention, hasMassMention } from '@backspace/shared/src/mentions.js';
+import { isVoiceConnectFailureReason, isVoiceConnectingState } from '@backspace/shared/src/voiceConnection.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
@@ -170,6 +171,12 @@ export function handleClientEvent(
       break;
     case 'voice_leave':
       handleVoiceLeave(userId);
+      break;
+    case 'voice_connecting':
+      handleVoiceConnecting(event, userId, ws);
+      break;
+    case 'voice_heartbeat':
+      handleVoiceHeartbeat(userId, ws);
       break;
     case 'dm_message_create':
       handleDmMessageCreate(event, userId, ws);
@@ -584,18 +591,10 @@ function handleVoiceJoin(event: Record<string, unknown>, userId: string, ws: Web
   // skip the leave+join broadcast to avoid visual flicker for other users.
   const currentRoom = connectionManager.getUserRoom(userId);
   if (currentRoom && currentRoom.roomId === channelId) {
-    const status = connectionManager.getVoiceUserStatus(userId);
-    if (status) {
-      connectionManager.sendToRoom(channelId, {
-        type: 'voice_status_update',
-        userId,
-        channelId,
-        isMuted: status.isMuted,
-        isDeafened: status.isDeafened,
-        isCameraOn: status.isCameraOn,
-        isScreenSharing: status.isScreenSharing,
-      });
-    }
+    // The session is back: it is no attempt any more, and it has just spoken.
+    connectionManager.voiceAttempts.withdraw(userId);
+    connectionManager.voiceWatchdog.touch(userId, Date.now(), false);
+    connectionManager.broadcastVoiceUserStatus(userId);
 
     // Re-broadcast persistent restrictions (covers page reload while in voice)
     const db = getDb();
@@ -664,6 +663,10 @@ function handleVoiceJoin(event: Record<string, unknown>, userId: string, ws: Web
     });
   }
 
+  // The attempt this join completes ends before the join is announced, so a
+  // client drops the "connecting" row and then adds the member.
+  connectionManager.voiceAttempts.withdraw(userId);
+
   // Lazy-create space room
   connectionManager.createRoom(channelId, 'space', { type: 'space', spaceId });
 
@@ -686,19 +689,10 @@ function handleVoiceJoin(event: Record<string, unknown>, userId: string, ws: Web
     channelElapsedSeconds: joinedRoom ? getVoiceRoomElapsedSeconds(joinedRoom) : undefined,
   });
 
+  connectionManager.voiceWatchdog.touch(userId, Date.now(), false);
+
   // Also broadcast current voice status if it exists (persisted during moves)
-  const status = connectionManager.getVoiceUserStatus(userId);
-  if (status) {
-    connectionManager.sendToRoom(channelId, {
-      type: 'voice_status_update',
-      userId,
-      channelId,
-      isMuted: status.isMuted,
-      isDeafened: status.isDeafened,
-      isCameraOn: status.isCameraOn,
-      isScreenSharing: status.isScreenSharing,
-    });
-  }
+  connectionManager.broadcastVoiceUserStatus(userId);
 
   // Load persistent voice restrictions for this user in this space
   const db = getDb();
@@ -753,12 +747,50 @@ function handleVoiceLeave(userId: string): void {
   // holds here too: the client leaves it this way when it joins voice on
   // another instance, which tells this one nothing else.
   leaveJoinedFederatedCall(userId);
+  connectionManager.voiceAttempts.withdraw(userId);
   connectionManager.clearVoiceWs(userId);
   const left = connectionManager.leaveCurrentRoom(userId);
   if (left) {
     broadcastRoomLeave(left.roomId, left.room, userId);
   }
   connectionManager.clearVoiceUserStatus(userId);
+}
+
+/**
+ * A member reports that they are connecting to a voice channel, that the
+ * attempt failed, or that they gave it up. It is relayed to the members who
+ * can see the channel; `voice_join` stays the only thing that puts someone in
+ * the channel. A report the user may not make is dropped without an answer:
+ * the join it precedes will be refused with one.
+ */
+function handleVoiceConnecting(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
+  if (!isVoiceConnectingState(event.state)) return;
+  if (event.state === 'idle') {
+    connectionManager.voiceAttempts.withdraw(userId);
+    return;
+  }
+
+  const channelId = event.channelId;
+  if (typeof channelId !== 'string' || !channelId) return;
+  const spaceId = getChannelSpaceId(channelId);
+  if (!spaceId) return;
+  if (!hasPermission(userId, spaceId, PermissionBits.CONNECT, channelId)) return;
+  // Already in the channel: there is nothing to attempt.
+  if (connectionManager.getUserRoom(userId)?.roomId === channelId) return;
+
+  const reason = isVoiceConnectFailureReason(event.reason) ? event.reason : undefined;
+  connectionManager.voiceAttempts.report(userId, ws, channelId, spaceId, event.state, reason);
+}
+
+/**
+ * The page of a member in voice says it is alive. Only the socket that owns
+ * the voice session counts: another tab of the same user proves nothing about
+ * the one that is in the channel.
+ */
+function handleVoiceHeartbeat(userId: string, ws: WebSocket): void {
+  if (connectionManager.getVoiceWs(userId) !== ws) return;
+  connectionManager.voiceWatchdog.touch(userId, Date.now(), true);
+  if (connectionManager.setVoiceUnresponsive(userId, false)) connectionManager.broadcastVoiceUserStatus(userId);
 }
 
 function handleVoiceStatus(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
@@ -796,18 +828,19 @@ function handleVoiceStatus(event: Record<string, unknown>, userId: string, ws: W
   const effectiveMuted = (isSpaceMuted || isPermMuted) ? true : isMuted;
   const effectiveDeafened = isSpaceDeafened ? true : isDeafened;
 
-  connectionManager.setVoiceUserStatus(userId, effectiveMuted, effectiveDeafened, isCameraOn, isScreenSharing);
+  // A status from the socket that owns the session is a sign of life.
+  if (connectionManager.getVoiceWs(userId) === ws) {
+    connectionManager.voiceWatchdog.touch(userId, Date.now(), false);
+    connectionManager.setVoiceUnresponsive(userId, false);
+  }
+
+  connectionManager.setVoiceUserStatus(userId, effectiveMuted, effectiveDeafened, isCameraOn, isScreenSharing, {
+    isReconnecting: event.isReconnecting === true,
+    isMicUnavailable: event.isMicUnavailable === true,
+  });
 
   // sendToRoom routes to sendToSpace for space rooms, sendToDmMembers for DM rooms
-  connectionManager.sendToRoom(userRoom.roomId, {
-    type: 'voice_status_update',
-    userId,
-    channelId: userRoom.roomId,
-    isMuted: effectiveMuted,
-    isDeafened: effectiveDeafened,
-    isCameraOn,
-    isScreenSharing,
-  });
+  connectionManager.broadcastVoiceUserStatus(userId);
 }
 
 // ─── DM Message Handlers ───────────────────────────────────────────────────

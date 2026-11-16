@@ -5,10 +5,58 @@ import {
   LogOut, Maximize, MessageSquare, Mic, MicOff, Minimize, Minus, Monitor, Palette, Paperclip, Pencil, Phone,
   PhoneOff, Pin, Play, Plus, RefreshCw, Reply, ScreenShare, ScreenShareOff, Search, Send, Settings, Shield, Smile,
   Sticker, Trash2, TriangleAlert, Upload, User, UserMinus, UserPlus, Users, Video, VideoOff, Volume2, VolumeX,
-  Wifi, WifiOff, X,
+  Wifi, WifiOff, X, Unplug, createLucideIcon,
   ArrowDown, ArrowUp, BadgeCheck, Bookmark, Bot, Calendar, Camera, CheckCheck, Circle, CircleCheck, CircleMinus, CirclePlus, CircleX, Clock, Cloud, CloudOff, Code, CornerUpLeft, Database, Ear, EarOff, File, FileUp, Filter, Flag, FolderPlus, Gamepad2, Gift, GripVertical, Hand, HardDrive, Heart, History, House, ImagePlus, Inbox, Key, Link2, List, LogIn, Mail, Megaphone, Menu, MessageCircle, MessagesSquare, MonitorOff, MonitorUp, Moon, MousePointer2, Music, Network, PanelLeft, PanelRight, Pause, PictureInPicture2, Power, Radio, RotateCcw, Save, Server, Share2, ShieldCheck, Signal, SlidersHorizontal, Smartphone, Sparkles, Square, Star, Sun, Tag, ThumbsUp, Unlink, Unlock, UserCheck, UserX, Volume1, Zap, ZoomIn, ZoomOut, Expand, Shrink, Move, Languages, Bug, Wrench, Rocket, PartyPopper, Angry, Frown, Laugh, Meh, LoaderCircle, SwitchCamera, ChartNoAxesColumn,
   type LucideIcon,
 } from 'lucide-react';
+
+/**
+ * A microphone with an exclamation mark: the member has no microphone access.
+ * Lucide has only the plain and the struck-through microphone, and the
+ * struck-through one already means "muted". Drawn on Lucide's 24px grid in
+ * its outline style: its `mic` moved two units left, the mark beside it.
+ */
+const MicAlert = createLucideIcon('MicAlert', [
+  ['path', { d: 'M10 19v3', key: 'stand' }],
+  ['path', { d: 'M17 10v2a7 7 0 0 1-14 0v-2', key: 'cradle' }],
+  ['rect', { x: '7', y: '2', width: '6', height: '13', rx: '3', key: 'capsule' }],
+  ['path', { d: 'M21 3v6', key: 'mark' }],
+  ['path', { d: 'M21 13h.01', key: 'dot' }],
+]);
+
+/**
+ * The signal meter: three capsules of rising height, the lit ones solid and
+ * the rest faint. A member's network is weak (two lit) or gone (one lit):
+ * the red one keeps a lit capsule so it stays as visible as the amber one.
+ *
+ * Solid shapes are the one exception to "outline only" in this file, chosen
+ * by the owner over thin bars and over outlined capsules: the mark is drawn
+ * at the 13px of a participant row, where an outline of this size thins to a
+ * thread and a stroke-only bar reads as a harsh stick. A lit capsule against
+ * faint ones is also a level, not a state shown by filling a glyph, which is
+ * what the outline rule is about.
+ */
+const UNLIT_CAPSULE = '0.3';
+const CAPSULES = [
+  { x: '3', y: '13', height: '8' },
+  { x: '9.5', y: '8', height: '13' },
+  { x: '16', y: '3', height: '18' },
+] as const;
+
+function signalMeter(name: string, lit: number): LucideIcon {
+  return createLucideIcon(name, CAPSULES.map((capsule, index) => ['rect', {
+    ...capsule,
+    width: '5',
+    rx: '2.5',
+    fill: 'currentColor',
+    stroke: 'none',
+    ...(index < lit ? {} : { opacity: UNLIT_CAPSULE }),
+    key: `capsule-${index}`,
+  }]));
+}
+
+const SignalWeak = signalMeter('SignalWeak', 2);
+const SignalLost = signalMeter('SignalLost', 1);
 
 /**
  * The one way an icon enters a screen (docs/brand/brandbook.md §8). Lucide,
@@ -189,6 +237,10 @@ const ICONS = {
   laugh: Laugh,
   meh: Meh,
   'loader-circle': LoaderCircle,
+  'signal-weak': SignalWeak,
+  'signal-lost': SignalLost,
+  unplug: Unplug,
+  'mic-alert': MicAlert,
 } as const satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

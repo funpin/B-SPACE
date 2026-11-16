@@ -133,9 +133,71 @@ describe('voice capture teardown', () => {
     await act(async () => { await result.current.connect('channel'); });
     expect(result.current.connectionError).toBe('connect_failed');
     expect(useVoiceStore.getState().connectionError).toBe('connect_failed');
-    expect(useVoiceStore.getState().currentVoiceChannelId).toBeNull();
+    // The intent to be in the channel is kept, so the voice panel stays up
+    // with the reason and a Retry instead of closing without a word.
+    expect(useVoiceStore.getState().currentVoiceChannelId).toBe('channel');
+    expect(useVoiceStore.getState().voiceConnectionStatus).toBe('disconnected');
     expect(result.current.isConnecting).toBe(false);
     expect(result.current.isConnected).toBe(false);
+  });
+
+  it('names the reason when the media path does not come up, and shows it on the own row', async () => {
+    mocks.connect.mockRejectedValueOnce(new Error('could not establish pc connection'));
+    useVoiceStore.setState({ currentVoiceChannelId: 'channel' });
+    const { result } = renderHook(() => useLiveKit());
+
+    await act(async () => { await result.current.connect('channel'); });
+
+    expect(useVoiceStore.getState().connectionError).toBe('media_unreachable');
+    expect(useVoiceStore.getState().voiceConnecting.get('channel')).toEqual([
+      { userId: 'me', state: 'failed', reason: 'media_unreachable' },
+    ]);
+  });
+
+  it('names a failure to get a token as such', async () => {
+    mocks.token.mockRejectedValueOnce(new Error('503'));
+    useVoiceStore.setState({ currentVoiceChannelId: 'channel' });
+    const { result } = renderHook(() => useLiveKit());
+
+    await act(async () => { await result.current.connect('channel'); });
+
+    expect(useVoiceStore.getState().connectionError).toBe('token_failed');
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
+  it('shows the own row as connecting during the attempt and removes it once joined', async () => {
+    let finish!: () => void;
+    mocks.connect.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useLiveKit());
+    let connecting!: Promise<void>;
+
+    await act(async () => { connecting = result.current.connect('channel'); });
+    expect(useVoiceStore.getState().voiceConnecting.get('channel')).toEqual([{ userId: 'me', state: 'connecting' }]);
+
+    await act(async () => { finish(); await connecting; });
+    expect(useVoiceStore.getState().voiceConnecting.has('channel')).toBe(false);
+  });
+
+  it('removes the own failed row when the user gives the attempt up', async () => {
+    mocks.connect.mockRejectedValueOnce(new Error('nope'));
+    useVoiceStore.setState({ currentVoiceChannelId: 'channel' });
+    const { result } = renderHook(() => useLiveKit());
+    await act(async () => { await result.current.connect('channel'); });
+    expect(useVoiceStore.getState().voiceConnecting.has('channel')).toBe(true);
+
+    await act(async () => { await result.current.disconnect(); });
+
+    expect(useVoiceStore.getState().voiceConnecting.has('channel')).toBe(false);
+  });
+
+  it('still leaves a DM call whose first connection fails', async () => {
+    mocks.connect.mockRejectedValueOnce(new Error('nope'));
+    const { result } = renderHook(() => useLiveKit());
+
+    await act(async () => { await result.current.connect('dm-1', true); });
+
+    expect(useVoiceStore.getState().connectionError).toBe('connect_failed');
+    expect(useVoiceStore.getState().voiceConnecting.size).toBe(0);
   });
   it('clears connecting state and ignores a late token after leave', async () => {
     let finish!: (token: { token: string; url: string }) => void;

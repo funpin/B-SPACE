@@ -35,7 +35,17 @@ export function broadcastVoiceStatus(overrideOrigin?: string): void {
   const effectiveMuted = isMuted || spaceMutedUserIds.has(spaceKey);
   const effectiveDeafened = isDeafened || spaceDeafenedUserIds.has(spaceKey);
 
-  wsSend({ type: 'voice_status', isMuted: effectiveMuted, isDeafened: effectiveDeafened, isCameraOn, isScreenSharing }, origin);
+  // The two connection flags this client knows about itself. They are sent
+  // only when set: an instance that does not relay them drops them anyway.
+  wsSend({
+    type: 'voice_status',
+    isMuted: effectiveMuted,
+    isDeafened: effectiveDeafened,
+    isCameraOn,
+    isScreenSharing,
+    ...(vs.voiceConnectionStatus === 'reconnecting' ? { isReconnecting: true } : {}),
+    ...(vs.micPermissionDenied ? { isMicUnavailable: true } : {}),
+  }, origin);
 }
 
 /**

@@ -445,12 +445,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    }
-  },
-  "packages/web/src/hooks/useMascotAnimation.ts": {
-    "react-hooks/exhaustive-deps": {
-      "count": 1
+      "count": 2
     }
   },
   "packages/web/src/hooks/useTrackStats.ts": {

@@ -319,6 +319,36 @@ the amber-means-update rule above, not a bug.
 
 ---
 
+## Voice connection marks
+
+The state of a member's voice connection is one small mark at the right of their row in the channel list (`components/voice/VoiceConnectionMark.tsx`), 13px like the other row marks, no ground behind it. One glyph per kind of trouble, so the shape says what kind it is before the tooltip is read; colour only says how bad.
+
+| Mark | Glyph | Colour | Meaning |
+|------|-------|--------|---------|
+| `connecting` | `loader-circle`, spinning | `txt-tertiary` | not in the channel yet |
+| `weak` | `signal-weak` | `status-warn` | in the channel, network weak |
+| `lost` | `signal-lost` | `status-danger` | in the channel, network gone |
+| `reconnecting` | `unplug` | `status-danger` | the client lost its link and is restoring it |
+| `mic-unavailable` | `mic-alert` | `status-warn` | no microphone access |
+| `unresponsive`, `failed` | `triangle-alert` | `status-danger` | listed, but out of reach |
+
+Rules:
+
+- One mark per row, the most serious that applies. Which states exist and their order: voice.md, "Connection states".
+- The triangle is kept for "cannot be reached". A weak network is a degree and gets the meter; a missing permission gets a glyph of the thing that is missing.
+- The tooltip (`title`) and the accessible name are the same sentence. It says "you" on the viewer's own row and names the member on anyone else's.
+- A row for a member who is not in the channel yet has its name in `txt-tertiary`.
+- The spinner is `motion-safe:animate-spin`: under "Reduce motion" it stands still.
+
+Three of the glyphs are drawn for this, on Lucide's 24px grid (`components/ui/Icon.tsx`):
+
+- `signal-weak` and `signal-lost` are a meter of three capsules of rising height, the lit ones solid and the rest at 30%: two lit for a weak network, one for a lost one (colour tells them apart first, the count second). They are the one solid glyph in the icon set. At 13px a stroke-only bar reads as a harsh stick and an outlined capsule thins to a thread, and a lit capsule among faint ones is a level, not a state shown by filling a glyph.
+- `mic-alert` is Lucide's `mic` with an exclamation mark, in its outline style, because the struck-through microphone already means "muted".
+
+Workbench: `packages/web/dev-voice-connection.html`.
+
+---
+
 ## Layout
 
 3-column grid: 304px left column | main content | 240px members sidebar.

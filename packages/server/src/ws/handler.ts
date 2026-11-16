@@ -38,10 +38,15 @@ import { utcDay } from '../telemetry/day.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
 import { canCountUnread, readyUnreadCounts, unreadCountFollowUp } from './channelUnreadCounts.js';
 import { userWrittenMessages } from '../db/userWrittenMessages.js';
+import type { VoiceConnectingEntry, VoiceUserStatus } from '@backspace/shared/src/voiceConnection.js';
+import { VoiceAttempts, VoiceWatchdog, type VoiceAttemptNotice } from './voiceLink.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let voiceWatchdogInterval: ReturnType<typeof setInterval> | null = null;
+/** How often the voice watchdog looks for members whose client went silent. */
+const VOICE_WATCHDOG_SWEEP_MS = 5_000;
 
 export const VOICE_RECONNECT_GRACE_MS = 60_000;
 const MAX_PENDING_VOICE_RECONNECTS = 10_000;
@@ -133,8 +138,13 @@ class ConnectionManager implements ReplicaSessionHost {
   private voiceRooms: Map<string, VoiceRoom> = new Map();
   // O(1) reverse index: userId → roomId
   private userToRoom: Map<string, string> = new Map();
-  // userId → { isMuted, isDeafened, isCameraOn, isScreenSharing } — voice user status
-  private voiceUserStates: Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = new Map();
+  // userId → what the member's client reports about itself in voice, plus
+  // the connection flags (voiceConnection.ts). Ends with the voice session.
+  private voiceUserStates: Map<string, VoiceUserStatus> = new Map();
+  /** Attempts to join a voice channel that members reported and that have not ended. */
+  readonly voiceAttempts = new VoiceAttempts((notice) => this.announceVoiceAttempt(notice));
+  /** Notices a member in voice whose page stopped talking on an open socket. */
+  readonly voiceWatchdog = new VoiceWatchdog();
   // userId → Timeout
   private pendingOfflineTimeouts: Map<string, NodeJS.Timeout> = new Map();
   // Voice has a longer grace than presence so a VPN/network handover can be
@@ -191,6 +201,7 @@ class ConnectionManager implements ReplicaSessionHost {
     if (!userId) return undefined;
 
     this.wsToUser.delete(ws);
+    this.voiceAttempts.ownerClosed(userId, ws);
     const userConnections = this.connections.get(userId);
     if (userConnections) {
       userConnections.delete(ws);
@@ -200,6 +211,12 @@ class ConnectionManager implements ReplicaSessionHost {
       if (this.voiceWs.get(userId) === ws) {
         this.voiceWs.delete(userId);
         this.scheduleVoiceDisconnect(userId);
+        // The place is held for the grace period, but nobody is behind it
+        // right now, and the others should see that instead of a member
+        // who merely says nothing. The grace timer takes over from the
+        // watchdog here.
+        this.voiceWatchdog.forget(userId);
+        if (this.setVoiceUnresponsive(userId, true)) this.broadcastVoiceUserStatus(userId);
       }
 
       if (userConnections.size === 0) {
@@ -466,7 +483,8 @@ class ConnectionManager implements ReplicaSessionHost {
     if (this.getUserConnections(userId).size === 0) return;
     const snapshot = this.buildSpaceVoiceState(spaceId, userId);
     if (Object.keys(snapshot.voiceStates).length === 0
-        && Object.keys(snapshot.spaceVoiceStates).length === 0) {
+        && Object.keys(snapshot.spaceVoiceStates).length === 0
+        && Object.keys(snapshot.voiceConnecting).length === 0) {
       return;
     }
     this.sendToUser(userId, {
@@ -475,6 +493,7 @@ class ConnectionManager implements ReplicaSessionHost {
       voiceStates: snapshot.voiceStates,
       voiceChannelElapsedSeconds: snapshot.voiceChannelElapsedSeconds,
       voiceUserStates: snapshot.voiceUserStates,
+      voiceConnecting: snapshot.voiceConnecting,
       spaceVoiceStates: snapshot.spaceVoiceStates,
     });
   }
@@ -533,13 +552,15 @@ class ConnectionManager implements ReplicaSessionHost {
   buildSpaceVoiceState(spaceId: string, userId: string): {
     voiceStates: Record<string, string[]>;
     voiceChannelElapsedSeconds: Record<string, number>;
-    voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>;
+    voiceUserStates: Record<string, VoiceUserStatus>;
+    voiceConnecting: Record<string, VoiceConnectingEntry[]>;
     spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }>;
   } {
     const db = getDb();
     const voiceStates: Record<string, string[]> = {};
     const voiceChannelElapsedSeconds: Record<string, number> = {};
-    const voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = {};
+    const voiceUserStates: Record<string, VoiceUserStatus> = {};
+    const voiceConnecting: Record<string, VoiceConnectingEntry[]> = {};
     const spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> = {};
 
     // Who is currently in each of this space's voice channels the user can VIEW.
@@ -551,6 +572,10 @@ class ConnectionManager implements ReplicaSessionHost {
       const chPerms = computePermissions(userId, spaceId, ch.id);
       const hasView = (chPerms & PermissionBits.VIEW_CHANNEL) !== 0n || (chPerms & PermissionBits.ADMINISTRATOR) !== 0n;
       if (!hasView) continue;
+      // Attempts to join are listed whether or not anyone is in the channel
+      // yet: the first member to arrive has no room to be found in.
+      const attempts = this.voiceAttempts.forChannel(ch.id);
+      if (attempts.length > 0) voiceConnecting[ch.id] = attempts;
       const room = this.getRoom(ch.id);
       if (room && room.participants.size > 0) {
         const ids = Array.from(room.participants);
@@ -593,7 +618,7 @@ class ConnectionManager implements ReplicaSessionHost {
       }
     }
 
-    return { voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates };
+    return { voiceStates, voiceChannelElapsedSeconds, voiceUserStates, voiceConnecting, spaceVoiceStates };
   }
 
   // ─── Unified VoiceRoom API ─────────────────────────────────────────────────
@@ -1148,16 +1173,104 @@ class ConnectionManager implements ReplicaSessionHost {
 
   // ─── Voice User Status (unchanged) ────────────────────────────────────────
 
-  setVoiceUserStatus(userId: string, isMuted: boolean, isDeafened: boolean, isCameraOn: boolean, isScreenSharing: boolean): void {
-    this.voiceUserStates.set(userId, { isMuted, isDeafened, isCameraOn, isScreenSharing });
+  /**
+   * Store what the member's client reported. The two flags the client owns
+   * are replaced with the report; `isUnresponsive` is the server's own and
+   * is kept as it stands. A flag is stored only when set, so a status reads
+   * the same as one from before the flags existed.
+   */
+  setVoiceUserStatus(
+    userId: string,
+    isMuted: boolean,
+    isDeafened: boolean,
+    isCameraOn: boolean,
+    isScreenSharing: boolean,
+    flags: { isReconnecting?: boolean; isMicUnavailable?: boolean } = {},
+  ): void {
+    const status: VoiceUserStatus = { isMuted, isDeafened, isCameraOn, isScreenSharing };
+    if (flags.isReconnecting) status.isReconnecting = true;
+    if (flags.isMicUnavailable) status.isMicUnavailable = true;
+    if (this.voiceUserStates.get(userId)?.isUnresponsive) status.isUnresponsive = true;
+    this.voiceUserStates.set(userId, status);
   }
 
-  getVoiceUserStatus(userId: string): { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean } | undefined {
+  getVoiceUserStatus(userId: string): VoiceUserStatus | undefined {
     return this.voiceUserStates.get(userId);
   }
 
   clearVoiceUserStatus(userId: string): void {
     this.voiceUserStates.delete(userId);
+    this.voiceWatchdog.forget(userId);
+  }
+
+  /**
+   * Mark or unmark the member's client as silent. Returns whether anything
+   * changed, so the caller broadcasts only then. A member who has not sent a
+   * status yet gets a plain one to carry the mark.
+   */
+  setVoiceUnresponsive(userId: string, unresponsive: boolean): boolean {
+    const current = this.voiceUserStates.get(userId);
+    if ((current?.isUnresponsive ?? false) === unresponsive) return false;
+    if (!current && !this.userToRoom.has(userId)) return false;
+    const next: VoiceUserStatus = current
+      ? { ...current }
+      : { isMuted: false, isDeafened: false, isCameraOn: false, isScreenSharing: false };
+    if (unresponsive) next.isUnresponsive = true;
+    else delete next.isUnresponsive;
+    this.voiceUserStates.set(userId, next);
+    return true;
+  }
+
+  /** Tell the member's room what their status is now. Nothing is sent for a member in no room. */
+  broadcastVoiceUserStatus(userId: string): void {
+    const roomId = this.userToRoom.get(userId);
+    const status = this.voiceUserStates.get(userId);
+    if (!roomId || !status) return;
+    this.sendToRoom(roomId, { type: 'voice_status_update', userId, channelId: roomId, ...status });
+  }
+
+  /** Relay one member's attempt to join to the members who can see the channel. */
+  private announceVoiceAttempt(notice: VoiceAttemptNotice): void {
+    this.sendToChannel(notice.spaceId, notice.channelId, {
+      type: 'voice_connecting_update',
+      channelId: notice.channelId,
+      userId: notice.userId,
+      state: notice.state,
+      ...(notice.reason ? { reason: notice.reason } : {}),
+    });
+  }
+
+  /**
+   * One pass of the voice watchdog: mark the members in space voice channels
+   * whose client has been silent on an open socket, and free the place of
+   * those silent for much longer. A closed socket is not its business; the
+   * reconnect grace period handles that.
+   */
+  sweepVoiceWatchdog(now: number = Date.now()): void {
+    const verdict = this.voiceWatchdog.sweep(now, (userId) => {
+      if (!this.voiceWs.has(userId)) return false;
+      const roomId = this.userToRoom.get(userId);
+      return roomId !== undefined && this.voiceRooms.get(roomId)?.roomType === 'space';
+    });
+    for (const userId of verdict.unresponsive) {
+      if (this.setVoiceUnresponsive(userId, true)) this.broadcastVoiceUserStatus(userId);
+    }
+    for (const userId of verdict.remove) this.removeSilentVoiceUser(userId);
+  }
+
+  /**
+   * Free the place of a member whose page has been silent for too long while
+   * its socket stayed open. The socket is told, so a page that wakes up
+   * tears its voice session down instead of believing it is still in.
+   */
+  private removeSilentVoiceUser(userId: string): void {
+    const roomId = this.userToRoom.get(userId);
+    if (!roomId) return;
+    const ws = this.voiceWs.get(userId);
+    if (ws) this.sendToWs(ws, { type: 'voice_disconnected', userId, channelId: roomId, reason: 'unresponsive' });
+    this.clearVoiceWs(userId);
+    this.leaveCurrentRoomAnnounced(userId);
+    this.clearVoiceUserStatus(userId);
   }
 
   // ─── Voice WebSocket Binding ───────────────────────────────────────────────
@@ -1166,6 +1279,7 @@ class ConnectionManager implements ReplicaSessionHost {
   setVoiceWs(userId: string, ws: WebSocket): void {
     this.cancelVoiceDisconnect(userId);
     this.voiceWs.set(userId, ws);
+    if (this.setVoiceUnresponsive(userId, false)) this.broadcastVoiceUserStatus(userId);
   }
 
   /** Get the voice-owning ws for this user. */
@@ -1215,7 +1329,7 @@ class ConnectionManager implements ReplicaSessionHost {
     return this.permissionMutedUsers.has(`${spaceId}:${userId}`);
   }
 
-  getAllVoiceUserStates(): Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> {
+  getAllVoiceUserStates(): Map<string, VoiceUserStatus> {
     return this.voiceUserStates;
   }
 
@@ -1524,8 +1638,16 @@ export function buildReadyPayload(userId: string): {
   layoutUpdatedAt: number | null;
   voiceStates: Record<string, string[]>;
   voiceChannelElapsedSeconds: Record<string, number>;
-  voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>;
+  voiceUserStates: Record<string, VoiceUserStatus>;
+  /** Attempts to join the voice channels the user can see, by channel. */
+  voiceConnecting: Record<string, VoiceConnectingEntry[]>;
   spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }>;
+  /**
+   * This instance takes `voice_connecting` and `voice_heartbeat` and relays
+   * the connection flags. A client sends neither to an instance that does
+   * not say so: an older one answers every unknown event with an error.
+   */
+  supportsVoiceLink: boolean;
   supportsPoke: boolean;
   unreadCounts: Record<string, number>;
   readStates: ReadState[];
@@ -1831,8 +1953,10 @@ export function buildReadyPayload(userId: string): {
   const voiceStates: Record<string, string[]> = {};
   const voiceChannelElapsedSeconds: Record<string, number> = {};
   const spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> = {};
+  const voiceConnecting: Record<string, VoiceConnectingEntry[]> = {};
   for (const space of spaces) {
     const snap = connectionManager.buildSpaceVoiceState(space.id, userId);
+    Object.assign(voiceConnecting, snap.voiceConnecting);
     Object.assign(voiceStates, snap.voiceStates);
     Object.assign(voiceChannelElapsedSeconds, snap.voiceChannelElapsedSeconds);
     Object.assign(spaceVoiceStates, snap.spaceVoiceStates);
@@ -1884,7 +2008,7 @@ export function buildReadyPayload(userId: string): {
   }
 
   // Build voice user states — includes both space and DM participants now
-  const voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = {};
+  const voiceUserStates: Record<string, VoiceUserStatus> = {};
   for (const chId of Object.keys(voiceStates)) {
     const usersInChannel = voiceStates[chId];
     if (usersInChannel) {
@@ -2009,7 +2133,7 @@ export function buildReadyPayload(userId: string): {
     dmChannels.map(dm => dm.id),
     new Map(readStateRows.map(rs => [rs.channelId, rs.lastReadMessageId])),
   );
-  return { supportsPoke: true, unreadCounts, user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, readStates, activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
+  return { supportsPoke: true, supportsVoiceLink: true, unreadCounts, user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, voiceConnecting, spaceVoiceStates, readStates, activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
 }
 
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {
@@ -2183,7 +2307,15 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
     }
   }, HEARTBEAT_INTERVAL_MS);
 
+  voiceWatchdogInterval = setInterval(() => {
+    connectionManager.sweepVoiceWatchdog();
+  }, VOICE_WATCHDOG_SWEEP_MS);
+
   app.addHook('onClose', async () => {
+    if (voiceWatchdogInterval) {
+      clearInterval(voiceWatchdogInterval);
+      voiceWatchdogInterval = null;
+    }
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;

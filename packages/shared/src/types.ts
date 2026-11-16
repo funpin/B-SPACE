@@ -1,4 +1,5 @@
 import type { ErrorCode, ErrorDetails } from './errors.js';
+import type { VoiceConnectFailureReason, VoiceConnectingEntry, VoiceConnectingState, VoiceUserStatus } from './voiceConnection.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -713,7 +714,9 @@ export type ClientEvent =
   | { type: 'dm_call_accept'; dmChannelId: string | null; federatedCallId?: string | null }
   | { type: 'dm_call_reject'; dmChannelId: string | null; federatedCallId?: string | null }
   | { type: 'dm_call_end'; dmChannelId: string | null; federatedCallId?: string | null }
-  | { type: 'voice_status'; isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }
+  | { type: 'voice_status'; isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean; isReconnecting?: boolean; isMicUnavailable?: boolean }
+  | { type: 'voice_connecting'; channelId: string; state: VoiceConnectingState; reason?: VoiceConnectFailureReason }
+  | { type: 'voice_heartbeat' }
   | { type: 'voice_space_mute'; userId: string; muted: boolean }
   | { type: 'voice_space_deafen'; userId: string; deafened: boolean }
   | { type: 'voice_move'; userId: string; targetChannelId: string }
@@ -736,7 +739,7 @@ export interface PresenceIdentity {
 // Server → Client Events
 export type ServerEvent =
   | { type: 'channel_poke'; message: MessageWithUser }
-  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; supportsPoke?: boolean; unreadCounts?: Record<string, number>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
+  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, VoiceUserStatus>; voiceConnecting?: Record<string, VoiceConnectingEntry[]>; supportsVoiceLink?: boolean; supportsPoke?: boolean; unreadCounts?: Record<string, number>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
   | { type: 'channel_unread_count'; counts: Record<string, number> }
   | { type: 'message_created'; message: MessageWithUser }
   | { type: 'message_updated'; message: MessageWithUser }
@@ -767,8 +770,9 @@ export type ServerEvent =
   | { type: 'dm_call_rejected'; dmChannelId: string | null; federatedCallId?: string }
   | { type: 'dm_call_ended'; dmChannelId: string | null; federatedCallId?: string }
   | { type: 'dm_call_undeliverable'; dmChannelId: string | null; federatedCallId: string; terminal: boolean; phase: DmCallPhase; failures: DmCallUndeliverableFailure[] }
-  | { type: 'voice_status_update'; userId: string; channelId: string; isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }
-  | { type: 'space_voice_state'; spaceId: string; voiceStates: Record<string, string[]>; voiceChannelElapsedSeconds: Record<string, number>; voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> }
+  | ({ type: 'voice_status_update'; userId: string; channelId: string } & VoiceUserStatus)
+  | ({ type: 'voice_connecting_update'; channelId: string; state: VoiceConnectingState } & Omit<VoiceConnectingEntry, 'state'>)
+  | { type: 'space_voice_state'; spaceId: string; voiceStates: Record<string, string[]>; voiceChannelElapsedSeconds: Record<string, number>; voiceUserStates: Record<string, VoiceUserStatus>; voiceConnecting?: Record<string, VoiceConnectingEntry[]>; spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> }
   | { type: 'dm_channel_created'; dmChannel: DmChannel }
   | { type: 'dm_channel_closed'; dmChannelId: string }
   | { type: 'dm_channel_updated'; dmChannelId: string; name: string | null; icon: string | null }
@@ -790,7 +794,7 @@ export type ServerEvent =
   | { type: 'voice_space_deafened'; userId: string; channelId: string; spaceId: string; deafened: boolean }
   | { type: 'voice_permission_muted'; userId: string; spaceId: string; muted: boolean }
   | { type: 'voice_moved'; userId: string; oldChannelId: string; newChannelId: string }
-  | { type: 'voice_disconnected'; userId: string; channelId: string; reason?: 'displaced' | 'session_closed' | 'rejected' }
+  | { type: 'voice_disconnected'; userId: string; channelId: string; reason?: 'displaced' | 'session_closed' | 'rejected' | 'unresponsive' }
   | { type: 'user_updated'; user: User }
   | { type: 'member_banned'; spaceId: string; reason: string | null }
   | { type: 'category_created'; category: ChannelCategory; spaceId: string }
@@ -2091,6 +2095,14 @@ export interface TelemetryStatus {
 
 export type { DmSystemEvent } from './dmSystemEvents.js';
 export type { ChannelSystemEvent } from './channelSystemEvents.js';
+export type {
+  VoiceConnectFailureReason,
+  VoiceConnectingEntry,
+  VoiceConnectingState,
+  VoiceConnectionMark,
+  VoiceLinkFlags,
+  VoiceUserStatus,
+} from './voiceConnection.js';
 
 // ─── Federation peer state (docs/systems/federation.md, "Peer state") ────────
 

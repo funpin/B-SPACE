@@ -207,7 +207,20 @@
   "voiceDiagnostics": {
     "selfNetwork": "Your connection is unstable",
     "participantNetwork": "{{name}} has an unstable connection",
-    "reconnecting": "Connection to the voice server was interrupted — reconnecting…"
+    "reconnecting": "Connection to the voice server was interrupted — reconnecting…",
+    "selfLost": "Your connection dropped",
+    "participantLost": "{{name}} lost connection",
+    "participantReconnecting": "{{name}} is reconnecting…",
+    "selfConnecting": "Connecting…",
+    "participantConnecting": "{{name}} is connecting…",
+    "selfMicUnavailable": "No microphone access — nobody can hear you",
+    "participantMicUnavailable": "{{name}} has no microphone access and cannot be heard",
+    "selfUnresponsive": "The server has stopped hearing from this app",
+    "participantUnresponsive": "{{name}} is not responding. Their app may have closed, or their network dropped.",
+    "selfFailed": "Could not connect. {{reason}}",
+    "selfFailedPlain": "Could not connect.",
+    "participantFailed": "{{name}} could not connect. {{reason}}",
+    "participantFailedPlain": "{{name}} could not connect."
   },
   "channelDuration": "Channel active for {{duration}}",
   "controls": {
@@ -243,7 +256,14 @@
     "reconnecting": "Reconnecting…",
     "disconnected": "Disconnected",
     "connectionLost": "Connection lost. Try again.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "droppedUnresponsive": "You were removed from the voice channel: the app was not responding.",
+    "failure": {
+      "media_unreachable": "The voice connection could not be established. Your network or VPN may be blocking it.",
+      "server_unreachable": "The voice server is unreachable.",
+      "not_allowed": "The server refused the connection.",
+      "token_failed": "Could not get access to the voice channel."
+    }
   },
   "camera": {
     "auto": "Auto",

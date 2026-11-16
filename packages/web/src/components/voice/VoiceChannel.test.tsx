@@ -95,6 +95,107 @@ describe('VoiceChannel connection diagnostics', () => {
 
     expect(screen.getByLabelText('Connection to the voice server was interrupted — reconnecting…')).toBeInTheDocument();
   });
+
+  it('shows what the instance relays about another member, one mark per row', () => {
+    useVoiceStore.setState({
+      // Bob's network is also weak: the more serious trouble wins the row.
+      connectionQualities: new Map([['2:bob', 'poor']]),
+      voiceUserStates: new Map([['2', {
+        isMuted: false, isDeafened: false, isCameraOn: false, isScreenSharing: false, isUnresponsive: true,
+      }]]),
+    });
+
+    const { container } = renderChannel();
+
+    expect(screen.getByLabelText('Bob is not responding. Their app may have closed, or their network dropped.'))
+      .toHaveAttribute('data-connection-mark', 'unresponsive');
+    expect(container.querySelectorAll('[data-connection-mark]')).toHaveLength(1);
+  });
+
+  it('marks a member without microphone access, and one who is reconnecting', () => {
+    useVoiceStore.setState({
+      voiceUserStates: new Map([['2', {
+        isMuted: false, isDeafened: false, isCameraOn: false, isScreenSharing: false, isMicUnavailable: true,
+      }]]),
+    });
+    const { unmount } = renderChannel();
+    expect(screen.getByLabelText('Bob has no microphone access and cannot be heard'))
+      .toHaveAttribute('data-connection-mark', 'mic-unavailable');
+    unmount();
+
+    useVoiceStore.setState({
+      voiceUserStates: new Map([['2', {
+        isMuted: false, isDeafened: false, isCameraOn: false, isScreenSharing: false, isReconnecting: true,
+      }]]),
+    });
+    renderChannel();
+    expect(screen.getByLabelText('Bob is reconnecting…')).toHaveAttribute('data-connection-mark', 'reconnecting');
+  });
+
+  it('reads the viewer\'s own microphone trouble from this client', () => {
+    useVoiceStore.setState({ micPermissionDenied: true });
+
+    renderChannel();
+
+    expect(screen.getByLabelText('No microphone access — nobody can hear you')).toBeInTheDocument();
+  });
+});
+
+describe('VoiceChannel members who are not in yet', () => {
+  it('lists a member who is connecting after the ones in the channel', () => {
+    useVoiceStore.setState({
+      participants: [participant('1', 'ada', true)],
+      voiceUsers: new Map([['voice-1', ['1']]]),
+      voiceConnecting: new Map([['voice-1', [{ userId: '2', state: 'connecting' as const }]]]),
+    });
+
+    renderChannel();
+
+    expect(screen.getByLabelText('Bob is connecting…')).toHaveAttribute('data-connection-mark', 'connecting');
+    expect(screen.getByText('Bob')).toHaveClass('text-txt-tertiary');
+    expect(screen.getByText('Ada')).toHaveClass('text-txt-secondary');
+  });
+
+  it('says why a member could not connect', () => {
+    useVoiceStore.setState({
+      participants: [participant('1', 'ada', true)],
+      voiceUsers: new Map([['voice-1', ['1']]]),
+      voiceConnecting: new Map([['voice-1', [
+        { userId: '2', state: 'failed' as const, reason: 'media_unreachable' as const },
+      ]]]),
+    });
+
+    renderChannel();
+
+    expect(screen.getByLabelText(
+      'Bob could not connect. The voice connection could not be established. Your network or VPN may be blocking it.',
+    )).toHaveAttribute('data-connection-mark', 'failed');
+  });
+
+  it('shows them in a channel nobody is in yet', () => {
+    useVoiceStore.setState({
+      currentVoiceChannelId: null,
+      isLiveKitConnected: false,
+      participants: [],
+      voiceUsers: new Map(),
+      voiceConnecting: new Map([['voice-1', [{ userId: '2', state: 'connecting' as const }]]]),
+    });
+
+    renderChannel();
+
+    expect(screen.getByText('Bob')).toBeInTheDocument();
+  });
+
+  it('does not list a member twice when the join overtook the end of the attempt', () => {
+    useVoiceStore.setState({
+      voiceConnecting: new Map([['voice-1', [{ userId: '2', state: 'connecting' as const }]]]),
+    });
+
+    const { container } = renderChannel();
+
+    expect(screen.getAllByText('Bob')).toHaveLength(1);
+    expect(container.querySelector('[data-connection-mark="connecting"]')).toBeNull();
+  });
 });
 
 describe('VoiceChannel occupancy timer', () => {

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { VoiceConnectFailureReason, VoiceConnectingEntry, VoiceConnectingState, VoiceLinkFlags, VoiceUserStatus } from '@backspace/shared/src/voiceConnection';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { ParticipantInfo } from '../hooks/useLiveKit';
 import { AudioManager } from '../audio/AudioManager';
@@ -235,8 +236,17 @@ export interface VoiceState {
   deafenedUserIds: Set<string>;
   setUserDeafened: (userId: string, deafened: boolean) => void;
   // WebSocket-based voice user status (visible without joining LiveKit)
-  voiceUserStates: Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>;
-  setVoiceUserStatus: (userId: string, isMuted: boolean, isDeafened: boolean, isCameraOn: boolean, isScreenSharing: boolean) => void;
+  voiceUserStates: Map<string, VoiceUserStatus>;
+  setVoiceUserStatus: (userId: string, isMuted: boolean, isDeafened: boolean, isCameraOn: boolean, isScreenSharing: boolean, flags?: VoiceLinkFlags) => void;
+  /**
+   * Members who are connecting to a voice channel or have just failed to,
+   * by channel. They are not in the channel: `voiceUsers` lists who is.
+   */
+  voiceConnecting: Map<string, VoiceConnectingEntry[]>;
+  /** Record one member's attempt; `idle` removes it. */
+  setVoiceConnecting: (channelId: string, userId: string, state: VoiceConnectingState, reason?: VoiceConnectFailureReason) => void;
+  /** Replace a channel's attempts with a snapshot. */
+  setVoiceConnectingForChannel: (channelId: string, entries: VoiceConnectingEntry[]) => void;
   clearVoiceUserStatus: (userId: string) => void;
   // Space mute/deafen state (moderator action)
   spaceMutedUserIds: Set<string>; // Stores "spaceId:userId"
@@ -694,11 +704,45 @@ export const useVoiceStore = create<VoiceState>()(
       },
 
       voiceUserStates: new Map(),
-      setVoiceUserStatus: (userId, isMuted, isDeafened, isCameraOn, isScreenSharing) => {
+      setVoiceUserStatus: (userId, isMuted, isDeafened, isCameraOn, isScreenSharing, flags) => {
         set((state) => {
           const newMap = new Map(state.voiceUserStates);
-          newMap.set(userId, { isMuted, isDeafened, isCameraOn, isScreenSharing });
+          const status: VoiceUserStatus = { isMuted, isDeafened, isCameraOn, isScreenSharing };
+          if (flags?.isReconnecting) status.isReconnecting = true;
+          if (flags?.isMicUnavailable) status.isMicUnavailable = true;
+          if (flags?.isUnresponsive) status.isUnresponsive = true;
+          newMap.set(userId, status);
           return { voiceUserStates: newMap };
+        });
+      },
+
+      voiceConnecting: new Map(),
+      setVoiceConnecting: (channelId, userId, connectingState, reason) => {
+        set((state) => {
+          const next = new Map(state.voiceConnecting);
+          // One attempt per member: an entry for another channel is the
+          // attempt this one replaced.
+          for (const [otherChannelId, entries] of next) {
+            if (!entries.some((entry) => entry.userId === userId)) continue;
+            const remaining = entries.filter((entry) => entry.userId !== userId);
+            if (remaining.length > 0) next.set(otherChannelId, remaining);
+            else next.delete(otherChannelId);
+          }
+          if (connectingState !== 'idle') {
+            const entry: VoiceConnectingEntry = connectingState === 'failed'
+              ? { userId, state: 'failed', reason: reason ?? 'connect_failed' }
+              : { userId, state: 'connecting' };
+            next.set(channelId, [...(next.get(channelId) ?? []), entry]);
+          }
+          return { voiceConnecting: next };
+        });
+      },
+      setVoiceConnectingForChannel: (channelId, entries) => {
+        set((state) => {
+          const next = new Map(state.voiceConnecting);
+          if (entries.length > 0) next.set(channelId, entries);
+          else next.delete(channelId);
+          return { voiceConnecting: next };
         });
       },
       clearVoiceUserStatus: (userId) => {
@@ -745,6 +789,7 @@ export const useVoiceStore = create<VoiceState>()(
         voiceUsers: new Map(),
         voiceChannelElapsedSeconds: new Map(),
         voiceUserStates: new Map(),
+        voiceConnecting: new Map(),
       }),
 
       resetSession: () => set({
@@ -752,6 +797,7 @@ export const useVoiceStore = create<VoiceState>()(
         voiceUsers: new Map(),
         voiceChannelElapsedSeconds: new Map(),
         voiceUserStates: new Map(),
+        voiceConnecting: new Map(),
         currentVoiceChannelId: null,
         participants: [],
         speakingParticipantIds: new Set(),
@@ -797,7 +843,11 @@ export const useVoiceStore = create<VoiceState>()(
               voiceChannelElapsedSeconds.delete(channelId);
             }
           }
-          return { voiceUsers: newVoiceUsers, voiceChannelElapsedSeconds };
+          const voiceConnecting = new Map(state.voiceConnecting);
+          for (const [channelId] of voiceConnecting) {
+            if ((channelOriginMap.get(channelId) ?? '') === origin) voiceConnecting.delete(channelId);
+          }
+          return { voiceUsers: newVoiceUsers, voiceChannelElapsedSeconds, voiceConnecting };
         });
       },
 
@@ -926,6 +976,7 @@ export const useVoiceStore = create<VoiceState>()(
         activeDmCall: null,
         deafenedUserIds: new Set(),
         voiceUserStates: new Map(),
+        voiceConnecting: new Map(),
         streamVolumes: new Map(),
         streamMutes: new Map(),
         watchingStreams: new Set(),

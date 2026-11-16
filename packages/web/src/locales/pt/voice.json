@@ -209,7 +209,20 @@
   "voiceDiagnostics": {
     "selfNetwork": "Sua conexão está instável",
     "participantNetwork": "{{name}} está com a conexão instável",
-    "reconnecting": "A conexão com o servidor de voz foi interrompida — reconectando…"
+    "reconnecting": "A conexão com o servidor de voz foi interrompida — reconectando…",
+    "selfLost": "Sua conexão caiu",
+    "participantLost": "{{name}} perdeu a conexão",
+    "participantReconnecting": "{{name}} está reconectando…",
+    "selfConnecting": "Conectando…",
+    "participantConnecting": "{{name}} está conectando…",
+    "selfMicUnavailable": "Sem acesso ao microfone — ninguém consegue ouvir você",
+    "participantMicUnavailable": "{{name}} está sem acesso ao microfone e não pode ser ouvido",
+    "selfUnresponsive": "O servidor parou de receber respostas deste aplicativo",
+    "participantUnresponsive": "{{name}} não está respondendo. O aplicativo pode ter sido fechado ou a rede caiu.",
+    "selfFailed": "Não foi possível conectar. {{reason}}",
+    "selfFailedPlain": "Não foi possível conectar.",
+    "participantFailed": "{{name}} não conseguiu conectar. {{reason}}",
+    "participantFailedPlain": "{{name}} não conseguiu conectar."
   },
   "channelDuration": "Canal ativo há {{duration}}",
   "controls": {
@@ -245,7 +258,14 @@
     "reconnecting": "Reconectando…",
     "disconnected": "Desconectado",
     "connectionLost": "Conexão perdida. Tente novamente.",
-    "retry": "Tentar novamente"
+    "retry": "Tentar novamente",
+    "droppedUnresponsive": "Você foi removido do canal de voz: o aplicativo não estava respondendo.",
+    "failure": {
+      "media_unreachable": "Não foi possível estabelecer a conexão de voz. Sua rede ou VPN pode estar bloqueando.",
+      "server_unreachable": "O servidor de voz está inacessível.",
+      "not_allowed": "O servidor recusou a conexão.",
+      "token_failed": "Não foi possível obter acesso ao canal de voz."
+    }
   },
   "camera": {
     "auto": "Automático",
