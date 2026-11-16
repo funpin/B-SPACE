@@ -11,6 +11,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useTransferStore, type Transfer } from '../../stores/transferStore';
 import { Message } from './Message';
 import { MessageInput } from './MessageInput';
+import { WindowFileDrop } from './WindowFileDrop';
 
 vi.mock('../../hooks/useWebSocket', () => ({ wsSend: vi.fn() }));
 vi.mock('../../audio/AudioManager', () => ({
@@ -383,5 +384,43 @@ describe('MessageInput staged attachment controls', () => {
     expect(useComposerStore.getState().get('dm-1').draftText).toBe('keep this draft');
     expect(useComposerStore.getState().get('dm-2').stagedTransferIds).toEqual([otherTransfer.id]);
     expect(useTransferStore.getState().transfers.get(otherTransfer.id)).toEqual(otherTransfer);
+  });
+});
+
+describe('MessageInput window file drop', () => {
+  it('stages a file dropped on another part of the window, routed by the conversation origin', async () => {
+    const startUpload = vi.spyOn(useTransferStore.getState(), 'startUpload').mockImplementation(async (file, opts) => {
+      const transfer: Transfer = {
+        id: 'upload-dropped',
+        type: 'upload',
+        state: 'completed',
+        file: { name: file.name, size: file.size, mimetype: 'text/plain' },
+        progress: { loaded: file.size, total: file.size },
+        channelId: opts.channelId,
+        tray: true,
+      };
+      useTransferStore.setState({ transfers: new Map([[transfer.id, transfer]]) });
+      return transfer.id;
+    });
+    render(
+      <>
+        <div data-file-drop-surface="">
+          <aside data-testid="member-list">members</aside>
+          <MessageInput channelId="dm-1" channelName="@Bob" />
+        </div>
+        <WindowFileDrop />
+      </>,
+    );
+    const members = screen.getByTestId('member-list');
+    const dataTransfer = { types: ['Files'], files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })], dropEffect: 'none' };
+
+    fireEvent.dragEnter(members, { dataTransfer });
+    expect(screen.getByTestId('file-drop-overlay')).toHaveTextContent('@Bob');
+    fireEvent.drop(members, { dataTransfer });
+
+    await waitFor(() => expect(useComposerStore.getState().get('dm-1').stagedTransferIds).toEqual(['upload-dropped']));
+    expect(startUpload).toHaveBeenCalledWith(expect.any(File), expect.objectContaining({ channelId: 'dm-1', tray: true }));
+    expect(startUpload.mock.calls[0]![1]).toHaveProperty('origin');
+    expect(screen.queryByTestId('file-drop-overlay')).toBeNull();
   });
 });

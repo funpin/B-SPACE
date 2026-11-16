@@ -49,6 +49,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { AudioManager } from '../../audio/AudioManager';
 import { isAppSystemAudioSource, userDevicesSignature } from '../../utils/systemAudioSource';
+import { WindowFileDrop } from '../chat/WindowFileDrop';
 
 export function AppLayout() {
   const { t } = useTranslation('common');
@@ -412,7 +413,10 @@ export function AppLayout() {
   if (isMobile) {
     return (
       <>
-        <MobileShell />
+        <div className="contents" data-file-drop-surface="">
+          <MobileShell />
+        </div>
+        <WindowFileDrop />
         {/* Modals still render globally for both mobile and desktop */}
         <CreateSpaceModal />
         <JoinSpaceModal />
@@ -455,13 +459,13 @@ export function AppLayout() {
   return (
     <div className="h-full flex flex-col desktop:grid desktop:grid-cols-[304px_1fr] desktop:grid-rows-[minmax(0,1fr)] bg-surface-base overflow-hidden">
       {/* Left column: the 60px space strip beside the 244px channel list */}
-      <div className={`fixed inset-y-0 left-0 z-float flex w-[304px] transition-transform duration-base ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full desktop:translate-x-0'} desktop:static desktop:z-auto desktop:w-auto desktop:transform-none`}>
+      <div data-file-drop-surface="" className={`fixed inset-y-0 left-0 z-float flex w-[304px] transition-transform duration-base ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full desktop:translate-x-0'} desktop:static desktop:z-auto desktop:w-auto desktop:transform-none`}>
         <SpaceSidebar />
         <ChannelSidebar />
       </div>
 
       {/* Main content area */}
-      <div className="flex-1 flex min-w-0 min-h-0 bg-surface-chat relative">
+      <div data-file-drop-surface="" className="flex-1 flex min-w-0 min-h-0 bg-surface-chat relative">
         <MainContent />
         <RightPanel />
       </div>
@@ -492,6 +496,7 @@ export function AppLayout() {
       <UpdateToast />
 
       <UserProfilePopoutLayer />
+      <WindowFileDrop />
 
       {/* Federation toasts render through ToastContainer below (raised by the
           useFederationToasts() hook above); this also mounts the instance

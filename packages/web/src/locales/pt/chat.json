@@ -98,6 +98,12 @@
       "several": "Várias pessoas estão digitando"
     }
   },
+  "fileDrop": {
+    "title": "Solte para anexar",
+    "hint": "Os arquivos serão adicionados à sua mensagem em {{name}}",
+    "deniedTitle": "Não é possível anexar arquivos aqui",
+    "deniedHint": "Você não tem permissão para anexar arquivos em {{name}}"
+  },
   "menu": {
     "saveImage": "Salvar imagem",
     "copyImage": "Copiar imagem",

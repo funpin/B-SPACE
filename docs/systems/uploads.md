@@ -521,6 +521,22 @@ Three stores with strict separation of concerns:
 | `composerStore` | `packages/web/src/stores/composerStore.ts` | Per-channel staged transfer IDs + draft text + replyTo. Replaces `MessageInput` component-local state. Persists via `composerStore@v1`. |
 | `pendingMessageStore` | `packages/web/src/stores/pendingMessageStore.ts` | Composed-but-not-yet-sent attachment-bearing bubbles, keyed by `clientId`. Persists via `pendingMessageStore@v1`. Text-only messages are out of scope -- they keep the existing `chatStore.sendMessage` `temp_*` optimistic path. |
 
+### Where Files Are Taken From
+
+A composer attaches files from its paperclip picker, from a paste (images, and text too long for a message, `pasteAsFile.ts`), and from a drop anywhere in the window. All three end in `MessageInput.enqueueFile`, so limits, previews, errors and the upload's origin (`getChannelOrigin(channelId)`) are the same whichever way a file came in.
+
+**Window-wide drop.** `useWindowFileDrop` (`hooks/useWindowFileDrop.ts`, mounted once by `AppLayout` through `components/chat/WindowFileDrop.tsx`) listens on `window` in the capture phase and handles only drags whose `dataTransfer.types` include `Files`; in-page drags (space, channel, voice-tile reordering) and dragged text or links are untouched. `MessageInput` registers itself in `fileDropStore` while mounted (channel id, label, `canAttach` = DM or `ATTACH_FILES`); the last registration is the active target. A file drag then resolves by what is under the pointer:
+
+| Under the pointer | Overlay | Drop |
+|---|---|---|
+| An element with `data-file-drop-zone` (the sticker image picker) | none | left to that element's own handlers |
+| Inside `data-file-drop-surface` (desktop: the sidebar column and the main column; mobile: `MobileShell`), a composer registered that may attach | scrim, accent dashed edge, glass card "Drop to attach" naming `#channel` / `@user` | handed to the composer (`attachDropped`, which reads `items` for FS handles where supported and `files` otherwise), composer focused |
+| Same, but the user lacks `ATTACH_FILES` there | same, danger edge, "Can't attach files here" | refused |
+| Inside the surface with no composer (Explore, the Backspace page, friends list) | none | refused |
+| Outside the surface (modals and dialogs portaled to `body`, the image viewer, the incoming-call dialog) | none | refused |
+
+Every file drag outside a `data-file-drop-zone` has its default prevented and its propagation stopped, so the browser never opens or downloads a dropped file and no in-page drag handler sees it; a refused drag sets `dropEffect = 'none'`. The "drag is over the window" state is a counter of `dragenter`/`dragleave` (they fire for every element crossed) and resets on drop, on `dragend`, and when no `dragover` arrives for `FILE_DROP_WATCHDOG_MS` (engines may drop an enter/leave pair, and iframe embeds swallow the events). Only standard DnD events are used, so the browser, Electron (Chromium) and the native macOS client (`WKWebView`) behave the same; FS-handle capture on drop stays Chromium-only as in the capability matrix above.
+
 ### Optimistic Bubble Lifecycle
 
 1. User attaches a file -> `transferStore.startUpload` (eager, fires before Send) -> the new transferId joins `composerStore[channelId].stagedTransferIds`.
