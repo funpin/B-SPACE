@@ -971,6 +971,23 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 
 The preload script exposes the `window.backspace` API via `contextBridge.exposeInMainWorld`. TypeScript declarations are in `packages/web/src/platform/electron.d.ts`.
 
+### Bridge contract (`src/bridgeContract.json`)
+
+The bridges are also described as data. `bridgeContract.json` lists every member of `window.backspace` and of `window.bspaceUpdate` (the update window) with its kind and channel:
+
+| Kind | What the page sees | Fields |
+|------|--------------------|--------|
+| `value` | a plain property, read synchronously (`platform`) | `name` |
+| `fire` | a call that sends and returns `undefined` | `name`, `channel` |
+| `invoke` | a call that returns a Promise of the shell's answer | `name`, `channel` |
+| `subscribe` | takes a callback for an event the shell sends; returns a remover when `unsubscribe` is true, `undefined` otherwise | `name`, `channel`, `unsubscribe` |
+
+One channel may carry a call and an event (`keybind-portal-status`); two calls, or two events, may not share one.
+
+Two shells implement the description: Electron's preload scripts here, and the native macOS shell (`packages/desktop-macos`), which builds its page-side script from the file as it is and refuses to start with a call channel nobody answers. The file is JSON so that the Swift build reads it without a generated copy. `bridgeContract.ts` parses and types it (`BRIDGE_CONTRACT`, `parseBridgeContract`).
+
+A sandboxed preload cannot require a local module, so `preload.ts` and `updatePreload.ts` stay written by hand. `bridgeContract.test.ts` reads their source with the TypeScript compiler and fails when a preload and the description disagree in either direction, when the description names a channel the main process does not know, or when the main window handles a channel the description lacks. **A new bridge member is added in three places in one change:** the preload, `bridgeContract.json`, and `electron.d.ts` in the web client; the native macOS shell then fails its own tests until it answers the new channel.
+
 Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectron()`).
 
 ### API Surface
