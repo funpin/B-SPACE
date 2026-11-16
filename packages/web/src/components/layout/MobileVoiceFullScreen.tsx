@@ -395,7 +395,7 @@ export function MobileVoiceFullScreen() {
               aria-label={t('voice:camera.switch')}
               aria-haspopup="menu"
               aria-expanded={cameraPickerOpen}
-              className="absolute -top-1 -right-1 z-[1] w-6 h-6 rounded-full bg-surface-elevated text-txt-primary flex items-center justify-center shadow-[inset_0_0_0_1px_var(--glass-border)] active:scale-95 transition-transform duration-fast"
+              className="absolute -top-1 -right-1 z-raised w-6 h-6 rounded-full bg-surface-elevated text-txt-primary flex items-center justify-center shadow-[inset_0_0_0_1px_var(--glass-border)] active:scale-95 transition-transform duration-fast"
             >
               <Icon name="switch-camera" size="xs" />
             </button>

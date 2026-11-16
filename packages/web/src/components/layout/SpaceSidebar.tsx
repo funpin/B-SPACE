@@ -158,10 +158,10 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
     >
       {/* Drop indicator lines — centred in the 8px gap so adjacent items share one line */}
       {dropIndicator === 'before' && (
-        <div className="absolute -top-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-[1]" />
+        <div className="absolute -top-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-raised" />
       )}
       {dropIndicator === 'after' && (
-        <div className="absolute -bottom-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-[1]" />
+        <div className="absolute -bottom-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-raised" />
       )}
 
       {/* Selection bar, at the strip's left edge */}
@@ -221,7 +221,7 @@ function FolderIcon({ spaces, color }: { spaces: TaggedSpace[]; color: string | 
       className="relative w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden glass-pill transition-transform duration-fast ease-out hover:-translate-y-0.5"
       style={edge ? { boxShadow: edge } : undefined}
     >
-      <div className="grid grid-cols-2 gap-0.5 w-7 h-7 relative z-[1]">
+      <div className="grid grid-cols-2 gap-0.5 w-7 h-7 relative z-raised">
         {display.map((s) => (
           <div key={s.id} className="w-[13px] h-[13px]">
             <MiniSpaceIcon space={s} />
@@ -547,13 +547,13 @@ function FolderSlot({
     >
       {/* Drop indicators — centred in the 8px gap so adjacent items share one line */}
       {dropIndicator === 'before' && (
-        <div className="absolute -top-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-[1]" />
+        <div className="absolute -top-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-raised" />
       )}
       {dropIndicator === 'after' && (
-        <div className="absolute -bottom-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-[1]" />
+        <div className="absolute -bottom-[5px] left-1 right-1 h-0.5 bg-accent-tone rounded-full z-raised" />
       )}
       {dropIndicator === 'merge' && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[1]">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-raised">
           <div className="w-12 h-12 rounded-xl ring-2 ring-accent-tone/60" />
         </div>
       )}

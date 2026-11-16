@@ -220,7 +220,7 @@ export function AvatarStack({ members, origin, size, border, iconUrl }: AvatarSt
         />
         <div
           data-group-badge="true"
-          className={`absolute rounded-full bg-surface-elevated border-2 ${borderClass} flex items-center justify-center text-txt-secondary z-10`}
+          className={`absolute rounded-full bg-surface-elevated border-2 ${borderClass} flex items-center justify-center text-txt-secondary z-raised`}
           style={{
             width: badgeBoxSize,
             height: badgeBoxSize,

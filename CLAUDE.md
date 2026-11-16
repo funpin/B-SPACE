@@ -73,7 +73,7 @@ Full spec: `docs/systems/design-system.md`. Rollout order: `docs/brand/implement
 **Core:** Neutral graphite surfaces with no hue; colour only where it carries meaning. Calm, uncluttered, one scale per property.
 **Two-material system:** Solid matte panels for content, dense glass for what floats above it.
 **Colors:** Graphite surfaces (#0c0c0e chat, #121214 sidebars, #1b1b1f tiles), an accent theme the user picks (default lavender, fill `#6e5bef`): `accent-primary` fill with `on-accent` text, `accent-tone` on dark surfaces, `accent-secondary` for unread/mentions/links. Status colours (`status-ok/warn/danger`) are never themed.
-**Scales:** radius 6 / 10 / 14 / 16 (`rounded` / `-lg` / `-xl` / `-2xl`), text `2xs` 11 · `xs` 12 · `compact` 13 · `sm` 14 · `lg` 16 · `xl` 20 · `2xl` 24, layers `z-raised/float/popover/modal/toast/confirm`, motion `duration-fast/base/slow` with `ease-out` / `ease-pop`. No arbitrary `rounded-[…]`, `text-[…px]`, `z-[…]` in new code.
+**Scales:** radius 6 / 10 / 14 / 16 (`rounded` / `-lg` / `-xl` / `-2xl`), text `2xs` 11 · `xs` 12 · `compact` 13 · `sm` 14 · `lg` 16 · `xl` 20 · `2xl` 24, layers `z-raised/float/chrome/popover/modal/toast/confirm`, motion `duration-fast/base/slow` with `ease-out` / `ease-pop`. No arbitrary `rounded-[…]`, `text-[…px]`, `z-[…]` in new code.
 **Icons:** Lucide, outline, 1.75 stroke, through `components/ui/Icon.tsx` (stage 2 of the rollout).
 **Font:** Onest for Latin and Cyrillic; platform stack for Chinese.
 

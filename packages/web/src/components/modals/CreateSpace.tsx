@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { ImageCropModal } from '../ui/ImageCropModal';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
+import { Spinner } from '../ui/LoadingSpinner';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useTransferStore } from '../../stores/transferStore';
@@ -152,10 +153,7 @@ export function CreateSpaceModal() {
             ) : (
               <div className="flex flex-col items-center gap-1 text-white/90 group-hover:text-white transition-colors">
                 {uploadingIcon ? (
-                  <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <Spinner size={24} />
                 ) : (
                   <>
                     <span className="text-2xl font-semibold">{(name || 'S').charAt(0).toUpperCase()}</span>

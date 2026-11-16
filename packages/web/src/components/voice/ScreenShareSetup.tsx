@@ -660,7 +660,7 @@ export function ScreenShareSetup() {
 
           {/* Drawer scrim — click outside the drawer closes it */}
           <div
-            className={`absolute inset-0 z-[1] bg-surface-overlay transition-opacity duration-slow ease-out ${settingsOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            className={`absolute inset-0 z-raised bg-surface-overlay transition-opacity duration-slow ease-out ${settingsOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             onClick={() => setSettingsOpen(false)}
           />
 
@@ -670,7 +670,7 @@ export function ScreenShareSetup() {
             id="stream-settings-drawer-panel"
             data-testid="stream-settings-drawer"
             aria-hidden={!settingsOpen}
-            className={`absolute inset-y-0 right-0 z-[2] w-[calc(calc(100*var(--app-vw))-5rem)] desktop:w-[340px] glass border-l border-border-hard flex flex-col min-h-0 transition-transform duration-slow ease-out ${
+            className={`absolute inset-y-0 right-0 z-float w-[calc(calc(100*var(--app-vw))-5rem)] desktop:w-[340px] glass border-l border-border-hard flex flex-col min-h-0 transition-transform duration-slow ease-out ${
               settingsOpen ? 'translate-x-0' : 'translate-x-full'
             }`}
           >

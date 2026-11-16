@@ -18,6 +18,7 @@ import { Mascot } from '../ui/Mascot';
 import { PasswordInput } from './PasswordInput';
 import { useAuthMascot } from './authMascot';
 import { Icon } from '../ui/Icon';
+import { Spinner } from '../ui/LoadingSpinner';
 
 // Single-source regex for extracting a bare invite token from a pasted full URL.
 // Token format: 22 chars base64url ([A-Za-z0-9_-]).
@@ -492,10 +493,7 @@ export function RegisterPage() {
                 <div className="mb-4 flex md:inline-flex items-start md:items-center gap-2 px-3 py-1.5 rounded-lg bg-accent-tone/[0.16] text-accent-tone text-xs">
                   {inviteChecking ? (
                     <>
-                      <svg className="w-3 h-3 animate-spin flex-shrink-0 mt-0.5 md:mt-0" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
+                      <Spinner size={12} className="flex-shrink-0 mt-0.5 md:mt-0" />
                       <span>{t('auth:register.invite.validating')}</span>
                     </>
                   ) : inviteCheck?.valid === true ? (
@@ -535,10 +533,7 @@ export function RegisterPage() {
                     'text-status-danger'
                   }`}>
                     {usernameStatus === 'checking' && (
-                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
+                      <Spinner size={14} />
                     )}
                     {usernameStatus === 'available' && (
                       <Icon name="check" size="xs" />

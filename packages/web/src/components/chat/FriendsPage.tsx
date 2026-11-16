@@ -772,7 +772,7 @@ function UserDiscoverCard({
         )}
         <div className="absolute bottom-0 inset-x-0 h-12 bg-gradient-to-t from-surface-elevated/90 to-transparent" />
         {originLabel && (
-          <div className="absolute top-2 right-2 z-[2]">
+          <div className="absolute top-2 right-2">
             <Tag tone="onMedia">
               <Icon name="globe" size="xs" />
               {originLabel}

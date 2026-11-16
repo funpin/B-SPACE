@@ -800,7 +800,7 @@ export function ChannelSidebar() {
 
 /* ─── User Area Panel ──────────────────────────────────────────────────────── */
 
-const DEVICE_PANEL = 'absolute bottom-full left-0 right-0 mb-2 z-[1] rounded-xl bg-surface-elevated shadow-glass p-1 animate-slide-up';
+const DEVICE_PANEL = 'absolute bottom-full left-0 right-0 mb-2 z-raised rounded-xl bg-surface-elevated shadow-glass p-1 animate-slide-up';
 const DEVICE_ROW = 'w-full px-2.5 py-2 rounded-lg flex items-center justify-between hover:bg-interactive-hover transition-colors duration-fast';
 const VOLUME_SLIDER = 'w-full h-1.5 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-txt-primary';
 
@@ -1253,7 +1253,7 @@ function ChannelItem({
         className={`relative ${isDragging ? 'opacity-50' : ''}`}
         {...channelDragHandlers}
       >
-        {dropIndicator === 'before' && <div className="absolute -top-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-[1]" />}
+        {dropIndicator === 'before' && <div className="absolute -top-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-raised" />}
         <VoiceChannel
           channelId={channel.id}
           channelName={channel.name}
@@ -1264,7 +1264,7 @@ function ChannelItem({
           voiceUserHandlers={voiceUserHandlers}
           dropZone={voiceChannelDropZone}
         />
-        {dropIndicator === 'after' && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-[1]" />}
+        {dropIndicator === 'after' && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-raised" />}
       </div>
     );
   }
@@ -1274,7 +1274,7 @@ function ChannelItem({
       className={`relative ${isDragging ? 'opacity-50' : ''}`}
       {...channelDragHandlers}
     >
-      {dropIndicator === 'before' && <div className="absolute -top-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-[1]" />}
+      {dropIndicator === 'before' && <div className="absolute -top-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-raised" />}
       <button
         onClick={onChannelClick}
         className={`relative w-full flex items-center gap-2 px-2 h-[34px] rounded-lg text-sm group transition-colors duration-fast ${
@@ -1301,7 +1301,7 @@ function ChannelItem({
         )}
         {isUnread && <Badge className="flex-shrink-0" />}
       </button>
-      {dropIndicator === 'after' && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-[1]" />}
+      {dropIndicator === 'after' && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-accent-tone rounded-full z-raised" />}
     </div>
   );
 }

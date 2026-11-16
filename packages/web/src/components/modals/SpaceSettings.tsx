@@ -469,7 +469,7 @@ export function DiscoveryPanel({ spaceId }: { spaceId: string }) {
       )}
 
       {hasChanges && (
-        <div className="sticky bottom-0 z-10 pointer-events-none">
+        <div className="sticky bottom-0 z-raised pointer-events-none">
           <div className="flex justify-center pt-3 pb-1">
             <div className="glass-bubble rounded-xl p-1.5 flex items-center gap-1.5 animate-slide-up pointer-events-auto">
               <Button variant="ghost" size="sm" onClick={handleReset}>

@@ -95,11 +95,14 @@ export default {
         compact: ['13px', '18px'],
         lg: ['16px', '24px'],
       },
-      // Named layers; `z-[…]` values in the markup map onto these as files
-      // are touched.
+      // Named layers, the only z-index values the markup uses (no `z-[…]`, no
+      // bare `z-10`). Local stacking inside one component takes `z-raised`/`z-float`.
       zIndex: {
         raised: '10',
         float: '20',
+        // Edge chrome laid over a fullscreen stage (the voice header band): above
+        // the stage's own floating controls, below every popover and dialog.
+        chrome: '30',
         popover: '200',
         // Same layer as popovers on purpose: overlays stack by portal order, so a
         // menu opened from inside a dialog is appended after it and draws above.

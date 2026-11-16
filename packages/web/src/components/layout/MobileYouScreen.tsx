@@ -97,7 +97,7 @@ export function MobileYouScreen() {
         />
 
         {/* Avatar overlay */}
-        <div className="px-4 -mt-10 relative z-10">
+        <div className="px-4 -mt-10 relative z-raised">
           <div className="w-20 h-20 rounded-full border-4 border-surface-channel overflow-hidden">
             <Avatar
               src={avatarUrl}

@@ -208,7 +208,7 @@ export function CategorySettingsModal() {
         {showTabs ? (
           <div className="flex gap-4 h-[min(520px,calc(70*var(--app-vh)))]">
             {/* Tabs */}
-            <div className="w-32 flex-shrink-0 self-start z-10">
+            <div className="w-32 flex-shrink-0 self-start z-raised">
               <div className="space-y-0.5">
                 <button onClick={() => setTab('overview')} className={tabClass('overview')}>
                   {t('spaces:settings.nav.tabs.overview')}

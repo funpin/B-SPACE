@@ -110,7 +110,7 @@ export function SpaceCard({
 
         {/* Joined badge (top-left) */}
         {isJoined && (
-          <div className="absolute top-2 left-2 z-[2]">
+          <div className="absolute top-2 left-2">
             <Tag tone="onMedia">
               <Icon name="check" size="xs" className="text-status-ok" />
               {t('spaces:explore.badges.joined')}
@@ -120,7 +120,7 @@ export function SpaceCard({
 
         {/* Closed-registration badge (top-left, Outer cards only; an Outer card is never joined) */}
         {closedToNewAccounts && (
-          <div className="absolute top-2 left-2 z-[2]">
+          <div className="absolute top-2 left-2">
             <Tag tone="onMedia">
               <Icon name="lock" size="xs" className="text-status-danger" />
               {t('spaces:explore.outer.closedBadge')}
@@ -129,7 +129,7 @@ export function SpaceCard({
         )}
 
         {/* Visibility badge */}
-        <div className="absolute top-2 right-2 z-[2]">
+        <div className="absolute top-2 right-2">
           <Tag tone="onMedia">
             <span
               aria-hidden="true"
