@@ -4,8 +4,17 @@ The native macOS client of B:SPACE: a Swift shell around the system `WKWebView`
 that loads the same web client the server serves. Plan and stages:
 [docs/superpowers/plans/2026-11-16-macos-native-client.md](../../docs/superpowers/plans/2026-11-16-macos-native-client.md).
 
-The application itself starts with stage 1. Today the package holds the
-measuring harness of stage 0.
+The package holds the application (stage 1 of the plan is under way: the
+window, the server picker, the navigation policy and the core of the bridge)
+and the measuring harness of stage 0.
+
+| Target | What it is |
+|--------|------------|
+| `BSpaceCore` | Logic with no AppKit or WebKit in it: navigation policy, the saved instance address, the bridge contract, the page-side bridge script, the router. Covered by `swift test` |
+| `BSpaceShell` | The window, the `WKWebView` and the native half of the bridge |
+| `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app` |
+| `ContractCheck` | Drives `BSpaceShell` through the bridge contract check, or opens a live instance in it |
+| `WebKitProbe`, `ProbeSupport` | The measuring harness of stage 0 |
 
 ## Requirements
 
@@ -18,6 +27,106 @@ not touch it.
 swift build -c release
 swift test
 ```
+
+## The application
+
+```bash
+scripts/bundle.sh --run
+```
+
+builds `.build/app/dev/B-SPACE.app` and starts it. A development build has its
+own bundle identifier (`com.backspace.desktop.dev`) and its own settings
+folder (`~/Library/Application Support/Backspace-Dev`), and does not claim the
+`backspace://` scheme: it runs beside the installed app without touching that
+app's sign-in, settings or web storage. `--identity release` gives the bundle
+the identity of the shipped app, the one that replaces the Electron build.
+`BACKSPACE_URL=https://…` opens that instance instead of the saved one, as in
+the Electron build.
+
+The bundle takes three files from `packages/desktop`, which owns them for both
+shells: `resources/instance-picker.html`, `src/bridgeContract.json` and
+`build/icon.icns`. The version comes from the root `package.json`.
+
+### Signing
+
+`bundle.sh` signs through `scripts/sign.sh`, a port of
+`packages/desktop/scripts/macSign.js` that reads the same variables. With
+`MAC_SIGN_P12` (base64 of a `.p12`) and `MAC_SIGN_P12_PASSWORD` set, the
+bundle is signed with that certificate through a throwaway keychain, and the
+script fails unless the designated requirement then names the certificate's
+hash; that requirement is what keeps macOS permissions across updates (see
+"Stable signing identity" in
+[desktop-security.md](../../docs/systems/desktop-security.md)). Without them
+the signature is ad hoc, which is right for a development build.
+`MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+
+`scripts/sign-selftest.sh` checks the certificate path without the project's
+certificate: it makes a throwaway one, builds the bundle signed with it,
+confirms the requirement and that the keychain search list is as it was, and
+signs the bundle ad hoc again.
+
+### CI
+
+`.github/workflows/desktop-macos.yml` runs `swift build`, `swift test`, the
+contract check and the signing self-test on a macOS runner. It starts only
+when something the package builds from changes (the package, the three files
+taken from `packages/desktop`, the root `package.json`, the workflow), because
+macOS minutes are the expensive kind.
+
+### The bridge
+
+`window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
+the description Electron's preload is held to as well (see "Bridge contract"
+in [desktop.md](../../docs/systems/desktop.md)). `BridgeScript` turns it into
+the script injected at document start in the main frame; `BridgeRouter` routes
+what the page posts to handlers by channel name; `BridgeHost` connects the two
+to WebKit and sends the shell's events back.
+
+Every call channel of the contract has to be answered before the first page
+loads, or the app stops at launch. Channels whose feature is not ported yet
+are listed in `InterimReplies` with the answer Electron gives where that
+feature is absent, grouped by the stage that replaces them. Porting a channel
+means registering its handler and deleting it from that table in the same
+change; `InterimRepliesTests` fails when the two stop adding up to the whole
+contract.
+
+### Contract check
+
+```bash
+scripts/contract-check.sh [--out report.json]
+```
+
+runs the real shell with no window on screen and its settings in a temporary
+folder, loads `contract/harness.html`, and lets that page use the bridge the
+way a client does: it reads every member, calls each one, subscribes to every
+event, and the driver then sends one event on each channel. The run fails
+(exit status 1) when a `fire` member returns anything but `undefined`, an
+`invoke` member does not return a Promise or its Promise rejects, a
+subscription returns the wrong thing or misses its event, a removed callback
+is still called, the bridge has a member the contract lacks, or the
+User-Agent is not `… Version/<Safari> Safari/605.1.15 BSpaceDesktop/<version>`.
+The report records the shape of every answer.
+
+Five members are read but not called, because they navigate the window away
+from the harness or act on a window that is not on screen: `minimize`,
+`maximize`, `close`, `setInstanceUrl`, `clearInstanceUrl`.
+
+The same executable opens a live instance in the shell and prints what the
+page sees (where it ended up, its title, the bridge, whether the client drew
+anything); `--script <file>` asks the page something else, the file being the
+body of an async function whose return value is printed:
+
+```bash
+.build/release/ContractCheck --contract ../desktop/src/bridgeContract.json \
+  --picker ../desktop/resources/instance-picker.html \
+  --visit https://your.instance.example --settle 6
+```
+
+A visit is a cold start of the web client: about 160 requests, because the
+service worker fetches every asset a second time for its cache. The server
+allows 200 requests a minute per address, and that budget is shared with
+everyone behind the same address, the person using the instance from this
+machine included. Point it at a test instance, not at one in use.
 
 ## WebKitProbe
 

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bridge contract check</title>
+</head>
+<body>
+  <script>
+    'use strict';
+    // Exercises a bridge the way a page sees it and reports the shape of what
+    // each member gives back. The driver (Sources/ContractCheck) passes in the
+    // member list of bridgeContract.json, sends one event on every event
+    // channel between prepare() and finish(), and compares the report with
+    // what the contract promises. It knows nothing about the shell that
+    // answers, so the same page can be pointed at Electron.
+    (() => {
+      const shapeOf = (value) => {
+        if (value === undefined) return 'undefined';
+        if (value === null) return 'null';
+        if (Array.isArray(value)) return 'array';
+        if (typeof value === 'object') {
+          const shape = {};
+          for (const key of Object.keys(value).sort()) shape[key] = shapeOf(value[key]);
+          return shape;
+        }
+        return typeof value;
+      };
+
+      const state = { present: false, frozen: false, undeclared: [], members: [], pending: [], received: {}, removedButCalled: [] };
+
+      const exercise = (api, member, entry) => {
+        if (member.kind === 'subscribe') {
+          const remove = api[member.name]((payload) => {
+            (state.received[member.channel] = state.received[member.channel] || []).push(payload);
+          });
+          entry.returned = typeof remove;
+          if (member.unsubscribe) {
+            // A second callback, removed at once: it must never be called.
+            const removeSecond = api[member.name](() => { state.removedButCalled.push(member.channel); });
+            if (typeof removeSecond === 'function') removeSecond();
+          }
+          return;
+        }
+        const result = api[member.name]();
+        if (member.kind === 'fire') {
+          entry.returned = typeof result;
+          return;
+        }
+        entry.returned = result instanceof Promise ? 'promise' : typeof result;
+        if (result instanceof Promise) {
+          state.pending.push(result.then(
+            (value) => { entry.settled = 'fulfilled'; entry.shape = shapeOf(value); },
+            (error) => { entry.settled = 'rejected'; entry.error = String((error && error.message) || error); },
+          ));
+        }
+      };
+
+      window.contractCheck = {
+        /** Reads every member; calls each one that is not in `skipCalls`. */
+        prepare(bridgeName, members, skipCalls) {
+          const api = window[bridgeName];
+          state.present = typeof api === 'object' && api !== null;
+          if (!state.present) return;
+          state.frozen = Object.isFrozen(api);
+          const declared = new Set(members.map((member) => member.name));
+          state.undeclared = Object.keys(api).filter((name) => !declared.has(name));
+
+          for (const member of members) {
+            const entry = { name: member.name, kind: member.kind, memberType: typeof api[member.name] };
+            state.members.push(entry);
+            if (member.kind === 'value') {
+              entry.value = api[member.name];
+              continue;
+            }
+            entry.called = entry.memberType === 'function' && !skipCalls.includes(member.name);
+            if (!entry.called) continue;
+            try {
+              exercise(api, member, entry);
+            } catch (error) {
+              entry.threw = String((error && error.message) || error);
+            }
+          }
+        },
+
+        /** Waits for every Promise the calls returned and hands back the report. */
+        async finish() {
+          await Promise.all(state.pending);
+          return {
+            userAgent: navigator.userAgent,
+            present: state.present,
+            frozen: state.frozen,
+            undeclared: state.undeclared,
+            members: state.members,
+            received: state.received,
+            removedButCalled: state.removedButCalled,
+          };
+        },
+      };
+    })();
+  </script>
+</body>
+</html>

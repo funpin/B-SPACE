@@ -1,0 +1,85 @@
+name: Desktop macOS (native)
+
+# Builds and tests the native macOS client (packages/desktop-macos, SwiftPM):
+# the Swift tests, the bridge contract check against the real shell, and the
+# signing path with a throwaway certificate.
+#
+# Path-filtered on purpose. A macOS runner is the most expensive kind, GitHub
+# pauses workflows on forks that use Actions heavily, and almost no pull
+# request touches this package. The run starts only when something it builds
+# from changes: the package itself, the three files it takes from
+# packages/desktop (the bridge contract, the picker page, the icon), the root
+# package.json it reads its version from, or this file.
+#
+# The TypeScript side of the bridge contract (bridgeContract.test.ts) runs in
+# ci.yml with the rest of packages/desktop.
+
+on:
+  pull_request:
+    paths:
+      - packages/desktop-macos/**
+      - packages/desktop/src/bridgeContract.json
+      - packages/desktop/resources/instance-picker.html
+      - packages/desktop/build/icon.icns
+      - package.json
+      - .github/workflows/desktop-macos.yml
+  # The same list: a workflow has no way to share it between two triggers
+  # that every YAML reader GitHub has shipped agrees on.
+  push:
+    branches: [main]
+    paths:
+      - packages/desktop-macos/**
+      - packages/desktop/src/bridgeContract.json
+      - packages/desktop/resources/instance-picker.html
+      - packages/desktop/build/icon.icns
+      - package.json
+      - .github/workflows/desktop-macos.yml
+
+permissions:
+  contents: read
+
+# As in ci.yml: a newer push to a pull request supersedes the run in flight,
+# while every push to main keeps its own verdict.
+concurrency:
+  group: desktop-macos-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: Build & test (Swift)
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: packages/desktop-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        run: |
+          swift --version
+          sw_vers
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      # The real shell, no window on screen: every member of window.backspace
+      # is read and called by a page, and the answers are held to the contract.
+      - name: Bridge contract check
+        run: scripts/contract-check.sh --out "$RUNNER_TEMP/contract-report.json"
+
+      - name: Show the contract report
+        if: failure()
+        run: cat "$RUNNER_TEMP/contract-report.json" || true
+
+      # Builds the bundle signed with a certificate made for this run, and
+      # checks that its designated requirement names that certificate. No
+      # secret is involved, so this runs for fork pull requests too.
+      - name: Signing self-test
+        run: scripts/sign-selftest.sh
