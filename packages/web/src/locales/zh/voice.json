@@ -205,7 +205,20 @@
   "voiceDiagnostics": {
     "selfNetwork": "您的网络连接不稳定",
     "participantNetwork": "{{name}} 的网络连接不稳定",
-    "reconnecting": "与语音服务器的连接中断 — 正在重新连接…"
+    "reconnecting": "与语音服务器的连接中断 — 正在重新连接…",
+    "selfLost": "您的连接已中断",
+    "participantLost": "{{name}} 的连接已中断",
+    "participantReconnecting": "{{name}} 正在重新连接…",
+    "selfConnecting": "正在连接…",
+    "participantConnecting": "{{name}} 正在连接…",
+    "selfMicUnavailable": "无法访问麦克风 — 其他人听不到您",
+    "participantMicUnavailable": "{{name}} 无法访问麦克风，其他人听不到",
+    "selfUnresponsive": "服务器已收不到此应用的响应",
+    "participantUnresponsive": "{{name}} 没有响应。可能是应用已关闭或网络已断开。",
+    "selfFailed": "无法连接。{{reason}}",
+    "selfFailedPlain": "无法连接。",
+    "participantFailed": "{{name}} 无法连接。{{reason}}",
+    "participantFailedPlain": "{{name}} 无法连接。"
   },
   "channelDuration": "频道已激活 {{duration}}",
   "controls": {
@@ -241,7 +254,14 @@
     "reconnecting": "正在重新连接…",
     "disconnected": "已断开连接",
     "connectionLost": "连接已丢失。请重试。",
-    "retry": "重试"
+    "retry": "重试",
+    "droppedUnresponsive": "您已被移出语音频道：应用没有响应。",
+    "failure": {
+      "media_unreachable": "无法建立语音连接。您的网络或 VPN 可能阻止了它。",
+      "server_unreachable": "无法连接语音服务器。",
+      "not_allowed": "服务器拒绝了连接。",
+      "token_failed": "无法获得语音频道的访问权限。"
+    }
   },
   "camera": {
     "auto": "自动",

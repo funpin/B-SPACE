@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { isVoiceConnectFailureReason } from '@backspace/shared/src/voiceConnection';
+import { voiceConnectFailureText } from '../../utils/voiceConnectionText';
 import { useTranslation } from 'react-i18next';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { useSpaceStore } from '../../stores/spaceStore';
@@ -72,10 +74,12 @@ export function VoiceControls() {
   const handleDisconnect = handleDisconnectAction;
   const handleRetry = reconnectVoice;
 
+  // A first connection that failed names its reason; the general one has
+  // nothing to add to the status line above it.
   const connectionDetail = connectionError === 'network_disconnect'
     ? t('voice:status.connectionLost')
-    : connectionError === 'connect_failed'
-      ? t('voice:status.connectionFailed')
+    : isVoiceConnectFailureReason(connectionError)
+      ? voiceConnectFailureText(connectionError) ?? t('voice:status.connectionFailed')
       : connectionError;
 
   const statusLabel = voiceConnectionStatus === 'reconnecting'

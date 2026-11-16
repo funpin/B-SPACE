@@ -1,4 +1,6 @@
 import { useTranslation } from 'react-i18next';
+import type { VoiceConnectionMark as VoiceConnectionMarkName } from '@backspace/shared/src/voiceConnection';
+import { VoiceConnectionMark } from './VoiceConnectionMark';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 import { Tag } from '../ui/Tag';
@@ -18,7 +20,10 @@ export interface VoiceUserRowProps {
   isPermissionMuted?: boolean;
   isLocallyMuted?: boolean;
   isSpeaking?: boolean;
-  connectionWarning?: string | null;
+  /** The one mark for the state of this member's connection, with its explanation. */
+  connectionMark?: { mark: VoiceConnectionMarkName; label: string } | null;
+  /** The member is not in the channel yet (connecting, or failed to): shown quieter. */
+  pending?: boolean;
   size?: 'compact' | 'default';
   className?: string;
 }
@@ -38,7 +43,8 @@ export function VoiceUserRow({
   isPermissionMuted,
   isLocallyMuted,
   isSpeaking,
-  connectionWarning,
+  connectionMark,
+  pending = false,
   size = 'default',
   className = '',
 }: VoiceUserRowProps) {
@@ -63,21 +69,13 @@ export function VoiceUserRow({
         avatarColor={avatarColor}
         className={isSpeaking ? 'rounded-full ring-2 ring-status-ok' : ''}
       />
-      <span className="text-compact text-txt-secondary truncate flex-1 min-w-0">
+      <span className={`text-compact truncate flex-1 min-w-0 ${pending ? 'text-txt-tertiary' : 'text-txt-secondary'}`}>
         {displayName}
       </span>
       {/* Status marks: quiet tertiary for the person's own choices, the
           warning colour for a moderator's restriction. */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        {connectionWarning && (
-          <span
-            className="w-4 h-4 rounded-full bg-status-idle/15 text-status-idle flex items-center justify-center"
-            title={connectionWarning}
-            aria-label={connectionWarning}
-          >
-            <Icon name="triangle-alert" size="xs" />
-          </span>
-        )}
+        {connectionMark && <VoiceConnectionMark mark={connectionMark.mark} label={connectionMark.label} />}
         {/* Server muted / space deafened / permission muted */}
         {showServerMicIcon && (
           <span

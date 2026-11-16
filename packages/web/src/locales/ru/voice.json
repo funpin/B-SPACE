@@ -211,7 +211,20 @@
   "voiceDiagnostics": {
     "selfNetwork": "Нестабильное соединение у вас",
     "participantNetwork": "Нестабильная сеть у {{name}}",
-    "reconnecting": "Связь с голосовым сервером прервана — переподключение…"
+    "reconnecting": "Связь с голосовым сервером прервана — переподключение…",
+    "selfLost": "У вас пропала связь",
+    "participantLost": "У {{name}} пропала связь",
+    "participantReconnecting": "{{name}} переподключается…",
+    "selfConnecting": "Подключение…",
+    "participantConnecting": "{{name}} подключается…",
+    "selfMicUnavailable": "Нет доступа к микрофону — вас не слышно",
+    "participantMicUnavailable": "У {{name}} нет доступа к микрофону — его не слышно",
+    "selfUnresponsive": "Сервер перестал получать ответы от этого приложения",
+    "participantUnresponsive": "{{name}} не отвечает. Возможно, приложение закрылось или пропала сеть.",
+    "selfFailed": "Не удалось подключиться. {{reason}}",
+    "selfFailedPlain": "Не удалось подключиться.",
+    "participantFailed": "{{name}}: не удалось подключиться. {{reason}}",
+    "participantFailedPlain": "{{name}}: не удалось подключиться."
   },
   "channelDuration": "Канал активен {{duration}}",
   "controls": {
@@ -247,7 +260,14 @@
     "reconnecting": "Переподключение…",
     "disconnected": "Отсоединено",
     "connectionLost": "Соединение потеряно. Попробуйте ещё раз.",
-    "retry": "Повторить"
+    "retry": "Повторить",
+    "droppedUnresponsive": "Вас отключило от голосового канала: приложение не отвечало.",
+    "failure": {
+      "media_unreachable": "Не удалось установить голосовое соединение. Возможно, сеть или VPN не пропускает его.",
+      "server_unreachable": "Голосовой сервер недоступен.",
+      "not_allowed": "Сервер отклонил подключение.",
+      "token_failed": "Не удалось получить доступ к голосовому каналу."
+    }
   },
   "camera": {
     "auto": "Авто",

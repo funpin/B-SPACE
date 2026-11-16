@@ -23,6 +23,15 @@ import { myRowForOrigin } from '../stores/authStore';
 import { useUIStore } from '../stores/uiStore';
 import type { User } from '@backspace/shared';
 import { broadcastVoiceStatus, clearSpaceVoiceForDmCall } from '../utils/voice';
+import {
+  announceVoiceAttempt,
+  classifyConnectFailure,
+  startVoiceHeartbeat,
+  stopVoiceHeartbeat,
+  voiceAttemptCompleted,
+  type ConnectStage,
+} from '../utils/voiceLink';
+import type { VoiceConnectFailureReason, VoiceConnectingEntry } from '@backspace/shared/src/voiceConnection';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
 import { dmCallChannelId, dmCallOrigin, dmCallRoomKey, voiceSessionOrigin } from '../utils/dmCall';
 import { AudioManager } from '../audio/AudioManager';
@@ -326,6 +335,21 @@ async function republishMicrophone(r: Room, lastMicGenRef: { current: number }):
     source: Track.Source.Microphone,
   });
   lastMicGenRef.current = currentGen;
+}
+
+/** The row this client shows for its own attempt to join a voice channel. */
+let _ownAttempt: { channelId: string; userId: string } | null = null;
+
+function clearOwnAttemptRow(): void {
+  if (!_ownAttempt) return;
+  useVoiceStore.getState().setVoiceConnecting(_ownAttempt.channelId, _ownAttempt.userId, 'idle');
+  _ownAttempt = null;
+}
+
+/** End this client's attempt: its own row goes, and the instance is told. */
+function endOwnAttempt(): void {
+  clearOwnAttemptRow();
+  announceVoiceAttempt(null, 'idle');
 }
 
 export function useLiveKit() {
@@ -766,6 +790,18 @@ export function useLiveKit() {
   }, [cameraDeviceId, isCameraOn, isConnected]);
 
   const connect = useCallback(async (channelId: string, isDm?: boolean) => {
+    // This client's own attempt to join a voice channel, shown in its own
+    // list at once and told to the channel's instance. DM calls have their
+    // own call screens and take no part in it.
+    const noteAttempt = (state: VoiceConnectingEntry['state'], reason?: VoiceConnectFailureReason) => {
+      if (isDm) return;
+      const myId = getMyUserIdForOrigin(getChannelOrigin(channelId));
+      if (myId) {
+        useVoiceStore.getState().setVoiceConnecting(channelId, myId, state, reason);
+        _ownAttempt = { channelId, userId: myId };
+      }
+      announceVoiceAttempt(channelId, state, reason);
+    };
     const storedId = isDm ? `dm-${channelId}` : channelId;
     if (connectedChannelRef.current === storedId && roomRef.current?.state === ConnectionState.Connected) return;
 
@@ -781,7 +817,11 @@ export function useLiveKit() {
       if (isDm) return;
       const origin = getChannelOrigin(channelId);
       wsSend({ type: 'voice_join', channelId }, origin);
+      // The join ends the attempt on the instance; end it here as well.
+      voiceAttemptCompleted();
+      clearOwnAttemptRow();
       broadcastVoiceStatus(origin);
+      startVoiceHeartbeat(origin);
     };
     const gen = ++_connectGeneration;
 
@@ -801,6 +841,10 @@ export function useLiveKit() {
     setIsConnecting(true);
     setConnectionState(ConnectionState.Connecting);
     useVoiceStore.getState().setVoiceConnectionStatus('connecting');
+    // Whatever attempt came before is over; the one for this channel starts.
+    stopVoiceHeartbeat();
+    endOwnAttempt();
+    noteAttempt('connecting');
     setConnectionError(null);
     setConnectedChannelId(null); // Clear this so AppLayout knows we are transitioning
 
@@ -827,6 +871,8 @@ export function useLiveKit() {
     }
     if (gen !== _connectGeneration) return;
     
+    // Where the attempt is, for naming the reason if it fails.
+    let stage: ConnectStage = 'token';
     try {
       let token: string;
       let url: string;
@@ -854,6 +900,7 @@ export function useLiveKit() {
         url = resp.url;
       }
       if (gen !== _connectGeneration) return;
+      stage = 'room';
       useVoiceStore.setState({ livekitHostOrigin: hostOrigin });
       // Refreshed per join; home's document arrives with every home `ready`.
       if (hostOrigin) void refreshStreamHostLimits(hostOrigin);
@@ -1128,6 +1175,7 @@ export function useLiveKit() {
         // The SDK emits Disconnected before rejecting an initial connect.
         // Keep that attempt current so its catch can report the failure.
         if (!initialConnectPending) _connectGeneration++;
+        stopVoiceHeartbeat();
         AudioManager.getInstance().releaseInputStream();
         SpeakingDetector.getInstance().clear();
         setConnectionState(ConnectionState.Disconnected);
@@ -1193,9 +1241,22 @@ export function useLiveKit() {
     } catch (err) {
       if (gen === _connectGeneration) {
         AudioManager.getInstance().releaseInputStream();
-        setConnectionError('connect_failed');
-        useVoiceStore.getState().leaveVoice();
-        useVoiceStore.getState().setConnectionError('connect_failed');
+        if (isDm) {
+          setConnectionError('connect_failed');
+          useVoiceStore.getState().leaveVoice();
+          useVoiceStore.getState().setConnectionError('connect_failed');
+        } else {
+          // The user asked to be in this channel and is not: keep that
+          // intent, as an exhausted reconnect does, so the voice panel stays
+          // with the reason and a Retry. Leaving here would close the panel
+          // before it could say anything.
+          const reason = classifyConnectFailure(err, stage);
+          console.warn(`[LiveKit] Could not connect (${reason}):`, err);
+          noteAttempt('failed', reason);
+          setConnectionError(reason);
+          useVoiceStore.getState().setVoiceConnectionStatus('disconnected');
+          useVoiceStore.getState().setConnectionError(reason);
+        }
       }
     }
     finally { if (gen === _connectGeneration) setIsConnecting(false); }
@@ -1208,6 +1269,8 @@ export function useLiveKit() {
     AudioManager.getInstance().releaseInputStream();
     SpeakingDetector.getInstance().clear();
     deactivateHwOverdrive();
+    stopVoiceHeartbeat();
+    endOwnAttempt();
     connectedChannelRef.current = null;
     setConnectedChannelId(null);
     if (roomRef.current) {
@@ -1240,6 +1303,14 @@ export function useLiveKit() {
   useEffect(() => {
     updateParticipants();
   }, [voiceUserStates, isMuted, isDeafened, isScreenSharing, spaceMutedUserIds, spaceDeafenedUserIds, permissionMutedUserIds, updateParticipants]);
+
+  // The two connection troubles this client knows about itself travel with
+  // its voice status, so the others in the channel see them. The status goes
+  // out again whenever either changes; it is a no-op outside a voice session.
+  const isVoiceReconnecting = useVoiceStore((s) => s.voiceConnectionStatus === 'reconnecting');
+  useEffect(() => {
+    broadcastVoiceStatus();
+  }, [isVoiceReconnecting, micPermissionDenied]);
 
   useEffect(() => {
     if (!room) return;

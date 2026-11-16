@@ -15,6 +15,8 @@ import { broadcastVoiceStatus, broadcastDeafenViaLiveKit } from '../utils/voice'
 import { dmCallCredentialsFrom, dmCallIds, dmCallOrigin, dmCallRefFrom, dmCallRoomKey } from '../utils/dmCall';
 import { turnCameraOnInDmCall } from '../utils/voiceActions';
 import { applySpaceVoiceState } from '../utils/voiceStateSync';
+import i18n from '../i18n';
+import { useVoiceLinkStore } from '../utils/voiceLink';
 import { applyIncomingDmMessage, applyIncomingDmChannel } from '../utils/dmMessageRouting';
 import { ownStatusReport, statusToAssertOnRemote } from '../utils/selfStatus';
 import { getActiveRoom } from './useLiveKit';
@@ -274,6 +276,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       break;
     case 'ready':
       useChannelPokeStore.getState().setHost(origin, event.supportsPoke === true);
+      useVoiceLinkStore.getState().setHost(origin, event.supportsVoiceLink === true);
       // This instance names the signed-in user's row there (the home's is the
       // session row itself, set below). The one record of "my ids".
       if (!isHome) useAuthStore.getState().recordMyRow(origin, event.user.id);
@@ -459,7 +462,15 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       // Populate voice user statuses (mute/deafen/camera/screenshare) from server
       if (event.voiceUserStates) {
         for (const [uid, status] of Object.entries(event.voiceUserStates)) {
-          setVoiceUserStatus(uid, status.isMuted, status.isDeafened, status.isCameraOn, status.isScreenSharing);
+          setVoiceUserStatus(uid, status.isMuted, status.isDeafened, status.isCameraOn, status.isScreenSharing, status);
+        }
+      }
+      // Who is connecting to a voice channel, or has just failed to. The
+      // origin's entries were cleared with its voice users above.
+      if (event.voiceConnecting) {
+        const { setVoiceConnectingForChannel } = useVoiceStore.getState();
+        for (const [channelId, entries] of Object.entries(event.voiceConnecting)) {
+          setVoiceConnectingForChannel(channelId, entries);
         }
       }
       // Build new restriction Sets atomically from ready payload, then apply in one setState
@@ -767,7 +778,11 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       break;
 
     case 'voice_status_update':
-      setVoiceUserStatus(event.userId, event.isMuted, event.isDeafened, event.isCameraOn, event.isScreenSharing);
+      setVoiceUserStatus(event.userId, event.isMuted, event.isDeafened, event.isCameraOn, event.isScreenSharing, event);
+      break;
+
+    case 'voice_connecting_update':
+      useVoiceStore.getState().setVoiceConnecting(event.channelId, event.userId, event.state, event.reason);
       break;
 
     case 'space_voice_state':
@@ -834,6 +849,10 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
           getActiveRoom()?.disconnect();
           if (event.reason === 'displaced') {
             useUIStore.getState().addToast('Voice disconnected — joined from another session', 'info');
+          } else if (event.reason === 'unresponsive') {
+            // The instance gave this client's place away while the page was
+            // not answering (a long freeze, a suspended machine).
+            useUIStore.getState().addToast(i18n.t('voice:status.droppedUnresponsive'), 'warning', 8000);
           }
         }
       }

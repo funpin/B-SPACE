@@ -207,7 +207,20 @@
   "voiceDiagnostics": {
     "selfNetwork": "Deine Verbindung ist instabil",
     "participantNetwork": "{{name}} hat eine instabile Verbindung",
-    "reconnecting": "Die Verbindung zum Sprachserver wurde unterbrochen — Verbindung wird wiederhergestellt…"
+    "reconnecting": "Die Verbindung zum Sprachserver wurde unterbrochen — Verbindung wird wiederhergestellt…",
+    "selfLost": "Deine Verbindung ist abgebrochen",
+    "participantLost": "{{name}} hat die Verbindung verloren",
+    "participantReconnecting": "{{name}} verbindet sich neu…",
+    "selfConnecting": "Verbindung wird hergestellt…",
+    "participantConnecting": "{{name}} verbindet sich…",
+    "selfMicUnavailable": "Kein Zugriff auf das Mikrofon — niemand kann dich hören",
+    "participantMicUnavailable": "{{name}} hat keinen Zugriff auf das Mikrofon und ist nicht zu hören",
+    "selfUnresponsive": "Der Server erhält keine Antworten mehr von dieser App",
+    "participantUnresponsive": "{{name}} antwortet nicht. Vielleicht wurde die App geschlossen oder das Netzwerk ist ausgefallen.",
+    "selfFailed": "Verbindung fehlgeschlagen. {{reason}}",
+    "selfFailedPlain": "Verbindung fehlgeschlagen.",
+    "participantFailed": "{{name}} konnte sich nicht verbinden. {{reason}}",
+    "participantFailedPlain": "{{name}} konnte sich nicht verbinden."
   },
   "channelDuration": "Kanal seit {{duration}} aktiv",
   "controls": {
@@ -243,7 +256,14 @@
     "reconnecting": "Verbindung wird wiederhergestellt…",
     "disconnected": "Getrennt",
     "connectionLost": "Verbindung verloren. Versuche es erneut.",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "droppedUnresponsive": "Du wurdest aus dem Sprachkanal entfernt: Die App hat nicht geantwortet.",
+    "failure": {
+      "media_unreachable": "Die Sprachverbindung konnte nicht aufgebaut werden. Möglicherweise blockiert dein Netzwerk oder VPN sie.",
+      "server_unreachable": "Der Sprachserver ist nicht erreichbar.",
+      "not_allowed": "Der Server hat die Verbindung abgelehnt.",
+      "token_failed": "Der Zugang zum Sprachkanal konnte nicht abgerufen werden."
+    }
   },
   "camera": {
     "auto": "Auto",

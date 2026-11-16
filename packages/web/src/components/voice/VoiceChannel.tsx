@@ -9,8 +9,11 @@ import { Icon } from '../ui/Icon';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
 import { useSharedSecondBeat } from '../../hooks/useSharedSecondBeat';
+import { resolveVoiceConnectionMark, type VoiceConnectingEntry } from '@backspace/shared/src/voiceConnection';
+import { describeVoiceConnectionMark } from '../../utils/voiceConnectionText';
 
 const EMPTY_VOICE_USERS: string[] = [];
+const EMPTY_CONNECTING: VoiceConnectingEntry[] = [];
 
 function VoiceChannelTimer({ observation }: { observation: VoiceChannelElapsed }) {
   const { t } = useTranslation('voice');
@@ -88,6 +91,8 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
   const localConnectionQuality = useVoiceStore((s) => s.connectionQuality);
   const connectionQualities = useVoiceStore((s) => s.connectionQualities);
   const voiceConnectionStatus = useVoiceStore((s) => s.voiceConnectionStatus);
+  const micPermissionDenied = useVoiceStore((s) => s.micPermissionDenied);
+  const connectingEntries = useVoiceStore((s) => s.voiceConnecting.get(channelId)) ?? EMPTY_CONNECTING;
   const currentUserId = useVoiceStore((s) => {
     const local = s.participants.find(p => p.isLocal);
     return local?.userId ?? null;
@@ -98,6 +103,15 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
   // that instance's.
   const myIdHere = useSelfIdInChannel(channelId);
   const isActive = currentVoiceChannel === channelId;
+  // Who the list shows: the members in the channel, then those who are
+  // connecting to it or have just failed to. An attempt whose member is
+  // already listed is stale by an instant (the join overtook its end).
+  const rows = useMemo(() => [
+    ...voiceUsers.map((userId) => ({ userId, attempt: null as VoiceConnectingEntry | null })),
+    ...connectingEntries
+      .filter((entry) => !voiceUsers.includes(entry.userId))
+      .map((entry) => ({ userId: entry.userId, attempt: entry as VoiceConnectingEntry | null })),
+  ], [voiceUsers, connectingEntries]);
 
   const openContextMenu = useContextMenuStore((s) => s.open);
 
@@ -192,10 +206,11 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
         </span>
       </button>
 
-      {/* Connected users */}
-      {voiceUsers.length > 0 && (
+      {/* Connected users, then those still connecting or who failed to */}
+      {rows.length > 0 && (
         <div className="mt-0.5">
-          {voiceUsers.map((userId) => {
+          {rows.map(({ userId, attempt }) => {
+            const pending = attempt !== null;
             const member = members.find(m => m.userId === userId);
             const participant = participants.find(p => p.userId === userId);
             const displayName = member?.user.displayName ?? member?.user.username ?? participant?.username ?? userId;
@@ -219,18 +234,25 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
               : participant
                 ? connectionQualities.get(participant.identity) ?? 'unknown'
                 : 'unknown';
-            const connectionWarning = isActive && participant
-              ? voiceConnectionStatus === 'reconnecting' && participant.isLocal
-                ? t('voiceDiagnostics.reconnecting')
-                : participantConnectionQuality === 'poor' || participantConnectionQuality === 'lost'
-                  ? participant.isLocal
-                    ? t('voiceDiagnostics.selfNetwork')
-                    : t('voiceDiagnostics.participantNetwork', { name: displayName })
-                  : null
+            // The viewer's own two troubles are read from this client: it
+            // knows them before the instance echoes them back. Everyone
+            // else's come with their status.
+            const isSelf = userId === myIdHere;
+            const mark = resolveVoiceConnectionMark({
+              connecting: attempt?.state ?? null,
+              quality: isActive && participant ? participantConnectionQuality : null,
+              isUnresponsive: wsStatus?.isUnresponsive,
+              isReconnecting: isSelf
+                ? isActive && voiceConnectionStatus === 'reconnecting'
+                : wsStatus?.isReconnecting,
+              isMicUnavailable: isSelf ? isActive && micPermissionDenied : wsStatus?.isMicUnavailable,
+            });
+            const connectionMark = mark
+              ? { mark, label: describeVoiceConnectionMark(mark, { isSelf, name: displayName, reason: attempt?.reason }) }
               : null;
 
             const userDrag = voiceUserHandlers?.(userId, channelId);
-            const isDraggable = !!(userDrag?.draggable && userId !== myIdHere);
+            const isDraggable = !!(userDrag?.draggable && userId !== myIdHere && !pending);
             const isBeingDragged = userDrag?.isBeingDragged ?? false;
 
             return (
@@ -251,9 +273,9 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
                   displayName={displayName}
                   avatar={avatar}
                   avatarColor={avatarColor ?? undefined}
-                  isMuted={isMuted}
-                  isDeafened={isParticipantDeafened}
-                  isCameraOn={hasCamera}
+                  isMuted={!pending && isMuted}
+                  isDeafened={!pending && isParticipantDeafened}
+                  isCameraOn={!pending && hasCamera}
                   isUnwatchedCamera={userId !== myIdHere && unwatchedCameras.has(userId)}
                   isScreenSharing={isScreenSharing}
                   isServerMuted={isSpaceMuted}
@@ -261,7 +283,8 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
                   isPermissionMuted={isPermissionMuted}
                   isLocallyMuted={userId !== myIdHere && (participantMutes.get(userId) ?? false)}
                   isSpeaking={speakingUserIds.has(userId)}
-                  connectionWarning={connectionWarning}
+                  connectionMark={connectionMark}
+                  pending={pending}
                 />
               </div>
             );

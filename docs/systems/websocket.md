@@ -62,7 +62,9 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 |------|--------|-------|
 | `voice_join` | channelId | one room per user enforced |
 | `voice_leave` | (none) | leaves the voice the user holds on this instance: a voice channel or DM call hosted here, or a call hosted on a peer that they joined through here (relayed to the host as their leave in a group call). A client joining voice on another instance sends it to the instance its DM call goes through (voice.md, "Client-Side Call Routing") |
-| `voice_status` | isMuted, isDeafened, isCameraOn, isScreenSharing | server enforces space/permission mute |
+| `voice_status` | isMuted, isDeafened, isCameraOn, isScreenSharing, isReconnecting?, isMicUnavailable? | server enforces space/permission mute. The two optional flags are the member's own connection trouble (voice.md, "Connection states"); each is absent when false. `isUnresponsive` is not accepted from a client |
+| `voice_connecting` | channelId, state: connecting/failed/idle, reason? | the member's attempt to join a voice channel, before any `voice_join`. `reason` only with `failed`, one of `VOICE_CONNECT_FAILURE_REASONS`; anything else becomes `connect_failed`. `idle` ends the attempt. Dropped without an answer when the channel does not exist, the user lacks CONNECT, or they are already in it. Sent only to an instance whose `ready` has `supportsVoiceLink` |
+| `voice_heartbeat` | (none) | every 10 s from a client in a voice channel: the page is alive. Counted only from the socket that owns the voice session. Sent only to an instance whose `ready` has `supportsVoiceLink` |
 
 ### Voice Moderation
 | type | fields | permission |
@@ -383,8 +385,9 @@ takes the client out of it (`teardownDmCall`).
 | type | fields | scope |
 |------|--------|-------|
 | `voice_state_update` | channelId, userId, action: join/leave, channelElapsedSeconds? | space |
-| `voice_status_update` | userId, channelId, isMuted, isDeafened, isCameraOn, isScreenSharing | room |
-| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
+| `voice_status_update` | userId, channelId, isMuted, isDeafened, isCameraOn, isScreenSharing, isReconnecting?, isMicUnavailable?, isUnresponsive? | room. The three optional flags are absent when false; `isUnresponsive` is set by the server alone |
+| `voice_connecting_update` | channelId, userId, state: connecting/failed/idle, reason? | space members with VIEW_CHANNEL on the channel. A member is connecting to it, failed to, or the attempt ended (`idle`). They are not in the channel: only `voice_state_update` puts them there, and an attempt that turns into a join ends with `idle` just before it |
+| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, voiceConnecting?, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
 | `voice_space_muted` | userId, channelId, spaceId, muted | space |
 | `voice_space_deafened` | userId, channelId, spaceId, deafened | space |
 | `voice_permission_muted` | userId, spaceId, muted | space |
@@ -445,7 +448,9 @@ reason: `'displaced'` (new tab) | `'session_closed'`
   layoutUpdatedAt?: number,
   voiceStates?: Record<channelId, userId[]>,
   voiceChannelElapsedSeconds?: Record<channelId, number>,
-  voiceUserStates?: Record<string, { isMuted, isDeafened, isCameraOn, isScreenSharing }>,
+  voiceUserStates?: Record<string, { isMuted, isDeafened, isCameraOn, isScreenSharing, isReconnecting?, isMicUnavailable?, isUnresponsive? }>,
+  voiceConnecting?: Record<channelId, { userId, state: 'connecting' | 'failed', reason? }[]>, // attempts to join the voice channels the user can see; absent before
+  supportsVoiceLink?: boolean,     // true from an instance that takes voice_connecting and voice_heartbeat and relays the connection flags; absent before
   spaceVoiceStates?: Record<string, { spaceMuted, spaceDeafened, permissionMuted }>,
   readStates?: ReadState[],
   supportsPoke?: boolean,          // true from an instance that handles channel_poke (see "Channel pokes"); absent before

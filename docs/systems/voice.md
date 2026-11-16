@@ -10,12 +10,53 @@ Source files:
 
 ## Voice Channel Join Flow
 
-1. Client sends `voice_join { channelId }` via WS
-2. Server checks CONNECT permission, enforces one-room-per-user
-3. Server loads voice restrictions from DB (space mute/deafen)
-4. Server broadcasts `voice_state_update { action: 'join', channelElapsedSeconds }` to space. `channelElapsedSeconds` is the whole occupied duration computed by the server, so client/server clock skew cannot change the channel timer; the client advances it from receipt time on one shared, visibility-aware one-second beat. The duration survives participant joins and reconnect grace, and resets when the last participant leaves.
-5. Client calls `POST /api/livekit/token { channelId }` → gets JWT + LiveKit URL
-6. Client connects to LiveKit room with token
+1. Client marks itself as connecting: its own row appears in the channel list, and it sends `voice_connecting { channelId, state: 'connecting' }` (see "Connection states")
+2. Client calls `POST /api/livekit/token { channelId }` → gets JWT + LiveKit URL
+3. Client connects to the LiveKit room with the token
+4. Once connected, client sends `voice_join { channelId }` via WS, then its `voice_status`, and starts the heartbeat
+5. Server checks CONNECT permission, enforces one-room-per-user, ends the attempt from step 1
+6. Server loads voice restrictions from DB (space mute/deafen)
+7. Server broadcasts `voice_state_update { action: 'join', channelElapsedSeconds }` to space. `channelElapsedSeconds` is the whole occupied duration computed by the server, so client/server clock skew cannot change the channel timer; the client advances it from a monotonic local clock after receipt.
+
+`voice_join` means "the connection is up". Everything that depends on a member being in the channel (the timer, the join sound, displacing their session on another device, the moderator's restrictions) keys on it and is untouched by the states below.
+
+### Connection states
+
+What a member's row shows about their connection, beyond joined and left. Types, constants and the rule that picks the mark: `packages/shared/src/voiceConnection.ts`. Server bookkeeping: `ws/voiceLink.ts`. Client: `utils/voiceLink.ts`, `utils/voiceConnectionText.ts`, `components/voice/VoiceConnectionMark.tsx`.
+
+| State | Who knows | How the others learn | Mark |
+|-------|-----------|----------------------|------|
+| connecting | the client | `voice_connecting` → `voice_connecting_update` | spinner |
+| failed to connect | the client | the same, with `state: 'failed'` and a reason | triangle |
+| network weak / gone | LiveKit | its connection quality (`poor` / `lost`), already sent to every participant | signal meter, amber / red |
+| reconnecting | the client | `isReconnecting` in its `voice_status` | plug |
+| no microphone access | the client | `isMicUnavailable` in its `voice_status` | microphone with an exclamation mark |
+| not responding | the server | `isUnresponsive` in `voice_status_update` | triangle |
+
+A row shows one mark, the most serious that applies: failed, not responding, reconnecting, network gone, no microphone, network weak, connecting (`resolveVoiceConnectionMark`). The triangle means one thing: the member is listed but cannot be reached.
+
+**Attempts.** A member who is connecting or failed is not in the channel: they are listed after its members, quieter, and take no part in the timer or the join sound. The server keeps one attempt per user, in memory. It ends on that user's `voice_join` or `voice_leave`, on `state: 'idle'`, when the socket that reported it closes, and by age: `VOICE_CONNECTING_TTL_MS` (60 s) for `connecting` unless repeated, `VOICE_CONNECT_FAILED_TTL_MS` (30 s) for `failed`. The ages are a guard against ghosts; a client repeats `connecting` on every retry. Attempts reach only members with VIEW_CHANNEL on the channel (`sendToChannel`), and a snapshot lists them the same way.
+
+**A first connection that fails.** The client does not leave the channel: it keeps the intent, as an exhausted reconnect does, so the voice panel stays with "Connection failed", the reason and Retry. (Leaving first, as it did before, closed the panel before it could say anything.) `connectionError` then holds the reason code. DM calls are the exception and still leave. The codes, from `classifyConnectFailure`:
+
+| Code | When |
+|------|------|
+| `token_failed` | the instance did not issue a LiveKit token |
+| `media_unreachable` | signalling worked, the peer connection did not come up in time (typically UDP blocked on the path) |
+| `server_unreachable` | the voice server did not answer: unreachable, WebSocket error, signal timeout |
+| `not_allowed` | the voice server refused the join |
+| `connect_failed` | anything else |
+
+The code is a closed list because it travels to other members; the server replaces anything else with `connect_failed`.
+
+**Watchdog.** The socket sweep (`ws.ping()` every 30 s) cannot see a frozen page: the browser answers a protocol ping without the page. So a client in a voice channel sends `voice_heartbeat` every `VOICE_HEARTBEAT_INTERVAL_MS` (10 s), and the server marks a member `isUnresponsive` when:
+
+- the socket that owns their voice session closes without a `voice_leave`: at once, for the length of the reconnect grace period (`VOICE_RECONNECT_GRACE_MS`), which then frees the place as before;
+- no voice message has come from that socket for `VOICE_UNRESPONSIVE_AFTER_MS` (25 s) while it stays open. After `VOICE_SILENT_REMOVAL_MS` (90 s) of silence the place is freed: the socket gets `voice_disconnected { reason: 'unresponsive' }`, the others a leave.
+
+The mark clears at the member's next voice message or when their session rebinds. Judging by silence applies only to space voice channels and only to a client that has sent a heartbeat in this session, so a client from before the heartbeat is never marked. The server does not set `isReconnecting` itself: it cannot tell a client that is reconnecting from one that is gone, and "not responding" is the honest word for both.
+
+**Older peers.** A client sends `voice_connecting` and `voice_heartbeat` only to an instance whose `ready` has `supportsVoiceLink`; an older instance would answer each with an error. Without it the client still shows its own row and its own failure, and the others see what they saw before. An older client ignores the new event and the new fields.
 
 ### Voice presence bootstrap on mid-session space join
 
@@ -37,6 +78,8 @@ See `docs/systems/websocket.md` → "Mid-session space join" for the full ration
 Pre-arm is fire-and-forget: the mic acquisition runs in parallel with the LiveKit handshake, and `AudioManager.inputSwitchChain`'s serialization guarantees `useLiveKit.syncMic`'s subsequent call short-circuits on the already-acquired `currentStream` (no double prompt, no second `getUserMedia`).
 
 ### Listener mode (`micPermissionDenied`)
+
+While the flag is set the client reports `isMicUnavailable` in its `voice_status`, so the others see why this member says nothing (see "Connection states").
 
 When the user denies the prompt (or has previously denied at the OS level), the pre-arm's `setInputDevice` rejects with `NotAllowedError`. The `voiceStore.micPermissionDenied` flag is set to `true` and the LiveKit connect proceeds anyway — the user appears in the voice channel as a connected participant who can hear others but has no microphone publication. `useLiveKit.syncMic` checks the flag at the top of its body and skips the publish branch entirely.
 
