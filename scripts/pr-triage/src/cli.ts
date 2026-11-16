@@ -66,7 +66,6 @@ function failClosed(pull: PullRequest | null, number: number, reason: string): T
     hits: [],
     packageJson: [],
     lockfile: null,
-    sources: null,
     problems: [`the triage run for #${number} failed: ${reason}`],
   };
 }

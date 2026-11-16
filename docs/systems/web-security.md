@@ -506,7 +506,7 @@ why. Do not tidy it back up next to the hook. A test in
 The flip itself was one line in `index.ts`, changing `cspHeaderName` from
 `Content-Security-Policy-Report-Only` to `Content-Security-Policy`, plus the
 corresponding header names in `test/http-security-headers.test.ts` and the
-deletion of the `10038` line from `.zap/rules.tsv`. The `Reporting-Endpoints`
+deletion of the `10038` line from `.github/security/zap-rules.tsv`. The `Reporting-Endpoints`
 header and the sink stay. An enforcing policy still reports, and those reports
 are now the only signal that the flip broke a flow nobody exercised. That signal
 is real: a headed browser was observed delivering one end to end. It is also

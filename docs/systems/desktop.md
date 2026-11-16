@@ -23,8 +23,6 @@ Source files:
 - `packages/desktop/electron-builder.yml` — Build config, protocol registration, afterPack hook
 - `packages/desktop/scripts/afterPack.js` — Cross-platform native module cleanup (critical for builds), then macOS signing
 - `packages/desktop/scripts/macSign.js` — Ad-hoc macOS code signing fallback (critical: without it the app will not launch)
-- `io.github.TheZwiss.backspace.yml` — Flatpak manifest (offline x86_64/aarch64 source build)
-- `flatpak/` — Flatpak launcher, desktop entry, AppStream metadata, and build instructions
 - `packages/desktop/resources/games.json` — Bundled game dictionary seed (versioned)
 
 ---
@@ -607,89 +605,13 @@ mobile viewport. See `docs/systems/mobile-ui.md`.
 
 ### Release publishing
 
-Flatpak is represented by the standard update-capability abstraction: when the
-runtime exposes `FLATPAK_ID`, `getUpdateCapability()` returns `external`.
-Updater initialization, checks, prompts, install actions, recovery controls,
-and update settings all consume that capability. Flatpak owns application
-updates because `/app` is immutable; the manifest also removes `app-update.yml`.
-The manifest checks out a pinned source commit, installs dependencies from a
-generated offline pnpm store, compiles TypeScript, and has electron-builder
-produce an unpacked Linux application inside the SDK. It then installs that
-output on the Electron BaseApp and uses `zypak-wrapper` for Chromium sandbox
-integration.
-
-The published manifest remains pinned to a released commit. Pull-request CI
-generates `flatpak/node-sources.ci.json` from the checked-out `pnpm-lock.yaml`
-on each architecture, then uses `flatpak/prepare-ci-manifest.mjs` to generate
-an ignored manifest that swaps both the pinned application source for `type:
-dir` and the committed offline source list for that generated one, so both
-x86_64 and aarch64 jobs compile the actual checkout against its own
-dependencies, and a contributor changing dependencies needs no Flatpak
-installation on any platform. How the committed `flatpak/node-sources.json`
-relates to the pinned release, and the pull-request check that enforces it, is
-in `flatpak/README.md` under "Release-paired offline sources".
-
-**Flatpak release metadata.** Publishing a GitHub release starts
-`.github/workflows/flatpak-release-metadata.yml` (`release: released`, which
-fires for a full release and for a prerelease promoted to one, never for a
-prerelease). A tag outside `vX.Y.Z`, a prerelease, or a release that has
-already landed makes the run a successful no-op that logs why. A release has
-landed when main's manifest pins the Backspace source to the tag's commit
-(read with `flatpak/manifest-pin.mjs`), which only its merged metadata pull
-request does. An AppStream entry for the version on main does not count as
-landed: see step 2. Otherwise, checked out at the tag, it:
-
-1. Reads the release notes and takes the paragraph under the
-   `# Backspace X.Y.Z` title as the AppStream release description, which is
-   the "What's New" text in GNOME Software, KDE Discover and Flathub
-   (`flatpak/release-summary.mjs`: wrapped lines are joined, links and images
-   become their text, emphasis and code markers are dropped, backslash escapes
-   become the literal character). Notes that do not open with that title
-   followed by a prose paragraph (a heading, table, list, quote, code block or
-   HTML in its place, or nothing) fail the job with the reason, so a
-   placeholder never ships. Fix the notes on the release page and dispatch a
-   new run.
-2. Runs `flatpak/update-release.mjs`, which updates the source pin, the
-   screenshot tag and the AppStream entry. The script reads the metainfo as it
-   is at the tag. To write the entry by hand instead of taking the notes'
-   paragraph, commit it to main before cutting the tag: the script then keeps
-   it and never replaces it, while the pin, the screenshot tag and
-   `node-sources.json` still move and the pull request still opens. The notes
-   still need their summary paragraph, because step 1 runs either way. An entry
-   written by hand on the metadata pull request's branch is not kept: a re-run
-   while that pull request is open force-pushes a fresh branch from the tag
-   over it.
-3. Regenerates `node-sources.json`, lints the manifest and AppStream file,
-   uploads those exact files, and builds their published manifest natively on
-   x86_64 and aarch64. The metadata pull request also runs `flatpak.yml`, but
-   that builds the working tree; this is the only build of the manifest as it
-   will be published.
-4. Only after both builds pass, pushes `automation/flatpak-<tag>` and opens (or
-   reuses) the metadata pull request as the release bot GitHub App. The app's
-   token, unlike `GITHUB_TOKEN`, starts CI on the pull request. The job updates
-   the branch when main has moved past the tag, because the ruleset requires
-   it to be up to date, and turns on squash auto-merge, so the pull request
-   merges itself once `Build & test` passes.
-
-To re-run a release, dispatch the workflow with its tag (`workflow_dispatch`,
-input `tag`); a malformed tag fails the dispatch. A re-run replaces the open
-pull request's branch, as described in step 2. A tag cut before this workflow
-existed cannot be re-run, and a release that has already landed opens nothing.
-Use a fresh dispatch rather than "Re-run failed jobs" on
-the pull request job after the first day: the builds hand their files to that
-job as an artifact kept for one day, so a re-run after that fails to find it.
-
-When the pull request job goes red at the update-branch step, click "Update
-branch" on the pull request. Auto-merge is already on and finishes once CI
-passes on the updated branch.
-
-The app and its two secrets are described in
-[security-scanning.md](security-scanning.md#done).
-
-`create-release` writes the `# Backspace X.Y.Z` heading at the top of the
-draft, above the Downloads table. The one human step for Flatpak is to write
-the summary paragraph directly under that heading before publishing. Flathub
-shows that paragraph, so write it as the store-facing summary of the release.
+A runtime that exposes `FLATPAK_ID` still maps to the `external` update
+capability (`getUpdateCapability()`), and updater initialization, checks,
+prompts, install actions, recovery controls and update settings all consume
+that capability. The code path is kept for a build that someone packages as a
+Flatpak themselves; this repository no longer carries a Flatpak manifest, its
+helper scripts or its workflows (removed with the repository layout cleanup;
+the upstream project still publishes one).
 
 CI publishes via `.github/workflows/release.yml` (tag `v*` on the public repo).
 
@@ -698,8 +620,7 @@ A `create-release` job runs first and creates the draft for the tag, then four
 native build jobs fan out (mac arm64+x64, win x64+arm64, linux x64, linux
 arm64), each uploading its installers, `.blockmap`s, and platform `latest*.yml`
 manifest into that one draft. The draft must be published manually, because
-drafts are invisible to electron-updater. Publishing it also starts the Flatpak
-metadata workflow above.
+drafts are invisible to electron-updater.
 
 A release carries 16 assets, named
 `Backspace-<version>-<os>-<arch>.<ext>` (`artifactName` in
@@ -1273,7 +1194,7 @@ helper executable. Its optional obsolete `usocket` native addon is excluded (no
 file-descriptor transfer is needed), and `xml2js` is overridden to a patched
 version. The normal filesystem session socket works through Node's built-in net
 transport; legacy abstract sockets requiring the optional addon report the portal
-as unavailable. Regenerate Flatpak's offline sources after lockfile changes.
+as unavailable.
 
 ### Native Keycode to DOM Code Mapping
 

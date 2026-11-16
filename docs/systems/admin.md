@@ -339,7 +339,7 @@ and `?refresh=true` cannot override it.
 **`BACKSPACE_INSTALL_CHANNEL`** (`prebuilt` | `source`) is written to `.env` by
 `install.sh` after its pull-or-build decision resolves, so a fallback-to-build is
 recorded truthfully. Absent on older installs, which report `unknown`; the panel
-then shows both sets of manual commands rather than guessing. `./update.sh` reads
+then shows both sets of manual commands rather than guessing. `./deploy/update.sh` reads
 the same value.
 
 #### Why there is no endpoint that performs the update
@@ -350,7 +350,7 @@ parses user-uploaded media, scrapes URLs for embeds, and accepts federation
 payloads from remote instances, so any remote-code-execution bug in it would
 become host root the moment that socket exists. Trading that for a button is not
 a trade worth making. The panel hands the operator an exact, copyable command
-instead, and `./update.sh` (see [deployment.md](deployment.md)) is where the
+instead, and `./deploy/update.sh` (see [deployment.md](deployment.md)) is where the
 effort went.
 
 ---

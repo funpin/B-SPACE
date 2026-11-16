@@ -79,7 +79,7 @@ describe('UpdatesPanel, an update exists', () => {
 
   it('hands over the exact command', async () => {
     render(<UpdatesPanel />);
-    expect(await screen.findByText('./update.sh')).toBeInTheDocument();
+    expect(await screen.findByText('./deploy/update.sh')).toBeInTheDocument();
   });
 
   it('says the update rolls back if it does not come up', async () => {
@@ -93,7 +93,7 @@ describe('UpdatesPanel, an update exists', () => {
 
     render(<UpdatesPanel />);
     await userEvent.click(await screen.findByRole('button', { name: 'Copy' }));
-    expect(writeText).toHaveBeenCalledWith('./update.sh');
+    expect(writeText).toHaveBeenCalledWith('./deploy/update.sh');
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
 
@@ -141,7 +141,7 @@ describe('UpdatesPanel, nothing to do', () => {
     updateStatus.mockResolvedValue(status());
     render(<UpdatesPanel />);
     expect(await screen.findByText('You are on the latest release.')).toBeInTheDocument();
-    expect(screen.queryByText('./update.sh')).not.toBeInTheDocument();
+    expect(screen.queryByText('./deploy/update.sh')).not.toBeInTheDocument();
   });
 });
 

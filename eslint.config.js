@@ -137,7 +137,7 @@ module.exports = tseslint.config(
 
   {
     // ES-module Node scripts: version bump, icon generation, the i18n check,
-    // the Flatpak manifest tooling and the insights fixtures.
+    // and the insights fixtures.
     files: ['**/*.mjs'],
     languageOptions: {
       sourceType: 'module',

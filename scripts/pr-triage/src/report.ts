@@ -1,4 +1,4 @@
-import type { LockfileDiff, PathHit, PipelineArea, SourcesDiff, Triage } from './types.ts';
+import type { LockfileDiff, PathHit, PipelineArea, Triage } from './types.ts';
 import { code, codeList, inline, login } from './sanitize.ts';
 import { readFirstReasons } from './verdict.ts';
 
@@ -11,8 +11,8 @@ export const MARKER = '<!-- backspace-pr-triage -->';
 
 const AREA_LABEL: Record<PipelineArea, string> = {
   ci: 'CI workflows',
-  installTime: 'Install-time code (`postinstall` and friends, pnpm settings, `.pnpmfile.cjs`, `.npmrc`, `patches/`)',
-  buildRecipes: 'Build recipes (Dockerfile, Compose, Flatpak manifest and helpers, shell scripts)',
+  installTime: 'Install-time code (`postinstall` and friends, pnpm settings, `.pnpmfile.cjs`, `.npmrc`, pnpm patches)',
+  buildRecipes: 'Build recipes (Dockerfile, Compose, Caddyfile, deploy scripts, desktop build scripts)',
   scannerConfig: 'Scanner configuration (CodeQL, OSV, Trivy, ZAP, gitleaks)',
 };
 
@@ -57,25 +57,6 @@ function lockfileCell(diff: LockfileDiff | null): string {
   return `${parts.join(', ')}. ${notes.join('. ')}`;
 }
 
-function sourcesCell(diff: SourcesDiff | null): string {
-  if (diff === null) return 'unchanged';
-  const parts: string[] = [];
-  if (diff.addedKnown > 0) parts.push(`${plural(diff.addedKnown, 'source')} added from known hosts (npm registry, Electron releases)`);
-  if (diff.changedData > 0) parts.push(`${plural(diff.changedData, 'data entry', 'data entries')} regenerated`);
-  if (diff.removed > 0) parts.push(`${diff.removed} removed`);
-  if (parts.length === 0) parts.push('no entry changes');
-  const executable = diff.concerns.filter((c) => c.kind === 'executable').map((c) => c.label);
-  const foreign = diff.concerns.filter((c) => c.kind === 'foreign').map((c) => c.label);
-  const notes: string[] = [];
-  if (executable.length > 0) {
-    notes.push(`**${plural(executable.length, 'executable entry', 'executable entries')} added or changed**: ${codeList(executable, 5)}`);
-  }
-  if (foreign.length > 0) {
-    notes.push(`**${plural(foreign.length, 'download', 'downloads')} from an unknown host**: ${codeList(foreign, 5)}`);
-  }
-  return notes.length > 0 ? `${parts.join(', ')}. ${notes.join('. ')}` : parts.join(', ');
-}
-
 function verdictLine(triage: Triage): string {
   if (triage.verdict === 'unanalysable') {
     const why = triage.problems.map(inline).join('; ');
@@ -97,7 +78,6 @@ export function render(triage: Triage): string {
     [AREA_LABEL.buildRecipes, areaCell('buildRecipes', triage.hits, triage.packageJson)],
     [AREA_LABEL.scannerConfig, areaCell('scannerConfig', triage.hits, triage.packageJson)],
     ['`pnpm-lock.yaml`', lockfileCell(triage.lockfile)],
-    ['`flatpak/node-sources.json`', sourcesCell(triage.sources)],
   ];
   const sha = /^[0-9a-f]{40}$/.test(triage.headSha) ? triage.headSha.slice(0, 7) : inline(triage.headSha);
 

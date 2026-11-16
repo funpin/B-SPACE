@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyPaths, isLockfile, isNodeSources, isPackageJson } from './paths.ts';
+import { classifyPaths, isLockfile, isPackageJson } from './paths.ts';
 import type { ChangedFile } from './types.ts';
 
 function files(...names: string[]): ChangedFile[] {
@@ -28,7 +28,7 @@ describe('classifyPaths', () => {
 
   it('puts install-time configuration under installTime', () => {
     const hits = classifyPaths(
-      files('.pnpmfile.cjs', 'packages/web/.pnpmfile.cjs', '.npmrc', 'packages/server/.npmrc', 'pnpm-workspace.yaml', 'patches/uiohook-napi@1.5.5.patch'),
+      files('.pnpmfile.cjs', 'packages/web/.pnpmfile.cjs', '.npmrc', 'packages/server/.npmrc', 'pnpm-workspace.yaml', 'packages/patches/uiohook-napi@1.5.5.patch'),
     );
     expect(hits.map((h) => h.area)).toEqual(['installTime', 'installTime', 'installTime', 'installTime', 'installTime', 'installTime']);
   });
@@ -38,25 +38,24 @@ describe('classifyPaths', () => {
     expect(isPackageJson('package.json')).toBe(true);
     expect(isPackageJson('packages/desktop/package.json')).toBe(true);
     expect(isPackageJson('packages/desktop/package.json.bak')).toBe(false);
-    expect(isPackageJson('flatpak/pnpm-manifest.json')).toBe(false);
+    expect(isPackageJson('scripts/metrics/package-lock.json')).toBe(false);
   });
 
-  it('puts container, deploy and Flatpak build files under buildRecipes', () => {
+  it('puts container, deploy and desktop build files under buildRecipes', () => {
     const names = [
-      'Dockerfile',
-      'Dockerfile.dev',
-      'docker-compose.yml',
-      'docker-compose.override.yaml',
-      'docker-entrypoint.sh',
-      'Caddyfile',
-      'install.sh',
-      'deploy.sh',
-      'restore.sh',
-      'io.github.TheZwiss.backspace.yml',
-      'io.github.TheZwiss.backspace.ci.yml',
-      'flatpak/build.sh',
-      'flatpak/prepare-ci-manifest.mjs',
-      'flatpak/populate_pnpm_store.py',
+      'deploy/Dockerfile',
+      'deploy/Dockerfile.dockerignore',
+      'deploy/Dockerfile.dev',
+      'deploy/docker-compose.yml',
+      'deploy/docker-compose.proxy.yml',
+      'deploy/docker-entrypoint.sh',
+      'deploy/Caddyfile',
+      'deploy/install.sh',
+      'deploy/update.sh',
+      'deploy/migrate-layout.sh',
+      'deploy/backup.sh',
+      'deploy/restore.sh',
+      'deploy/deploy.sh',
       'packages/desktop/electron-builder.yml',
       'packages/desktop/scripts/afterPack.js',
     ];
@@ -65,14 +64,18 @@ describe('classifyPaths', () => {
     expect(new Set(hits.map((h) => h.area))).toEqual(new Set(['buildRecipes']));
   });
 
-  it('leaves Flatpak metadata and release-only helpers alone', () => {
-    expect(
-      classifyPaths(files('flatpak/io.github.TheZwiss.backspace.metainfo.xml', 'flatpak/README.md', 'flatpak/update-release.mjs')),
-    ).toEqual([{ area: 'buildRecipes', path: 'flatpak/update-release.mjs' }]);
+  it('leaves the documented env example and files that only share a name alone', () => {
+    expect(classifyPaths(files('deploy/.env.example', 'Dockerfile', 'docker-compose.yml', 'install.sh'))).toEqual([]);
   });
 
   it('puts scanner configuration under scannerConfig', () => {
-    const names = ['.github/codeql/codeql-config.yml', 'osv-scanner.toml', '.trivyignore', '.zap/rules.tsv', '.gitleaks.toml'];
+    const names = [
+      '.github/codeql/codeql-config.yml',
+      '.github/security/osv-scanner.toml',
+      '.github/security/trivyignore',
+      '.github/security/zap-rules.tsv',
+      '.gitleaks.toml',
+    ];
     const hits = classifyPaths(files(...names));
     expect(hits.map((h) => h.path)).toEqual(names);
     expect(new Set(hits.map((h) => h.area))).toEqual(new Set(['scannerConfig']));
@@ -105,10 +108,8 @@ describe('classifyPaths', () => {
     expect(classifyPaths(files('docs/Dockerfile.md', 'packages/web/src/Caddyfile.ts', 'notes/.npmrc.md'))).toEqual([]);
   });
 
-  it('recognises the two files that get their own analysis', () => {
+  it('recognises the lockfile, which gets its own analysis', () => {
     expect(isLockfile('pnpm-lock.yaml')).toBe(true);
     expect(isLockfile('packages/web/pnpm-lock.yaml')).toBe(false);
-    expect(isNodeSources('flatpak/node-sources.json')).toBe(true);
-    expect(isNodeSources('flatpak/node-sources.ci.json')).toBe(false);
   });
 });

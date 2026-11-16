@@ -46,7 +46,7 @@ pnpm --filter @backspace/desktop exec electron-fuses read --app /path/to/Backspa
 `@electron/fuses` is on the `^2.1.3` line. It was held at `^1.8.0` while `release.yml`'s desktop `build` job ran on Node 20: `2.0.0` made the package ESM-only and declared `engines: >=22.12.0`, and `afterPack.js` is CommonJS, so a plain `require()` of it resolves only on Node `>=20.19`/`>=22.12`. Two things moved to lift that:
 
 - `afterPack.js` loads the package with `await import('@electron/fuses')` rather than `require()`. `flipElectronFuses()` was already `async`, and a dynamic import is the one form that works from CommonJS on every Node version, so the hook no longer depends on the `require(esm)` backport being present.
-- The desktop `build` job runs on Node 24, matching `.nvmrc`, the CI matrix's upper leg and the `org.freedesktop.Sdk.Extension.node24` SDK the Flatpak build already packages this same app with. That satisfies the package's own `engines` floor instead of working around it.
+- The desktop `build` job runs on Node 24, matching `.nvmrc` and the CI matrix's upper leg. That satisfies the package's own `engines` floor instead of working around it.
 
 This is the *build* Node only. The shipped app runs on the Node that Electron bundles, which none of this touches.
 

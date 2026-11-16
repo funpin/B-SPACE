@@ -63,7 +63,7 @@ function CommandBlock({ command }: { command: string }) {
  * uploaded media, scrapes URLs for embeds, and accepts federation payloads from
  * remote instances, so any remote-code-execution bug in it would become host
  * root the moment that socket exists. This panel hands over an exact command
- * instead, and ./update.sh is where the work went: it snapshots the database
+ * instead, and ./deploy/update.sh is where the work went: it snapshots the database
  * first, verifies the running version actually changed, and rolls back if it
  * did not.
  */
@@ -205,7 +205,7 @@ export function UpdatesPanel() {
 
             <div>
               <div className="text-xs text-txt-secondary mb-1.5">{t('admin:updates.available.fromInstallDir')}</div>
-              <CommandBlock command="./update.sh" />
+              <CommandBlock command="./deploy/update.sh" />
               <p className="text-xs text-txt-tertiary mt-2 leading-relaxed">
                 {t('admin:updates.available.scriptDescription')}
               </p>

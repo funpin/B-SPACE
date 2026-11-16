@@ -1,7 +1,7 @@
 # Contributing to Backspace
 
 Thanks for considering a contribution! Backspace is free and open source software
-(GNU AGPL-3.0, with a commercial dual-license option), and contributions of all
+(GNU AGPL-3.0), and contributions of all
 sizes are welcome: bug reports, fixes, features, documentation, and design.
 
 ## Before you start
@@ -92,7 +92,7 @@ in this section changes that bar. It describes how to reach it with an agent,
 because an agent used carelessly produces work that looks finished and is not,
 and that costs more to review than it did to write.
 
-**The repository is set up for agents.** `CLAUDE.md` at the root carries the
+**The repository is set up for agents.** `.claude/CLAUDE.md` carries the
 rules and points to `docs/systems/`, where every subsystem is specified. Point
 your agent at it before anything else, whatever the agent is called. The specs
 are kept current by the same changes that alter the subsystems, so a change
@@ -128,30 +128,9 @@ you know how to get it out of them, and the burden of knowing that is on you,
 not on the reviewer. If a task is worth a pull request, it is worth the
 strongest model you have.
 
-## Contributor License Agreement (required)
+## The automated comment on pull requests from forks
 
-Before your first contribution can be merged, you must sign the project's
-[Contributor License Agreement](CLA.md).
-
-Backspace is a single-owner project. Under the CLA **you keep the copyright to
-your contribution** and grant the maintainer (Jannis Braun) an exclusive,
-sublicensable license to it, which is what lets the project be offered under both
-the AGPL and a commercial license. In return, you receive a perpetual license to
-reuse the specific code you authored in your own other projects (see CLA §5). You
-also confirm that you have the right to contribute the code in the first place.
-
-Signing is automatic and takes one comment:
-
-1. Open your pull request.
-2. The CLA bot will comment with a link to the agreement and ask you to sign.
-3. Reply on the pull request with exactly:
-
-   > I have read the CLA Document and I hereby sign the CLA
-
-4. The bot records your signature against your GitHub username. You only sign
-   once, and it covers all of your future contributions.
-
-A second bot comment appears on pull requests from forks: a short table of
+A bot comments on pull requests from forks: a short table of
 what the PR touches (workflows, install scripts, build files, dependency
 sources) so the maintainer can approve CI runs from anywhere. It looks at file
 paths and dependency sources only, never at the quality of the change, and
@@ -165,7 +144,7 @@ automatically, so don't install pnpm globally.
 
 ```bash
 pnpm install          # install all workspace dependencies
-cp .env.example .env  # then set JWT_SECRET (openssl rand -hex 32)
+cp deploy/.env.example .env  # then set JWT_SECRET (openssl rand -hex 32)
 pnpm dev              # API server on :3005, Vite dev server on :5173
 ```
 
@@ -204,7 +183,7 @@ it.
 ## Packaging, platform, and UI changes need evidence
 
 A build that compiles is not a build that runs. If a change affects how the app
-is packaged, installed, sandboxed, or launched (Electron builds, Flatpak, Docker,
+is packaged, installed, sandboxed, or launched (Electron builds, Docker,
 installers, the desktop shell), run the result and show it: a screenshot, a short
 recording, or a terminal session, and say which OS and desktop environment. UI
 work is the same, with a screenshot of the changed surface.
@@ -245,5 +224,4 @@ public issue. See [`SECURITY.md`](SECURITY.md).
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-[GNU AGPL-3.0](LICENSE) and are subject to the [CLA](CLA.md), an exclusive-license
-grant that also enables the project's commercial dual-license.
+[GNU AGPL-3.0](../LICENSE). There is no contributor license agreement to sign.

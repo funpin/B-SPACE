@@ -8,19 +8,21 @@
 # of that fails, it puts the previous image back.
 #
 # Usage:
-#   ./update.sh              Update, with one confirmation prompt.
-#   ./update.sh --check      Report whether an update exists. Changes nothing.
-#   ./update.sh --yes        Update without prompting (for ssh and cron).
-#   ./update.sh --no-backup  Skip the pre-update snapshot. Not recommended.
+#   ./deploy/update.sh              Update, with one confirmation prompt.
+#   ./deploy/update.sh --check      Report whether an update exists. Changes nothing.
+#   ./deploy/update.sh --yes        Update without prompting (for ssh and cron).
+#   ./deploy/update.sh --no-backup  Skip the pre-update snapshot. Not recommended.
 #
 # Only the `backspace` service is ever named, and --remove-orphans is never
 # passed. Production hosts run other containers in the same compose project and
 # behind the same Caddy; an update to Backspace has no business recreating or
-# reaping any of them.
+# reaping any of them. The one exception is an install made before the server
+# files moved into deploy/: it is handed to ./deploy/migrate-layout.sh first,
+# which says what it will change and recreates caddy once.
 # ============================================================
 
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # ── Output helpers (matching install.sh) ────────────────────
 
@@ -53,12 +55,12 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)    ASSUME_YES=true ;;
     --no-backup) DO_BACKUP=false ;;
     --help|-h)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
       error "Unknown option: $1"
-      error "Run ./update.sh --help for usage."
+      error "Run ./deploy/update.sh --help for usage."
       exit 1
       ;;
   esac
@@ -106,14 +108,34 @@ fi
 
 if [[ ! -f .env ]]; then
   error "No .env in $(pwd)."
-  error "Run this from your Backspace install directory, or ./install.sh first."
+  error "Run this from your Backspace install directory, or ./deploy/install.sh first."
   exit 1
 fi
 
-if [[ ! -f docker-compose.yml ]]; then
-  error "No docker-compose.yml in $(pwd)."
+if [[ ! -f deploy/docker-compose.yml ]]; then
+  error "No deploy/docker-compose.yml in $(pwd)."
   exit 1
 fi
+
+# An install made before the server files moved into deploy/ has no COMPOSE_FILE
+# pointing there, so `docker compose` run from this directory finds nothing.
+# migrate-layout.sh fixes that once; --check changes nothing, so it only reports.
+case ":$(env_val COMPOSE_FILE):" in
+  *":deploy/docker-compose.yml:"*) ;;
+  *)
+    if [[ "$MODE" == "check" ]]; then
+      error "This install predates the deploy/ layout, so there is nothing to check against yet."
+      error "Run ./deploy/migrate-layout.sh once (or a normal ./deploy/update.sh), then check again."
+      exit 1
+    fi
+    migrate_args=()
+    [[ "$ASSUME_YES" == true ]] && migrate_args+=(--yes)
+    if ! ./deploy/migrate-layout.sh ${migrate_args[@]+"${migrate_args[@]}"}; then
+      error "The layout migration did not complete, so the update was not attempted."
+      exit 1
+    fi
+    ;;
+esac
 
 # Membership is tested in bash rather than by piping into `grep -q`.
 # `grep -q` exits on its first match, which SIGPIPEs the upstream command, and
@@ -226,7 +248,7 @@ if [[ "$MODE" == "check" ]]; then
 
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     warn "Neither curl nor wget is available, so the latest release cannot be looked up."
-    warn "Run ./update.sh to pull whatever the registry currently serves."
+    warn "Run ./deploy/update.sh to pull whatever the registry currently serves."
     exit 0
   fi
 
@@ -254,7 +276,7 @@ if [[ "$MODE" == "check" ]]; then
     echo -e "  ${BOLD}Backspace $latest is available.${NC} You are on $CURRENT_VERSION."
     echo -e "  Release notes: https://github.com/funpin/B-SPACE/releases/tag/v${latest}"
     echo ""
-    echo -e "  Update with: ${BOLD}./update.sh${NC}"
+    echo -e "  Update with: ${BOLD}./deploy/update.sh${NC}"
   fi
   echo ""
   info "Nothing was changed."
@@ -266,7 +288,7 @@ fi
 if [[ "$ASSUME_YES" != true ]]; then
   if [[ ! -t 0 ]]; then
     error "Not running interactively and --yes was not given."
-    error "Re-run as: ./update.sh --yes"
+    error "Re-run as: ./deploy/update.sh --yes"
     exit 1
   fi
   echo ""
@@ -307,11 +329,11 @@ step "Backing up the database"
 
 if [[ "$DO_BACKUP" != true ]]; then
   warn "--no-backup given, so no snapshot was taken."
-elif [[ ! -x ./backup.sh ]]; then
-  error "./backup.sh is missing or not executable, so no snapshot can be taken."
+elif [[ ! -x ./deploy/backup.sh ]]; then
+  error "./deploy/backup.sh is missing or not executable, so no snapshot can be taken."
   error "Re-run with --no-backup if you have a backup by other means."
   exit 1
-elif ./backup.sh; then
+elif ./deploy/backup.sh; then
   success "Snapshot written to data/backups/"
 else
   error "The backup failed, so the update was not attempted."
@@ -404,7 +426,7 @@ roll_back() {
   fi
   error "The previous image did not come back healthy either."
   error "Check: $COMPOSE logs $SERVICE"
-  error "Restore the database with: ./restore.sh"
+  error "Restore the database with: ./deploy/restore.sh"
   return 1
 }
 
@@ -466,6 +488,6 @@ fi
 
 echo ""
 echo -e "${BOLD}Done.${NC}"
-echo "  Snapshot:  data/backups/  (restore with ./restore.sh)"
+echo "  Snapshot:  data/backups/  (restore with ./deploy/restore.sh)"
 echo "  Logs:      $COMPOSE logs -f $SERVICE"
 echo ""

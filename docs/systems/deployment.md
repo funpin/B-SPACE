@@ -2,17 +2,20 @@
 
 Operator- and contributor-facing reference for hosting Backspace: the Docker build pipeline, admin bootstrap, database backup/restore, image pinning, and the relevant environment variables.
 
-Source files:
-- `Dockerfile` -- multi-stage build (builder → runtime)
-- `docker-compose.yml` -- base stack: `backspace` + `caddy` (+ optional `livekit`) services, healthcheck
-- `docker-compose.proxy.yml` -- proxy/tunnel overlay: publishes the app on `127.0.0.1:APP_PORT` and drops Caddy
+Source files (everything that builds, runs or operates a server lives in `deploy/`; see "Layout" below):
+- `deploy/Dockerfile` -- multi-stage build (builder → runtime); `deploy/Dockerfile.dockerignore` is its build-context filter
+- `deploy/docker-entrypoint.sh` -- privilege-dropping entrypoint copied into the image
+- `deploy/docker-compose.yml` -- base stack: `backspace` + `caddy` (+ optional `livekit`) services, healthcheck
+- `deploy/docker-compose.proxy.yml` -- proxy/tunnel overlay: publishes the app on `127.0.0.1:APP_PORT` and drops Caddy
+- `deploy/.env.example` -- every environment variable, documented; copied to `.env` in the repository root
 - `.github/workflows/docker-publish.yml` -- multi-arch (amd64+arm64) GHCR image publish
 - `.github/workflows/ci.yml` (`build-image` job) -- builds the amd64 image on every push to main without pushing it (not on pull requests: see "Fork run budget" in security-scanning.md), so a Dockerfile that no longer matches the build scripts fails before a tag does (1.1.0 shipped without an image for that reason)
-- `Caddyfile` -- reverse proxy / auto-HTTPS config (All-in-One mode only)
-- `install.sh` -- interactive first-time setup, mode-aware (allinone / proxy / tunnel)
-- `deploy.sh` -- rsync + rebuild to Heidi's two boxes
-- `update.sh` -- operator update: snapshot, fetch, restart, verify, roll back
-- `backup.sh` / `restore.sh` -- manual snapshot + restore tooling (host side)
+- `deploy/Caddyfile` -- reverse proxy / auto-HTTPS config (All-in-One mode only)
+- `deploy/install.sh` -- interactive first-time setup, mode-aware (allinone / proxy / tunnel)
+- `deploy/deploy.sh` -- rsync + rebuild to the maintainer's own boxes
+- `deploy/update.sh` -- operator update: snapshot, fetch, restart, verify, roll back
+- `deploy/migrate-layout.sh` -- one-time move of an older install onto the `deploy/` layout
+- `deploy/backup.sh` / `deploy/restore.sh` -- manual snapshot + restore tooling (host side)
 - `packages/server/src/config.ts` -- `config.backup.*` env parsing
 - `packages/server/src/utils/backup.ts` -- `createSnapshot` (VACUUM INTO), `listSnapshots`, `pruneSnapshots`, off-box hook
 - `packages/server/src/utils/backupWorker.ts` -- scheduled-snapshot interval worker
@@ -24,6 +27,67 @@ Source files:
 - `packages/server/src/scripts/remediate-seed-admin.ts` -- legacy seed-admin password rotation
 
 **Out of scope:** voice/LiveKit operational tuning (see `docs/systems/voice.md`), upload/storage janitor (see `docs/systems/uploads.md`), and federation peering/replication (see `docs/systems/federation.md`).
+
+---
+
+## Layout
+
+The repository root is the install directory, and it holds only the install's
+own state: `.env`, `data/` and the generated `livekit.yaml`, all gitignored.
+Everything tracked that builds, runs or operates a server is in `deploy/`.
+
+- **Scripts** are run from anywhere as `./deploy/<name>.sh`; each one changes to
+  the repository root first, so `.env` and `data/` are found the same way as
+  before the move.
+- **Compose** is always run from the repository root, and finds its files
+  through `COMPOSE_FILE` in `.env` (`deploy/docker-compose.yml`, plus the proxy
+  overlay in proxy/tunnel mode). `deploy/install.sh` writes that line in every
+  mode. Compose resolves relative paths against the directory of the first
+  file, which is why the compose file says `../data`, `../.env` and
+  `../livekit.yaml`, and `./Caddyfile` for the file beside it. An explicit
+  `-f deploy/docker-compose.yml` makes compose look for `.env` in `deploy/`
+  instead of the root, so it needs `--env-file .env` with it; `COMPOSE_FILE` in
+  `.env` does not have that problem (measured with `docker compose config`,
+  Compose v5.5.1).
+- **Project name.** `deploy/docker-compose.yml` pins `name: backspace`. Without
+  it the project would be named after the directory of the compose file
+  (`deploy`), and the `caddy-data` volume holding the TLS certificates would be
+  looked up under a different name. `COMPOSE_PROJECT_NAME` in `.env` overrides
+  the pin.
+- **Image build.** The build context is the repository root and the Dockerfile
+  is `deploy/Dockerfile`. BuildKit reads the context filter from
+  `deploy/Dockerfile.dockerignore`, beside the Dockerfile; there is no
+  `.dockerignore` in the root. The legacy builder (`DOCKER_BUILDKIT=0`) does not
+  read that file and is not supported.
+
+### Installs made before the `deploy/` layout
+
+Up to and including 2.3.2 the compose files, the Caddyfile and the operator scripts sat in
+the repository root. `./deploy/migrate-layout.sh` brings such an install over,
+says what it will change before changing it, and is safe to run again:
+
+1. Sets `COMPOSE_FILE` in `.env` to the files' new paths, keeping any extra
+   override file the operator had listed (and warning that its relative paths
+   now resolve against `deploy/`).
+2. Sets `COMPOSE_PROJECT_NAME` in `.env` when the running `backspace` container
+   belongs to a compose project that is not called `backspace` (an install
+   cloned into a directory with another name), so containers, network and
+   volumes stay in the project they were created in.
+3. Moves `./Caddyfile` to `deploy/Caddyfile` when the latter does not exist. That
+   is the state of a host deployed with `deploy/deploy.sh`, whose rsync keeps
+   the host's own Caddyfile out of the sync.
+4. Recreates the `caddy` container (`docker compose up -d --no-deps caddy`) when
+   it still bind-mounts the old path and caddy is part of the install's compose
+   configuration. Without this the container keeps running on a deleted file
+   and fails at the next restart of the host.
+
+`./deploy/update.sh` and `./deploy/install.sh` run the migration themselves when
+they find an install without `deploy/docker-compose.yml` in `COMPOSE_FILE`, and
+`deploy/deploy.sh` runs it on the remote host before rebuilding. What an
+operator of such an install sees on the first update after the move: the old
+`./update.sh` pulls the checkout, then stops at its backup step because
+`./backup.sh` is gone, having changed nothing else. Running
+`./deploy/update.sh` from there completes the update.
 
 ---
 
@@ -39,7 +103,7 @@ Backspace ships as a single application container. In the default **All-in-One**
 - **Tags.** `docker/metadata-action` derives `{version}`, `{major}.{minor}`, `latest` (on `v*` tags), and `sha-<short>`. A `workflow_dispatch` with an extra `tag` input publishes that tag too (e.g. `latest` without cutting a release).
 - **AGPL § 13 commit stamping is preserved.** The workflow resolves `git rev-parse --short HEAD` and passes it as `--build-arg BACKSPACE_COMMIT=…`, exactly like `install.sh`/`deploy.sh`, plus OCI labels (`source`, `licenses=AGPL-3.0-only`, `revision`). The pulled image therefore advertises its exact source version via `GET /api/instance/info`.
 - **Auth.** The push authenticates with the built-in `GITHUB_TOKEN` (`permissions: packages: write`). The GHCR package must be set **public** once for unauthenticated `docker pull` to work.
-- **Compose wiring.** `docker-compose.yml` declares **both** `image: ${BACKSPACE_IMAGE:-ghcr.io/funpin/backspace}:${BACKSPACE_IMAGE_TAG:-latest}` **and** `build: .`. `pull`/`up` uses the image; `up --build` (deploy.sh, or install.sh's fallback) builds from source and tags the result under the same ref. Operators pin a version or point at a fork's registry via `BACKSPACE_IMAGE` / `BACKSPACE_IMAGE_TAG`.
+- **Compose wiring.** `docker-compose.yml` declares **both** `image: ${BACKSPACE_IMAGE:-ghcr.io/funpin/backspace}:${BACKSPACE_IMAGE_TAG:-latest}` **and** a `build:` section (context: the repository root, Dockerfile: `deploy/Dockerfile`). `pull`/`up` uses the image; `up --build` (deploy.sh, or install.sh's fallback) builds from source and tags the result under the same ref. Operators pin a version or point at a fork's registry via `BACKSPACE_IMAGE` / `BACKSPACE_IMAGE_TAG`.
 
 ### Deployment modes
 
@@ -53,7 +117,7 @@ One installer, three modes, recorded as `DEPLOY_MODE` in `.env`. `install.sh` au
 
 **The overlay (`docker-compose.proxy.yml`).** Layered on top of the base file it (1) publishes `backspace` on `127.0.0.1:${APP_PORT:-8080}:${PORT:-3000}` — loopback only, so nothing is exposed on a public interface — and (2) parks `caddy` in an inert profile (`_proxy_mode_no_caddy`) that is never activated, so Caddy does not start. The base file is unchanged, so All-in-One (`docker-compose.yml` alone) behaves exactly as before.
 
-**`COMPOSE_FILE` wiring.** In proxy/tunnel mode install.sh writes `COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml` into `.env`. Docker Compose reads `COMPOSE_FILE` from `.env`, so **every** later `docker compose …` command in the directory transparently uses both files — the operator (and the update commands) never need `-f` flags. All-in-One leaves `COMPOSE_FILE` unset (defaults to `docker-compose.yml`).
+**`COMPOSE_FILE` wiring.** install.sh writes `COMPOSE_FILE` into `.env` in every mode: `deploy/docker-compose.yml` for All-in-One, `deploy/docker-compose.yml:deploy/docker-compose.proxy.yml` for proxy/tunnel. Docker Compose reads `COMPOSE_FILE` from `.env`, so **every** later `docker compose …` command in the directory transparently uses both files — the operator (and the update commands) never need `-f` flags. Without the line, `docker compose` run from the repository root finds no compose file at all.
 
 **Server proxy-awareness.** The server sets Fastify `trustProxy` to a count of trusted hops (`TRUSTED_PROXY_HOPS`, default 1, see below), so it trusts `X-Forwarded-*` from the fronting proxy/tunnel but not from anything beyond it. `getOurOrigin()` returns `https://${DOMAIN}` (federation/public identity) whenever `DOMAIN` is set and `PUBLIC_ORIGIN` is unset — correct in all three modes, since the public URL is `https://DOMAIN` regardless of which layer terminates TLS. No `PUBLIC_ORIGIN` is needed for a normal proxy/tunnel deployment.
 
@@ -135,7 +199,7 @@ is expected and idempotent. On an instance with a large `uploads/` tree on slow
 storage (e.g. a Pi on SD), the **first** restart after upgrade may take noticeably
 longer as this one-time chown runs before the server starts; subsequent boots only
 touch not-yet-node-owned entries and are near-instant. If you previously accessed
-`./data` on the host as a different user, adjust host-side access accordingly. `./restore.sh` continues to
+`./data` on the host as a different user, adjust host-side access accordingly. `./deploy/restore.sh` continues to
 work — it swaps files inside a throwaway root container, and root can rewrite the
 now uid-1000-owned files.
 
@@ -168,7 +232,7 @@ Caddy provisions and renews TLS certificates automatically for `DOMAIN`; the per
 
 ### First-time setup: `install.sh`
 
-`./install.sh` is the interactive installer for a fresh Linux host. It prompts for the domain, whether to enable voice, and an instance name (each skippable via the `DOMAIN` / `ENABLE_VOICE` / `INSTANCE_NAME` env vars for a non-interactive run), generates a `JWT_SECRET`, writes `.env`, optionally configures LiveKit (`livekit.yaml` + `COMPOSE_PROFILES=voice`), and brings the stack up.
+`./deploy/install.sh` is the interactive installer for a fresh Linux host. It prompts for the domain, whether to enable voice, and an instance name (each skippable via the `DOMAIN` / `ENABLE_VOICE` / `INSTANCE_NAME` env vars for a non-interactive run), generates a `JWT_SECRET`, writes `.env`, optionally configures LiveKit (`livekit.yaml` + `COMPOSE_PROFILES=voice`), and brings the stack up.
 
 **Mode selection.** Before configuring, it determines the deployment mode (precedence: explicit `DEPLOY_MODE` env → existing `.env` → auto-detect + prompt). Auto-detection checks whether ports 80/443 are free — and does so **Docker-aware**: it consults both `ss` *and* `docker ps` published ports, because a host running Docker with the userland proxy disabled DNATs 80/443 via iptables with **no listening socket for `ss` to see** (a box whose Caddy already owns those ports would otherwise be misread as "ports free"). When 80/443 are free it offers All-in-One (default); when taken it never dead-ends — it explains what holds them and steers to `proxy`/`tunnel`. In proxy/tunnel mode it auto-picks a free loopback `APP_PORT` (scanning past commonly-taken 3000/8080), force-lowers `MAX_UPLOAD_SIZE` to 90 MB for `tunnel` (Cloudflare's 100 MB body cap), and force-disables voice for `tunnel`.
 
@@ -196,7 +260,7 @@ Caddy provisions and renews TLS certificates automatically for `DOMAIN`; the per
 
 ### Redeploy: `deploy.sh [pi|vm|all]`
 
-`./deploy.sh` is Heidi's redeploy helper for the two live instances — `nova.ddns.net` (Raspberry Pi) and `orbit.ddns.net` (VM). It does **not** build locally; it `rsync`s the working tree to the target (excluding `node_modules`, `.env`, `data/`, build output, and a list of local-only paths) and then runs `docker compose up -d --build` on the remote so the image is rebuilt in place. Targets:
+`./deploy/deploy.sh` is Heidi's redeploy helper for the two live instances — `nova.ddns.net` (Raspberry Pi) and `orbit.ddns.net` (VM). It does **not** build locally; it `rsync`s the working tree to the target (excluding `node_modules`, `.env`, `data/`, build output, and a list of local-only paths) and then runs `docker compose up -d --build` on the remote so the image is rebuilt in place. Targets:
 
 | Arg | Target |
 |-----|--------|
@@ -211,19 +275,19 @@ The `data/` directory is excluded from the rsync, so application data on each bo
 The operator-facing update path, and what the admin Updates panel points at.
 
 ```
-./update.sh              Update, with one confirmation prompt
-./update.sh --check      Report whether an update exists. Changes nothing
-./update.sh --yes        Update without prompting (ssh, cron)
-./update.sh --no-backup  Skip the pre-update snapshot. Not recommended
+./deploy/update.sh              Update, with one confirmation prompt
+./deploy/update.sh --check      Report whether an update exists. Changes nothing
+./deploy/update.sh --yes        Update without prompting (ssh, cron)
+./deploy/update.sh --no-backup  Skip the pre-update snapshot. Not recommended
 ```
 
 Sequence:
 
-1. **Preflight.** Docker reachable (falls back to `sudo` the way `install.sh` does), Compose v2 present, `.env` and `docker-compose.yml` present, and the compose project actually defines a `backspace` service. `COMPOSE_FILE` lives in `.env`, so proxy and tunnel installs resolve both files with no `-f` flags.
+1. **Preflight.** Docker reachable (falls back to `sudo` the way `install.sh` does), Compose v2 present, `.env` and `deploy/docker-compose.yml` present, an install from before the `deploy/` layout migrated (see "Layout"; `--check` only reports it), and the compose project actually defines a `backspace` service. `COMPOSE_FILE` lives in `.env`, so proxy and tunnel installs resolve both files with no `-f` flags.
 2. **Record the rollback point.** `docker inspect` for the running container's image ID. Refuses to proceed if it cannot determine one.
 3. **Resolve the target reference.** `docker compose config --images backspace`, which is **not** necessarily the reference the running container was created from. An operator who repins `BACKSPACE_IMAGE_TAG` changes the former without touching the latter, and rolling back against the running container's reference would restore the old image under a name compose no longer looks at, bringing the failed version straight back up.
 4. **Refresh the checkout, tolerantly.** No `.git` (an rsync-deployed host) says so and carries on. A dirty tree or a diverged branch refuses to pull, says why, and carries on. Local edits are never clobbered, and the image update still applies.
-5. **Back up.** Calls `./backup.sh`. **The one step whose failure is fatal**, because everything after it is only safe to attempt because it happened.
+5. **Back up.** Calls `./deploy/backup.sh`. **The one step whose failure is fatal**, because everything after it is only safe to attempt because it happened.
 6. **Fetch.** `docker compose pull backspace`, or `docker compose build backspace` on a from-source install, chosen from `BACKSPACE_INSTALL_CHANNEL` and falling back to inferring it from the image reference.
 7. **Skip a no-op.** If the fetched image ID equals the recorded one, report and exit 0 without restarting. Restarting a chat server for nothing disconnects everyone in a voice call.
 8. **Restart.** `docker compose up -d backspace`. **The service is named explicitly and `--remove-orphans` is never passed.** Compose actively suggests that flag on hosts running other containers in the same project, and following it would delete them. Both live instances run co-hosted services behind the same Caddy, so this is a real deletion, not a hypothetical one.
@@ -305,7 +369,7 @@ Backspace takes **DB-only** SQLite snapshots via `VACUUM INTO`, which produces a
 |---------|-------|-----------|------|
 | **Pre-migration** | `packages/server/src/db/index.ts` (`initDatabase`) | `pre-migration` | On startup, **only when a migration is actually pending** or a boot pass is about to rewrite rows (see gating). |
 | **Scheduled** | `packages/server/src/utils/backupWorker.ts` (`startBackupWorker`) | `scheduled` | Every `BACKUP_INTERVAL_HOURS`, via an `unref`'d `setInterval`. |
-| **Manual** | `./backup.sh` → `src/scripts/snapshot.ts` | `manual` | On demand by the operator. |
+| **Manual** | `./deploy/backup.sh` → `src/scripts/snapshot.ts` | `manual` | On demand by the operator. |
 
 Snapshot filenames encode a millisecond-precision UTC timestamp and the reason tag — `backspace-<ts>-<reason>.db` — so they sort chronologically and never collide (`createSnapshot` disambiguates with a counter on the rare same-millisecond collision, since `VACUUM INTO` refuses to overwrite an existing file).
 
@@ -371,12 +435,12 @@ They do **not** protect against **hardware loss** (disk failure, the box being d
 
 ## 4. Restore
 
-Restores are driven by `./restore.sh` from the host. Because `data/` (including `backspace.db` and `data/backups/`) is **container-owned (uid 1000)** via the bind-mount, the host user cannot rewrite those files directly — so the actual swap runs inside a throwaway root `alpine` container that mounts `data/`.
+Restores are driven by `./deploy/restore.sh` from the host. Because `data/` (including `backspace.db` and `data/backups/`) is **container-owned (uid 1000)** via the bind-mount, the host user cannot rewrite those files directly — so the actual swap runs inside a throwaway root `alpine` container that mounts `data/`.
 
 ### List snapshots
 
 ```bash
-./restore.sh
+./deploy/restore.sh
 ```
 
 Lists every `*.db` in `data/backups/` newest-first with its size, and prints the restore command. (No arguments = list-and-exit; it never modifies anything.)
@@ -384,7 +448,7 @@ Lists every `*.db` in `data/backups/` newest-first with its size, and prints the
 ### Restore a snapshot
 
 ```bash
-./restore.sh <snapshot-filename>
+./deploy/restore.sh <snapshot-filename>
 ```
 
 The argument is reduced to a basename — restore is always **from** `data/backups/`. After a `y/N` confirmation, the script performs:
@@ -429,8 +493,8 @@ The `backspace` image itself defaults to `ghcr.io/funpin/backspace:latest` (`BAC
 **Upgrade procedure:** bump the tag in `docker-compose.yml` → test the new version (locally or on one box) → redeploy. Concretely:
 
 1. Edit the image tag in `docker-compose.yml` (e.g. `caddy:2.11.1-alpine` → `caddy:2.12.0-alpine`).
-2. Deploy to **one** box first (`./deploy.sh vm`) and verify `/api/health` is healthy and (for LiveKit) that voice still connects.
-3. Once verified, roll it to the other box (`./deploy.sh pi`, or `./deploy.sh all` going forward).
+2. Deploy to **one** box first (`./deploy/deploy.sh vm`) and verify `/api/health` is healthy and (for LiveKit) that voice still connects.
+3. Once verified, roll it to the other box (`./deploy/deploy.sh pi`, or `./deploy/deploy.sh all` going forward).
 
 Never pin to a floating tag like `latest` or a bare major — it defeats reproducibility and turns every rebuild into an uncontrolled upgrade.
 
@@ -464,15 +528,15 @@ These are accepted constraints of the current deploy model, documented so operat
 
 | Task | Command |
 |------|---------|
-| First-time install | `./install.sh` (or `DOMAIN=chat.example.com DEPLOY_MODE=proxy ./install.sh`) |
+| First-time install | `./deploy/install.sh` (or `DOMAIN=chat.example.com DEPLOY_MODE=proxy ./deploy/install.sh`) |
 | Update (prebuilt image — default) | `git pull && docker compose pull && docker compose up -d` |
 | Update (from source / fork) | `git pull && docker compose up -d --build` |
-| Redeploy both boxes | `./deploy.sh all` |
-| Redeploy one box | `./deploy.sh pi` / `./deploy.sh vm` |
+| Redeploy both boxes | `./deploy/deploy.sh all` |
+| Redeploy one box | `./deploy/deploy.sh pi` / `./deploy/deploy.sh vm` |
 | Bring stack up manually | `docker compose up -d` (proxy/tunnel: `.env`'s `COMPOSE_FILE` auto-adds the overlay) |
 | Check health | `curl -fsS https://<domain>/api/health` |
-| Take a manual snapshot | `./backup.sh` |
-| List snapshots | `./restore.sh` |
-| Restore a snapshot | `./restore.sh <snapshot-filename>` |
+| Take a manual snapshot | `./deploy/backup.sh` |
+| List snapshots | `./deploy/restore.sh` |
+| Restore a snapshot | `./deploy/restore.sh <snapshot-filename>` |
 | Rotate legacy seed admin | `docker exec -w /app/packages/server backspace node --import tsx/esm src/scripts/remediate-seed-admin.ts` |
 | Grant first admin (fresh instance) | Register the first account; it becomes admin automatically. |

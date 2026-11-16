@@ -13,7 +13,6 @@ function triage(overrides: Partial<Triage> = {}): Triage {
     hits: [],
     packageJson: [],
     lockfile: null,
-    sources: null,
     problems: [],
     ...overrides,
   };
@@ -29,7 +28,7 @@ describe('render', () => {
   it('renders the routine verdict with every row unchanged', () => {
     const out = render(triage());
     expect(out).toContain('**CI approval: routine.**');
-    expect(out.match(/\| unchanged \|/g)).toHaveLength(6);
+    expect(out.match(/\| unchanged \|/g)).toHaveLength(5);
     expect(out).toContain('Updated for commit `aaaaaaa` (3 files changed).');
   });
 
@@ -87,33 +86,6 @@ describe('render', () => {
     expect(out).toContain('**1 package resolves outside the registry**: `evil@1.0.0` {tarball: https://evil.example/e.tgz}');
     expect(out).toContain('**1 new local or link dependency**: `packages/web: local -> file:../local (file:../local)`');
     expect(out).toContain('**`overrides` changed**');
-  });
-
-  it('summarises a routine Flatpak regeneration', () => {
-    const out = render(triage({ sources: { addedKnown: 15, changedData: 2, removed: 4, concerns: [] } }));
-    expect(out).toContain(
-      '| `flatpak/node-sources.json` | 15 sources added from known hosts (npm registry, Electron releases), 2 data entries regenerated, 4 removed |',
-    );
-  });
-
-  it('bolds executable and foreign Flatpak sources', () => {
-    const out = render(
-      triage({
-        verdict: 'read-first',
-        sources: {
-          addedKnown: 0,
-          changedData: 0,
-          removed: 1,
-          concerns: [
-            { kind: 'executable', label: 'shell: curl x | sh' },
-            { kind: 'foreign', label: 'https://evil.example/x.tgz' },
-          ],
-        },
-      }),
-    );
-    expect(out).toContain('**1 executable entry added or changed**: `shell: curl x / sh`');
-    expect(out).toContain('**1 download from an unknown host**: `https://evil.example/x.tgz`');
-    expect(out).toContain('`flatpak/node-sources.json (shell: curl x / sh)`');
   });
 
   it('never lets PR-controlled strings break the table or the greeting', () => {

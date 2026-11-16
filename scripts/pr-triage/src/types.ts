@@ -58,24 +58,6 @@ export interface LockfileDiff {
   patchedDependenciesChanged: boolean;
 }
 
-/** One `flatpak/node-sources.json` entry the maintainer should look at. */
-export interface SourceConcern {
-  /** `executable` runs during the build; `foreign` downloads from an unknown host. */
-  kind: 'executable' | 'foreign';
-  /** Human label: dest-filename, url, or the first command. */
-  label: string;
-}
-
-/** Result of comparing the base and head `flatpak/node-sources.json`. */
-export interface SourcesDiff {
-  /** Added `file`/`archive` entries with a checksum from a known host. */
-  addedKnown: number;
-  /** Added or changed data entries (inline JSON and the like). */
-  changedData: number;
-  removed: number;
-  concerns: SourceConcern[];
-}
-
 /**
  * The full triage of one head commit. `problems` is non-empty whenever any
  * part of the analysis could not complete; the verdict is then
@@ -89,6 +71,5 @@ export interface Triage {
   hits: PathHit[];
   packageJson: PackageJsonChange[];
   lockfile: LockfileDiff | null;
-  sources: SourcesDiff | null;
   problems: string[];
 }

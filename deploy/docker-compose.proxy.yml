@@ -4,7 +4,9 @@
 # Overlay for Mode 2 (behind your own reverse proxy) and Mode 3 (tunnel, e.g.
 # Cloudflare Tunnel / Tailscale). Layer it on top of the base compose file:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#   COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.proxy.yml
+#
+# in .env in the repository root, then `docker compose up -d` from there.
 #
 # What it changes versus the all-in-one base:
 #   1. Publishes the app on 127.0.0.1:${APP_PORT} (loopback only) so your own
@@ -13,10 +15,10 @@
 #      proxy's job.
 #   2. Moves the bundled Caddy into a profile that is never activated here, so it
 #      does NOT start (your proxy owns 80/443). The base file leaves Caddy in the
-#      default profile, so Mode 1 (`-f docker-compose.yml` alone) is unchanged.
+#      default profile, so Mode 1 (the base file alone) is unchanged.
 #
-# ./install.sh selects the right `-f` combination automatically per mode; this
-# file is also usable by hand for a fully manual setup.
+# ./deploy/install.sh writes the right COMPOSE_FILE automatically per mode;
+# this file is also usable by hand for a fully manual setup.
 # ============================================================
 
 services:
