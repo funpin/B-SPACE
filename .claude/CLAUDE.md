@@ -157,6 +157,7 @@ packages/
   server/   — Fastify server, DB schema, routes, WS handler, federation, utils
   web/      — React SPA, stores, hooks, components (layout/chat/voice/modals/ui), platform layer
   desktop/  — Electron wrapper (main, preload, activity detector, keybind manager)
+  desktop-macos/ — Native macOS client (SwiftPM, not a pnpm package): for now the WebKitProbe measuring harness and its probe pages
 deploy/     — Dockerfile, Compose files, Caddyfile, .env.example, install/update/backup/restore/deploy scripts
 scripts/
   metrics/  — @backspace/metrics: repo traffic collector + dashboard bundler (workspace package)

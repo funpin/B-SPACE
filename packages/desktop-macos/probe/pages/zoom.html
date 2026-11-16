@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CSS zoom: which coordinates are visual</title>
+<!--
+  The web client scales its interface with `zoom` on <html> and relies on one
+  rule (packages/web/src/platform/interfaceScale.ts): DOM rects and pointer
+  events are visual pixels, CSS positions are unzoomed. This page measures
+  whether the engine it runs in follows that rule, at every scale the client
+  offers.
+-->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; }
+  #box { position: fixed; left: 100px; top: 50px; width: 200px; height: 100px; background: #6e5bef; }
+  #vh { position: absolute; left: 0; top: 0; width: 10px; height: 100vh; background: #333; }
+  #vw { position: absolute; left: 0; top: 0; height: 10px; width: 100vw; background: #444; }
+  #scroller { position: fixed; left: 400px; top: 50px; width: 200px; height: 100px; overflow: auto; }
+  #scroller > div { height: 1000px; }
+  #marker { height: 20px; background: #0a0; }
+</style>
+</head>
+<body>
+<div id="vh"></div>
+<div id="vw"></div>
+<div id="box"></div>
+<div id="scroller"><div><div id="marker"></div></div></div>
+<script>
+window.runProbe = async () => {
+  const native = typeof window.probeNative === 'function';
+  const root = document.documentElement;
+  const box = document.getElementById('box');
+  const vh = document.getElementById('vh');
+  const vw = document.getElementById('vw');
+  const scroller = document.getElementById('scroller');
+  const marker = document.getElementById('marker');
+  const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const rectOf = (element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  };
+
+  const rows = [];
+  // The scales of INTERFACE_SCALES in interfaceScaleStore.ts.
+  for (const factor of [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]) {
+    root.style.zoom = String(factor);
+    await frames();
+
+    const row = {
+      factor,
+      rect: rectOf(box),
+      offset: { left: box.offsetLeft, top: box.offsetTop, width: box.offsetWidth, height: box.offsetHeight },
+      computedLeft: getComputedStyle(box).left,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      rootClientWidth: root.clientWidth,
+      rootClientHeight: root.clientHeight,
+      visualViewport: window.visualViewport
+        ? { width: visualViewport.width, height: visualViewport.height, scale: visualViewport.scale }
+        : null,
+      fullViewportHeightElement: rectOf(vh).height,
+      fullViewportWidthElement: rectOf(vw).width,
+      devicePixelRatio: window.devicePixelRatio,
+      hitAtVisualCentre: document.elementFromPoint(200 * factor, 100 * factor)?.id || null,
+      hitAtLayoutCentre: document.elementFromPoint(200, 100)?.id || null,
+      mediaMinWidth768: matchMedia('(min-width: 768px)').matches,
+    };
+
+    scroller.scrollTop = 0;
+    const before = rectOf(marker).top;
+    scroller.scrollTop = 40;
+    row.scroll = {
+      scrollTopSet: 40,
+      scrollTopRead: scroller.scrollTop,
+      markerMovedBy: before - rectOf(marker).top,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+    };
+    scroller.scrollTop = 0;
+
+    row.resizeObserver = await new Promise((resolve) => {
+      const observer = new ResizeObserver((entries) => {
+        observer.disconnect();
+        const entry = entries[0];
+        resolve({
+          contentRectWidth: entry.contentRect.width,
+          borderBoxInlineSize: entry.borderBoxSize?.[0]?.inlineSize ?? null,
+        });
+      });
+      observer.observe(box);
+    });
+
+    if (native) {
+      // A real mouse click from the shell at the visual centre of the box,
+      // given in window points. What the event then reports is the answer to
+      // "are pointer events visual pixels".
+      const seen = new Promise((resolve) => {
+        const onDown = (event) => {
+          window.removeEventListener('mousedown', onDown, true);
+          resolve({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            pageX: event.pageX,
+            offsetX: event.offsetX,
+            offsetY: event.offsetY,
+            target: event.target.id || event.target.tagName,
+          });
+        };
+        window.addEventListener('mousedown', onDown, true);
+        setTimeout(() => {
+          window.removeEventListener('mousedown', onDown, true);
+          resolve(null);
+        }, 1500);
+      });
+      await window.probeNative('click', { x: 200 * factor, y: 100 * factor });
+      row.nativeClickAtVisualCentre = { sentX: 200 * factor, sentY: 100 * factor, event: await seen };
+    }
+
+    rows.push(row);
+  }
+
+  root.style.zoom = '';
+  return { userAgent: navigator.userAgent, native, rows };
+};
+</script>
+</body>
+</html>

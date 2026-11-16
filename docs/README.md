@@ -52,7 +52,7 @@ pnpm typecheck && pnpm test
 
 | Папка | Что внутри |
 |---|---|
-| `packages/` | Код: `shared` (типы, права, константы), `server` (Fastify), `web` (React-клиент), `desktop` (Electron). Здесь же общее для всех пакетов: `tsconfig.base.json` и патчи зависимостей в `patches/`. |
+| `packages/` | Код: `shared` (типы, права, константы), `server` (Fastify), `web` (React-клиент), `desktop` (Electron), `desktop-macos` (нативный клиент для macOS на Swift; пока в нём только измерительный стенд). Здесь же общее для всех пакетов: `tsconfig.base.json` и патчи зависимостей в `patches/`. |
 | `deploy/` | Всё для сервера: `Dockerfile`, файлы Compose, `Caddyfile`, `.env.example` и скрипты `install.sh`, `update.sh`, `backup.sh`, `restore.sh`, `migrate-layout.sh`, `deploy.sh`. |
 | `scripts/` | Скрипты разработки и сборки (версия, иконки, проверка переводов) и отдельные небольшие пакеты: `metrics`, `telemetry-receiver`, `pr-triage`, `directory-hub`. |
 | `docs/` | Документация (см. карту выше). |

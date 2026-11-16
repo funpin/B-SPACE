@@ -10,6 +10,8 @@ installers/
 packages/web/dist/
 packages/server/dist/
 packages/shared/dist/
+# SwiftPM build output of the native macOS client
+packages/desktop-macos/.build/
 packages/desktop/dist/
 packages/desktop/dist-electron/
 

@@ -96,6 +96,8 @@ module.exports = tseslint.config(
       'site/insights/data.json',
       // Vite PWA output.
       'packages/web/dev-dist/**',
+      // SwiftPM build output of the native macOS client.
+      'packages/desktop-macos/.build/**',
       // Local scratch: agent worktrees are full second checkouts of this repo,
       // and the harness directories hold generated fixtures.
       '.claude/**',
@@ -124,7 +126,7 @@ module.exports = tseslint.config(
     // and the two web config files. CommonJS by design, so the ES-module import
     // rule does not apply to them.
     files: ['**/*.js', '**/*.cjs'],
-    ignores: ['site/assets/**'],
+    ignores: ['site/assets/**', 'packages/desktop-macos/probe/pages/**'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: commonjsGlobals,
@@ -167,6 +169,19 @@ module.exports = tseslint.config(
     languageOptions: {
       sourceType: 'script',
       globals: { self: 'readonly', console: 'readonly' },
+    },
+    rules: {
+      'no-undef': 'error',
+    },
+  },
+
+  {
+    // The service worker of the WebKit probe pages. A classic worker script
+    // served as it is; the pages' own scripts are inline in the HTML.
+    files: ['packages/desktop-macos/probe/pages/**/*.js'],
+    languageOptions: {
+      sourceType: 'script',
+      globals: { self: 'readonly', URL: 'readonly', Response: 'readonly' },
     },
     rules: {
       'no-undef': 'error',

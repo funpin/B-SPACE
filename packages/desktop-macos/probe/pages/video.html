@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video: is a MediaStream picture on screen</title>
+<!--
+  Needs the shell: it reads pixels back.
+
+  A bright canvas is shown three ways: as the canvas itself (the reference),
+  through a <video> fed by its captured stream (how every voice tile and stream
+  is shown), and through a <video> under a glass label. Each is measured in the
+  view's own snapshot and in the window server's picture of the window, and the
+  page reports what the video element says about its own playback.
+
+  The two pictures are known to disagree in one direction already (glass.html:
+  the snapshot leaves backdrop blur out), so a difference here says which
+  source can be trusted for video, not by itself that video is broken.
+-->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: #0c0c0e; font: 12px system-ui; color: #ddd; }
+  .cell { position: absolute; top: 60px; width: 320px; height: 180px; background: #000; overflow: hidden; }
+  .cell > canvas, .cell > video { width: 100%; height: 100%; display: block; object-fit: cover; }
+  #cell-canvas { left: 40px; }
+  #cell-video { left: 400px; }
+  #cell-glass { left: 760px; }
+  #cell-glass > span {
+    position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 10px;
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); background: rgba(0, 0, 0, 0.6);
+  }
+</style>
+</head>
+<body>
+<div id="cell-canvas" class="cell"></div>
+<div id="cell-video" class="cell"><video id="plain" autoplay muted playsinline></video></div>
+<div id="cell-glass" class="cell"><video id="labelled" autoplay muted playsinline></video><span>label</span></div>
+<script>
+window.runProbe = async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const out = { userAgent: navigator.userAgent, native: typeof window.probeNative === 'function' };
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280;
+  canvas.height = 720;
+  document.getElementById('cell-canvas').append(canvas);
+  const context = canvas.getContext('2d');
+  let tick = 0;
+  const paint = () => {
+    tick += 1;
+    context.fillStyle = '#e0e0e0';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#6e5bef';
+    context.fillRect(40 + (tick % 20) * 10, 40, 200, 200);
+  };
+  paint();
+  const timer = setInterval(paint, 100);
+  const stream = canvas.captureStream(30);
+
+  const describe = (video) => {
+    const quality = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : null;
+    const scratch = document.createElement('canvas');
+    scratch.width = 16;
+    scratch.height = 16;
+    const scratchContext = scratch.getContext('2d');
+    let decodedLuminance = null;
+    try {
+      scratchContext.drawImage(video, 0, 0, 16, 16);
+      const pixel = scratchContext.getImageData(12, 12, 1, 1).data;
+      decodedLuminance = Math.round(0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2]);
+    } catch (error) {
+      decodedLuminance = String(error);
+    }
+    return {
+      readyState: video.readyState,
+      paused: video.paused,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      currentTime: video.currentTime,
+      totalVideoFrames: quality ? quality.totalVideoFrames : null,
+      decodedLuminance,
+    };
+  };
+
+  const videos = { plain: document.getElementById('plain'), labelled: document.getElementById('labelled') };
+  out.playErrors = {};
+  for (const [name, video] of Object.entries(videos)) {
+    video.srcObject = stream;
+    try {
+      await video.play();
+    } catch (error) {
+      out.playErrors[name] = String(error);
+    }
+  }
+
+  out.samples = [];
+  for (const waitMs of [500, 1500, 3000]) {
+    await sleep(waitMs);
+    const sample = { afterMs: waitMs, plain: describe(videos.plain), labelled: describe(videos.labelled) };
+    if (out.native) {
+      for (const id of ['cell-canvas', 'cell-video', 'cell-glass']) {
+        const rect = document.getElementById(id).getBoundingClientRect();
+        // Right half of the cell: plain light grey in the source picture.
+        const area = { x: rect.left + 200, y: rect.top + 20, width: 100, height: 100 };
+        const entry = {};
+        for (const source of ['snapshot', 'window']) {
+          try {
+            entry[source] = (await window.probeNative('pixelStats', { ...area, source })).mean;
+          } catch (error) {
+            entry[source] = String(error);
+          }
+        }
+        sample[id] = entry;
+      }
+    }
+    out.samples.push(sample);
+  }
+
+  clearInterval(timer);
+  stream.getTracks().forEach((track) => track.stop());
+  return out;
+};
+</script>
+</body>
+</html>
