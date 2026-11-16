@@ -398,7 +398,8 @@ a hundred-odd findings naming fragments of the file rather than the comment
 that caused them. Prose in that array is ordinary English; the stripping is
 what keeps it safe.
 
-The global rate limiter (`@fastify/rate-limit` in `index.ts`, 200 per minute,
+The global rate limiter (`@fastify/rate-limit`, registered by
+`utils/httpRateLimit.ts`, 200 per minute,
 and every per-route override of it) answers in the same shape through its
 `errorResponseBuilder`, built with `errorBody` from `httpErrors.ts` so the
 code is typed there too: `{ error, code: 'rate_limited', statusCode: 429,

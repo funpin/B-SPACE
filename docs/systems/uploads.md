@@ -277,6 +277,7 @@ Strips the original extension, appends `_thumb.webp`.
 |----------|-------|
 | Auth | None (public) |
 | Path safety | `path.basename(filename)` prevents directory traversal |
+| Rate limit | 1000 per minute per client address, on this route's own count (`PUBLIC_FILE_RATE_LIMIT`), in place of the global 200; see [api.md](api.md), "Rate limiting" |
 
 ### MIME Resolution Priority
 
@@ -741,7 +742,7 @@ Collecting is in the context menu ("Add to my stickers") of a sticker message, a
 
 ### Serving
 
-`GET /api/stickers/assets/:sha256.webp` is public, like `/api/uploads/:filename`: anyone holding the link can read the image. It answers `404 sticker_not_found` for a malformed name, an unknown id, or a row whose file is missing, and otherwise sends the file with `Cache-Control: public, max-age=31536000, immutable`, `Content-Type: image/webp`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'` and `X-Frame-Options: DENY`. The collection routes need a JWT and only ever read or change the caller's own entries.
+`GET /api/stickers/assets/:sha256.webp` is public, like `/api/uploads/:filename`: anyone holding the link can read the image. It carries the same rate limit of its own, 1000 per minute per address in place of the global 200 ([api.md](api.md), "Rate limiting"), so a picker holding a full collection loads without spending the API's budget. It answers `404 sticker_not_found` for a malformed name, an unknown id, or a row whose file is missing, and otherwise sends the file with `Cache-Control: public, max-age=31536000, immutable`, `Content-Type: image/webp`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'` and `X-Frame-Options: DENY`. The collection routes need a JWT and only ever read or change the caller's own entries.
 
 ### Storage and cleanup
 

@@ -496,6 +496,10 @@ uncovered is a way to fill an operator's disk. The registration therefore lives
 down with the other route registrations in `index.ts`, with a comment saying
 why. Do not tidy it back up next to the hook. A test in
 `test/http-security-headers.test.ts` floods it and asserts that 429s appear.
+The one thing deliberately registered ahead of the limiter is the built web
+client's own files (`registerClientFilesThenRateLimit` in
+`utils/httpRateLimit.ts`); why they are exempt is in [api.md](api.md), "Rate
+limiting".
 
 **Conditions for flipping to enforcing.** All of these, not any of them:
 

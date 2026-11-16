@@ -10,8 +10,7 @@ import type { WebSocket } from 'ws';
 import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 import * as schema from '../db/schema.js';
 import { setWorkerId, generateSnowflake } from '../utils/snowflake.js';
-import rateLimit from '@fastify/rate-limit';
-import { errorBody } from '../utils/httpErrors.js';
+import { registerRateLimit } from '../utils/httpRateLimit.js';
 import { recordSocketAddress } from './socketAddress.js';
 import {
   DM_MESSAGE_CREATE_RATE_LIMIT,
@@ -543,15 +542,7 @@ describe('the REST create rate limit', () => {
   it('refuses the create after the limit with 429 rate_limited', async () => {
     const app = Fastify({ logger: false });
     // The limiter as index.ts registers it, with its error shape.
-    await app.register(rateLimit, {
-      max: 200,
-      timeWindow: '1 minute',
-      keyGenerator: (request) => request.ip,
-      errorResponseBuilder: (_request, context) => ({
-        ...errorBody(429, 'rate_limited'),
-        retryAfter: Math.ceil(context.ttl / 1000),
-      }),
-    });
+    await registerRateLimit(app);
     const { dmRoutes } = await import('../routes/dm.js');
     await app.register(dmRoutes);
     await app.ready();
