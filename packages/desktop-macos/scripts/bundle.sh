@@ -102,6 +102,11 @@ cp "$DESKTOP/build/icon.icns" "$APP/Contents/Resources/icon.icns"
 # The keys of the Electron build's Info.plist that carry over (pre-audit, 4.2).
 # App Transport Security: an instance reached over http:// by a domain name
 # loads only with NSAllowsArbitraryLoads; addresses and localhost load anyway.
+# NSAllowsLocalNetworking must NOT stand beside it, although the Electron
+# build has both: when that key is present the system ignores
+# NSAllowsArbitraryLoads, and http:// by name is blocked again. Chromium has
+# its own network stack and never noticed; WKWebView uses the system's
+# (measured: pre-audit, 2.7).
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -126,7 +131,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsArbitraryLoads</key><true/>
-    <key>NSAllowsLocalNetworking</key><true/>
   </dict>
   <key>NSMicrophoneUsageDescription</key><string>B:SPACE uses the microphone for voice channels and calls.</string>
   <key>NSCameraUsageDescription</key><string>B:SPACE uses the camera for video in voice channels and calls.</string>

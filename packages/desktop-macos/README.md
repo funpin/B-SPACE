@@ -88,13 +88,20 @@ from the harness or act on a window that is not on screen: `minimize`,
 
 The same executable opens a live instance in the shell and prints what the
 page sees (where it ended up, its title, the bridge, whether the client drew
-anything):
+anything); `--script <file>` asks the page something else, the file being the
+body of an async function whose return value is printed:
 
 ```bash
 .build/release/ContractCheck --contract ../desktop/src/bridgeContract.json \
   --picker ../desktop/resources/instance-picker.html \
   --visit https://your.instance.example --settle 6
 ```
+
+A visit is a cold start of the web client: about 160 requests, because the
+service worker fetches every asset a second time for its cache. The server
+allows 200 requests a minute per address, and that budget is shared with
+everyone behind the same address, the person using the instance from this
+machine included. Point it at a test instance, not at one in use.
 
 ## WebKitProbe
 

@@ -9,11 +9,13 @@
 #   scripts/probe.sh [bundle options] -- <WebKitProbe options>
 #
 # Bundle options:
-#   --ats none|local|web-content|arbitrary
+#   --ats none|local|web-content|arbitrary|arbitrary-local
 #         none         no NSAppTransportSecurity key at all (default)
 #         local        NSAllowsLocalNetworking
 #         web-content  NSAllowsArbitraryLoadsInWebContent
 #         arbitrary    NSAllowsArbitraryLoads
+#         arbitrary-local  NSAllowsArbitraryLoads with NSAllowsLocalNetworking,
+#                      the pair in the Electron build's Info.plist
 #   --no-capture-keys  leave the microphone and camera usage descriptions out
 #   --build-only       build and assemble the bundle, do not run it
 #
@@ -41,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     --no-capture-keys) CAPTURE_KEYS=false ;;
     --build-only) BUILD_ONLY=true ;;
     --help|-h)
-      sed -n '2,24p' "$SELF" | sed 's/^# \{0,1\}//'
+      sed -n '2,26p' "$SELF" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     --)
@@ -61,8 +63,9 @@ case "$ATS" in
   local) ATS_XML="<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>" ;;
   web-content) ATS_XML="<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>" ;;
   arbitrary) ATS_XML="<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>" ;;
+  arbitrary-local) ATS_XML="<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/><key>NSAllowsLocalNetworking</key><true/></dict>" ;;
   *)
-    echo "probe.sh: --ats takes none, local, web-content or arbitrary" >&2
+    echo "probe.sh: --ats takes none, local, web-content, arbitrary or arbitrary-local" >&2
     exit 64
     ;;
 esac

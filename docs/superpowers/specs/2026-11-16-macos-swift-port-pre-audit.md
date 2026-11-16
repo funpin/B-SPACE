@@ -117,8 +117,11 @@
 | `NSAllowsLocalNetworking` | грузится | грузится | грузится | **блокируется** |
 | `NSAllowsArbitraryLoadsInWebContent` | грузится | грузится | грузится | грузится |
 | `NSAllowsArbitraryLoads` | грузится | грузится | грузится | грузится |
+| `NSAllowsArbitraryLoads` вместе с `NSAllowsLocalNetworking` | — | — | — | **блокируется** |
 
-[стенд] Уточняет п. 19 аудита: адреса-числа и `localhost` грузятся и без ключей, блокируется только `http://` по доменному имени. У Electron 2.3.2 в `Info.plist` стоят `NSAllowsArbitraryLoads` и `NSAllowsLocalNetworking` [файл], поэтому для паритета Swift-бандл получает те же два ключа.
+[стенд] Уточняет п. 19 аудита: адреса-числа и `localhost` грузятся и без ключей, блокируется только `http://` по доменному имени. У Electron 2.3.2 в `Info.plist` стоят `NSAllowsArbitraryLoads` и `NSAllowsLocalNetworking` [файл].
+
+**Дополнение от 2026-11-16 (этап 1).** Переносить оба ключа нельзя: при наличии `NSAllowsLocalNetworking` система игнорирует `NSAllowsArbitraryLoads` (так и написано в документации Apple), и `http://` по доменному имени снова блокируется. Измерено на стенде вариантом `--ats arbitrary-local`: `http://<имя>/…` с одним `NSAllowsArbitraryLoads` открывается (с редиректом на `https`), с парой ключей навигация обрывается, как и без ключей. Прочерки в строке таблицы — не измерялось. Electron этого не замечал: у Chromium свой сетевой стек, политику ATS он не применяет. Swift-бандл получает один ключ `NSAllowsArbitraryLoads`.
 
 ### 2.8. Сервис-воркер и хранилище
 

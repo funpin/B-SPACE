@@ -18,7 +18,9 @@ import WebKit
 // same shell instead, waits --settle seconds (5 by default) and prints what
 // the page sees: where it ended up, its title, whether the bridge is there and
 // whether the client drew anything. That is how a live instance is looked at
-// without a person at the window.
+// without a person at the window. --script <file> asks the page something
+// else: the file is the body of an async function, and what it returns is
+// printed.
 
 /// Members the harness reads but does not call: they navigate the window away
 /// from the harness or act on a window that is not on screen. The picker and
@@ -178,13 +180,20 @@ return {
 func visit(_ address: String) {
     guard let url = InstanceURLStore.loadableURL(address) else { fail("--visit takes an http or https address") }
     let settle = TimeInterval(arguments["settle"] ?? "5") ?? 5
+    var script = visitScript
+    if arguments["script"] != nil {
+        guard let custom = try? String(contentsOf: fileURL(arguments, "script"), encoding: .utf8) else {
+            fail("--script is not readable as UTF-8 text")
+        }
+        script = custom
+    }
     var loaded = false
     controller.onMainFrameLoadEnded = { error in
         if let error { fail("\(address) did not load: \(error.localizedDescription)") }
         guard !loaded else { return }
         loaded = true
         DispatchQueue.main.asyncAfter(deadline: .now() + settle) {
-            controller.webView.callAsyncJavaScript(visitScript, arguments: [:], in: nil, in: .page) { result in
+            controller.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
                 try? FileManager.default.removeItem(at: temporary)
                 switch result {
                 case .failure(let error):
