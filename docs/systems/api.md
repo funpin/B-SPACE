@@ -433,7 +433,7 @@ GET    /admin/instance/update-status  ?refresh=true    → InstanceUpdateStatus
 Read-only. There is deliberately no endpoint that applies an update: doing so from
 inside the container needs `/var/run/docker.sock` mounted, which is host root.
 See [admin.md](admin.md) for the full rationale and [deployment.md](deployment.md)
-for `./update.sh`, which the panel points at instead.
+for `./deploy/update.sh`, which the panel points at instead.
 
 The GitHub lookup runs only on this request path, never on a timer, and is cached
 6h (failures for a tenth of that). `?refresh=true` bypasses the cache for an

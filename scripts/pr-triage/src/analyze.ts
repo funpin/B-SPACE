@@ -1,9 +1,8 @@
 import type { ChangedFile, PackageJsonChange, Triage } from './types.ts';
 import type { PullRequest } from './github.ts';
-import { classifyPaths, isLockfile, isNodeSources, isPackageJson } from './paths.ts';
+import { classifyPaths, isLockfile, isPackageJson } from './paths.ts';
 import { diffPackageJson } from './package-json.ts';
 import { diffLockfiles } from './lockfile.ts';
-import { diffSources } from './sources.ts';
 import { decideVerdict } from './verdict.ts';
 
 /** What the analysis needs from GitHub, narrowed so tests can hand in a stub. */
@@ -66,23 +65,6 @@ export async function analyze(input: AnalysisInput): Promise<Triage> {
     }
   }
 
-  let sources: Triage['sources'] = null;
-  const sourcesFile = files.find((f) => isNodeSources(f.filename) || isNodeSources(f.previous_filename ?? ''));
-  if (sourcesFile) {
-    try {
-      const base = await input.getRawFile('flatpak/node-sources.json', mergeBase);
-      const head = await input.getRawFile('flatpak/node-sources.json', headSha);
-      if (head === null) problems.push('flatpak/node-sources.json is removed or renamed at head');
-      else {
-        const diff = diffSources(base, head);
-        if (!diff.ok) problems.push(`flatpak/node-sources.json: ${diff.reason}`);
-        else sources = diff.value;
-      }
-    } catch (err) {
-      problems.push(`flatpak/node-sources.json: ${message(err)}`);
-    }
-  }
-
   const partial: Omit<Triage, 'verdict'> = {
     headSha,
     author: pull.user?.login ?? '',
@@ -90,7 +72,6 @@ export async function analyze(input: AnalysisInput): Promise<Triage> {
     hits,
     packageJson,
     lockfile,
-    sources,
     problems,
   };
   return { verdict: decideVerdict(partial), ...partial };

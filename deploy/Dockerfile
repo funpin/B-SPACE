@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Copy workspace config
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY tsconfig.base.json ./
+COPY packages/tsconfig.base.json packages/
 
 # Copy package.json files for all workspace packages
 COPY packages/shared/package.json packages/shared/
@@ -30,7 +30,7 @@ COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 
 # Copy patches (referenced by pnpm-lock.yaml)
-COPY patches/ patches/
+COPY packages/patches/ packages/patches/
 
 # The production dependency tree that ships in the runtime image
 RUN pnpm install --prod --frozen-lockfile
@@ -51,7 +51,7 @@ WORKDIR /app
 
 # Copy workspace config
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY tsconfig.base.json ./
+COPY packages/tsconfig.base.json packages/
 
 # Copy package.json files for all workspace packages
 COPY packages/shared/package.json packages/shared/
@@ -59,7 +59,7 @@ COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 
 # Copy patches (referenced by pnpm-lock.yaml)
-COPY patches/ patches/
+COPY packages/patches/ packages/patches/
 
 RUN pnpm install --frozen-lockfile --filter @backspace/web...
 
@@ -106,7 +106,7 @@ WORKDIR /app
 
 # Copy workspace config
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY tsconfig.base.json ./
+COPY packages/tsconfig.base.json packages/
 
 # Copy package.json files
 COPY packages/shared/package.json packages/shared/
@@ -132,7 +132,7 @@ RUN mkdir -p /app/data/uploads
 
 # Non-root hardening: copy the privilege-dropping entrypoint. It chowns the
 # data volume as root, then execs the CMD as the unprivileged `node` user.
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Set environment defaults

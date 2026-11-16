@@ -192,8 +192,7 @@ jobs:
           version: 10.34.3
 
       - name: Setup Node.js
-        # Matches .nvmrc, the CI matrix's upper leg and the node24 SDK the
-        # Flatpak build already packages this same app with. The desktop build
+        # Matches .nvmrc and the CI matrix's upper leg. The desktop build
         # toolchain has a Node 22 floor of its own -- @electron/fuses 2 declares
         # `engines: >=22.12.0` -- so this job cannot drop back to 20 without
         # violating it. This is the BUILD Node only; the shipped app runs on

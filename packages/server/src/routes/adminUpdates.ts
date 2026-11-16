@@ -17,7 +17,7 @@ import type { InstanceUpdateStatus } from '@backspace/shared';
  * parses uploaded media, scrapes URLs for embeds, and accepts federation
  * payloads from remote instances, so any remote-code-execution bug in it would
  * become host root the moment that socket exists. The panel hands the operator
- * an exact command instead; ./update.sh is where the effort went.
+ * an exact command instead; ./deploy/update.sh is where the effort went.
  */
 export async function adminUpdateRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/admin/instance/update-status — what this instance runs, and

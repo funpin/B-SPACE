@@ -9,8 +9,7 @@ name: PR triage
 # does not hold back.
 #
 # `pull_request_target` runs with a write token in the context of this
-# repository, so the rules from cla.yml apply here too and are the whole
-# reason this job is safe:
+# repository, so the rules below are the whole reason this job is safe:
 #   - it never checks out or executes anything from the pull request. The
 #     checkout below is the base branch (the default for this event); the
 #     script reads PR file contents over the API as text and parses them.

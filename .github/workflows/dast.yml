@@ -29,7 +29,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/dast.yml'
-      - '.zap/**'
+      - '.github/security/zap-rules.tsv'
   schedule:
     # Wednesday 04:17 UTC. Off the hour so it does not queue behind the
     # every-scanner-at-midnight crowd on the hosted runners.
@@ -59,8 +59,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # docker-compose.yml reads env_file: .env, and compose fails outright if
-      # that file is absent. DOMAIN is required even though caddy never starts:
+      # deploy/docker-compose.yml reads env_file: ../.env, and compose fails
+      # outright if that file is absent. COMPOSE_FILE is what points compose,
+      # run from the repository root, at the file in deploy/; an install gets
+      # the same line from deploy/install.sh. DOMAIN is required even though caddy never starts:
       # compose interpolates the whole file before it filters services, and the
       # caddy service declares ${DOMAIN:?...}. dast.invalid is an RFC 2606
       # reserved name that cannot resolve. The secret is a throwaway that only
@@ -68,6 +70,7 @@ jobs:
       - name: Write the ephemeral env file
         run: |
           cat > .env <<'EOF'
+          COMPOSE_FILE=deploy/docker-compose.yml
           DOMAIN=dast.invalid
           JWT_SECRET=0000000000000000000000000000000000000000000000000000000000000000
           PORT=3000
@@ -93,11 +96,11 @@ jobs:
           docker run --rm \
             --network backspace-dast_internal \
             -v "$GITHUB_WORKSPACE/zap-out:/zap/wrk/:rw" \
-            -v "$GITHUB_WORKSPACE/.zap:/zap/cfg/:ro" \
+            -v "$GITHUB_WORKSPACE/.github/security:/zap/cfg/:ro" \
             ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef \
             zap-baseline.py \
               -t http://backspace:3000 \
-              -c /zap/cfg/rules.tsv \
+              -c /zap/cfg/zap-rules.tsv \
               -I \
               -r report.html -w report.md -J report.json
 

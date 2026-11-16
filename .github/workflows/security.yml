@@ -3,7 +3,7 @@ name: Security
 # Enforcing. Every scanner uploads SARIF to the Security tab AND fails the job on
 # a finding that the tiered policy says must block: a gitleaks secret hit, a
 # HIGH/CRITICAL Trivy config or license finding, and any dependency vulnerability
-# that is not listed in osv-scanner.toml.
+# that is not listed in .github/security/osv-scanner.toml.
 #
 # osv-scanner.toml is a ratchet, not a waiver. It holds the backlog that existed
 # when enforcement was turned on, each entry with a reason and an expiry date, so
@@ -64,7 +64,7 @@ jobs:
           # already account for. That file is the ratchet: the backlog is listed
           # with reasons and expiry dates, so anything new fails this job.
           scan-args: |-
-            --config=osv-scanner.toml
+            --config=.github/security/osv-scanner.toml
             --lockfile=./pnpm-lock.yaml
             --format=sarif
             --output=osv-results.sarif
@@ -95,7 +95,7 @@ jobs:
           scan-ref: .
           # Named explicitly rather than relying on the default working
           # directory. Every entry in that file carries its reason.
-          trivyignores: .trivyignore
+          trivyignores: .github/security/trivyignore
           format: sarif
           output: trivy-config.sarif
           # In sarif mode Trivy exits 0 whatever it finds, so removing

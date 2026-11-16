@@ -19,7 +19,7 @@ below.
 | `.github/workflows/dast.yml` | ZAP baseline against an ephemeral instance (spider + passive, unauthenticated) | weekly + manual + PRs touching its own config | Job summary + artifact (advisory) |
 | `.github/workflows/docker-publish.yml` | Image scan (Trivy) + SBOM + provenance for the published container | tag push / manual | image scan (report-only) + SBOM + provenance |
 | `.github/workflows/telemetry-receiver.yml` | Typecheck + Workers test suite for `scripts/telemetry-receiver`, and its deploy to Cloudflare | PR + push main, both path-filtered to the package; deploy on manual dispatch only | job status; a published Worker |
-| `.github/workflows/pr-triage.yml` | Fork PR triage: "routine" or "read first" verdict for the CI approval click, plus lockfile and Flatpak source summary | `pull_request_target` on fork PRs + manual | one comment per PR, updated in place |
+| `.github/workflows/pr-triage.yml` | Fork PR triage: "routine" or "read first" verdict for the CI approval click, plus a lockfile summary | `pull_request_target` on fork PRs + manual | one comment per PR, updated in place |
 
 > **Fork run budget.** GitHub pauses workflows on a fork that uses Actions at
 > scale ("Workflows are not currently being run on this fork due to the scale
@@ -62,7 +62,7 @@ is what blocks, and the severity filter is what keeps it aligned with the tiered
 policy above.
 
 **All thirteen remaining OSV findings are fixable**, and five are HIGH, so a plain
-flip would have turned `main` red and blocked every pull request. `osv-scanner.toml`
+flip would have turned `main` red and blocked every pull request. `.github/security/osv-scanner.toml`
 resolves that as a **ratchet rather than a waiver**: it lists exactly the backlog
 that existed at flip time, one entry per finding, each with the reason and the
 version that fixes it. Anything not in that file fails the job, so a newly
@@ -114,7 +114,7 @@ behind a scanner backlog is the exact inversion this project already decided
 against when the release track was changed from one release at the end to a patch
 per landed track. **When the Fastify migration lands, re-measure, and if the count
 is zero add `exit-code: '1'` and drop `continue-on-error` from the Trivy step in
-`docker-publish.yml`.** Do not reach the same place with `.trivyignore` entries;
+`docker-publish.yml`.** Do not reach the same place with `.github/security/trivyignore` entries;
 suppressing the count is not the same as clearing it.
 
 ## Dynamic scanning (DAST)
@@ -170,12 +170,12 @@ image on that push.)
 
 **Why not on every pull request.** It builds the whole image, which costs minutes
 of runner time, and an advisory result does not belong in the merge path. It does
-run on pull requests that touch `.github/workflows/dast.yml` or `.zap/**`, so its
+run on pull requests that touch `.github/workflows/dast.yml` or `.github/security/zap-rules.tsv`, so its
 own configuration is self-testing.
 
 ### Tuned rules
 
-`.zap/rules.tsv` is the only place a rule is downgraded, one line per rule with the
+`.github/security/zap-rules.tsv` is the only place a rule is downgraded, one line per rule with the
 reason inline. `IGNORE` is reserved for findings that are artefacts of scanning the
 app container directly instead of the deployed system. Everything else stays at
 `WARN`.
@@ -191,7 +191,7 @@ effect of the file. Control, with no rule file:
 FAIL-NEW: 0  WARN-NEW: 7  IGNORE: 0  PASS: 60
 ```
 
-Tuned, with `-c /zap/cfg/rules.tsv`:
+Tuned, with `-c /zap/cfg/zap-rules.tsv`:
 
 ```
 FAIL-NEW: 0  WARN-NEW: 5  IGNORE: 2  PASS: 60
@@ -246,7 +246,7 @@ label, so it holds the alert name as ZAP prints it. A space separated line is th
 same trap. Check the separators after any edit:
 
 ```bash
-grep -Pn '^\d+\t(WARN|IGNORE|FAIL)\t' .zap/rules.tsv
+grep -Pn '^\d+\t(WARN|IGNORE|FAIL)\t' .github/security/zap-rules.tsv
 ```
 
 The trailing `\t` in that pattern is the point: it is what proves a third column
@@ -337,7 +337,7 @@ cannot be worked one at a time.
 
 ### What is left open, and why
 
-Sixteen OSV findings are held in `osv-scanner.toml`, in two shapes. Fourteen need a
+Sixteen OSV findings are held in `.github/security/osv-scanner.toml`, in two shapes. Fourteen need a
 major upgrade that is a separate decision with its own compatibility work. Two
 have no fixed release at all and sit only in build tooling. None of them is
 dismissed:
@@ -395,7 +395,7 @@ directly already asked for `^0.35.4`. The finding came from a *second* copy:
 `sharp` at exactly `0.35.2`, so the lockfile carried both versions and the
 scanner saw the old one.
 
-That made it a candidate for the `osv-scanner.toml` backlog on the usual
+That made it a candidate for the `.github/security/osv-scanner.toml` backlog on the usual
 grounds, since it is build-time only and never enters the server image or the
 desktop app. It was fixed instead, with `"sharp@^0.35": "^0.35.4"` in
 `pnpm.overrides`. Deferring is for findings whose fix is a major upgrade and a
@@ -430,7 +430,7 @@ finds the shipped binary before the build step is reached.
 
 ## Dismissal register
 
-`.trivyignore` and `.github/codeql/codeql-config.yml` are the machine-readable half
+`.github/security/trivyignore` and `.github/codeql/codeql-config.yml` are the machine-readable half
 of this. What follows is the half a human reads.
 
 ### CodeQL alerts
@@ -516,9 +516,9 @@ a path to the list.
 
 ### Trivy config: DS-0002
 
-`.trivyignore` suppresses one rule, DS-0002, "Specify at least 1 USER command in
+`.github/security/trivyignore` suppresses one rule, DS-0002, "Specify at least 1 USER command in
 Dockerfile with non-root user". The `trivy-config` job names the file explicitly
-with `trivyignores: .trivyignore` rather than relying on the default working
+with `trivyignores: .github/security/trivyignore` rather than relying on the default working
 directory.
 
 The image has no `USER` line on purpose. `docker-entrypoint.sh` runs as root only
@@ -568,17 +568,13 @@ survive are:
 | `metrics.yml` | `contents: write` | The collector commits the day's traffic rows to the `metrics-data` branch. Not a release or a `peaceiris` deploy, so no matcher applies. |
 | `metrics.yml` | `actions: write` | Required by the `gh workflow enable` step. GitHub disables a scheduled workflow after 60 days of repository inactivity, and that step is what resets the clock. Removing this scope loses data silently, months later. It is **not** for the reusable-workflow call, which needs no such scope. |
 | `backfill.yml` | `contents: write` | Same data-branch write as the collector. |
-| `cla.yml` | `contents: write` | `contributor-assistant/github-action` commits `signatures/cla.json` to the `cla-signatures` branch. |
-| `cla.yml` | `actions: write` | The same action calls `actions.reRunWorkflow` to re-run the last failed CLA run once a signature comment arrives. |
 | `release.yml` | `contents: write` | electron-builder runs with `--publish always`, which creates the release for the tag and uploads the installers. electron-builder is not on Scorecard's release-tooling list, so the matcher does not fire. |
 
 `docker-publish.yml`'s `packages: write` and `security-events: write` and every
 `security-events: write` in `codeql.yml`, `security.yml` and `scorecard.yml` do
 clear, because those workflows match the packaging and SARIF matchers above.
-`cla.yml`'s `statuses: write` was removed outright: the pinned revision of the
-action calls no commit-status endpoint. Check that again before moving the pin.
 
-These six are the correct trade. Each is load-bearing, each is commented at the
+These four are the correct trade. Each is load-bearing, each is commented at the
 grant, and Scorecard reporting them is the tool working as designed rather than a
 gap. Do not remove one to raise the score.
 
@@ -628,7 +624,7 @@ Currently deferred, with the condition that releases each one:
 | `@types/node` 22 (24 for the script packages) | types describing a newer Node than the runtime let code typecheck clean and fail in production | whenever a runtime moves, in that same PR |
 | jsdom 28 | jsdom 30 pulls undici 8 against the `undici@^7` override, so every vitest worker dies with `webidl.util.markAsUncloneable is not a function` and the web suite does not run; it also changes SVG attribute-selector matching | extending the undici override to 8, then re-testing both |
 | vitest 4 | `@cloudflare/vitest-pool-workers` supports `vitest ^4.1.0` only and rides internal Vitest APIs; under 5 the receiver's Workers runtime throws before any test runs | upstream shipping vitest 5 support |
-| electron 43 | Electron 44 removes the macOS login-item API `src/main.ts` uses, and a major moves the Chromium and Node the shipped app runs on | a dedicated desktop PR, with the Flatpak sources regenerated |
+| electron 43 | Electron 44 removes the macOS login-item API `src/main.ts` uses, and a major moves the Chromium and Node the shipped app runs on | a dedicated desktop PR |
 
 Two entries predate this policy and stay as they are: `uiohook-napi` is ignored
 outright (an exact-version pnpm patch makes any bump break
@@ -753,8 +749,7 @@ A `pull_request` workflow run from a fork gets no secrets and a read-only
 `GITHUB_TOKEN`. That is a platform guarantee, not a repository setting. What
 the approval gate holds back is compute: on approval the fork's code executes
 on a GitHub-hosted runner inside `pnpm install`, `pnpm build`, `pnpm -r test`,
-the Docker build and (for `flatpak/**` changes) flatpak-builder in a
-privileged container. Every PR does that; it is what CI is for. The approval
+and the Docker build. Every PR does that; it is what CI is for. The approval
 decision is therefore not "does this PR run code" but "does this PR change
 the pipeline the code runs in". The bot's verdict encodes exactly that split:
 
@@ -772,11 +767,10 @@ the pipeline the code runs in". The bot's verdict encodes exactly that split:
 | Row | What counts | Affects the verdict |
 |-----|-------------|---------------------|
 | CI workflows | `.github/workflows/**`, `.github/actions/**`, including the previous name of a rename | yes |
-| Install-time code | `.pnpmfile.cjs` and `.npmrc` at any depth, `pnpm-workspace.yaml`, `patches/**`; and any `package.json` whose `scripts.*`, `pnpm.*` or `packageManager` changed (a dependency bump alone does not count) | yes |
-| Build recipes | `Dockerfile*`, `docker-compose*.yml`, `docker-entrypoint.sh`, `Caddyfile`, `install.sh`, `deploy.sh`, `restore.sh`, `io.github.TheZwiss.backspace*.yml`, `flatpak/*.{sh,mjs,cjs,js,py}`, `packages/desktop/electron-builder.yml`, `packages/desktop/scripts/**` | yes |
-| Scanner configuration | `.github/codeql/**`, `osv-scanner.toml`, `.trivyignore`, `.zap/**`, `.gitleaks.toml` | yes |
+| Install-time code | `.pnpmfile.cjs` and `.npmrc` at any depth, `pnpm-workspace.yaml`, `packages/patches/**`; and any `package.json` whose `scripts.*`, `pnpm.*` or `packageManager` changed (a dependency bump alone does not count) | yes |
+| Build recipes | everything under `deploy/` except `.env.example`: the Dockerfile and its ignore file, the compose files, the Caddyfile, the entrypoint and the install, update, migrate, backup, restore and deploy scripts; `packages/desktop/electron-builder.yml`, `packages/desktop/scripts/**` | yes |
+| Scanner configuration | `.github/codeql/**`, `.github/security/osv-scanner.toml`, `.github/security/trivyignore`, `.github/security/zap-rules.tsv`, `.gitleaks.toml` | yes |
 | `pnpm-lock.yaml` | new package names vs. version bumps vs. removals; entries whose resolution is not exactly `{integrity: ...}` with a bare semver (git, tarball URL, directory, `file:`); importer specifiers new at head that point outside the registry; `overrides` and `patchedDependencies` blocks | only `overrides` and `patchedDependencies` |
-| `flatpak/node-sources.json` | added `file`/`archive` entries with a checksum from the hosts the generator uses (npm registry, Electron releases on github.com, Node headers on electronjs.org) are "known"; `shell`, `script`, `patch`, unknown types, and `inline` entries with a script name or a shebang are "executable"; downloads from any other host or without a checksum are "foreign" | executable and foreign entries |
 
 Deliberately not a signal: application source, tests, Vite/PostCSS/vitest
 configs, `scripts/*.mjs`. All of it executes on the runner inside the build
@@ -823,13 +817,12 @@ not attributed to the PR.
 - Locally: `GITHUB_TOKEN=$(gh auth token) GITHUB_REPOSITORY=TheZwiss/backspace PR_NUMBER=137 node scripts/pr-triage/src/cli.ts --dry-run`
   prints the comment without posting.
 - Adding a signal: extend `paths.ts` (path rules), `package-json.ts`,
-  `lockfile.ts` or `sources.ts`, and `verdict.ts` if it should affect the
-  verdict. Every module has tests, two of them against the repository's
-  real `pnpm-lock.yaml` and `flatpak/node-sources.json`, so a layout change
-  in either file fails the suite rather than the bot.
-- The bot posts as `github-actions[bot]`, the same identity as the CLA
-  bot. It finds its own comment by the `<!-- backspace-pr-triage -->`
-  marker on the first line.
+  or `lockfile.ts`, and `verdict.ts` if it should affect the verdict. Every
+  module has tests, one of them against the repository's real
+  `pnpm-lock.yaml`, so a layout change in that file fails the suite rather
+  than the bot.
+- The bot posts as `github-actions[bot]`. It finds its own comment by the
+  `<!-- backspace-pr-triage -->` marker on the first line.
 
 ## Maintainer checklist (one-time GitHub settings — NOT code)
 
@@ -854,56 +847,34 @@ rename.
       queue stays under human control. Revisit once the remainder is down to
       packages that can be bumped without a compatibility review.
 - [x] Ruleset on the `metrics-data` branch blocking **deletion** and
-      **force-push**, with no bypass actors (`Protect metrics data store`,
-      alongside the `Protect CLA signature store` precedent it copies). It
+      **force-push**, with no bypass actors (`Protect metrics data store`). It
       deliberately does **not** require pull requests or status checks: the
       collector commits directly, and requiring a PR would break every run. This
       branch holds the only irreplaceable data in the repository.
 - [x] Settings → Actions → General: **Allow GitHub Actions to create and approve
       pull requests** enabled (`can_approve_pull_request_reviews: true` on
       `GET /repos/{owner}/{repo}/actions/permissions/workflow`; the default
-      workflow token permission stays **read**). It was turned on because the
-      `update-flatpak-metadata` job opened the `automation/flatpak-<tag>` pull
-      request with `GITHUB_TOKEN`, which GitHub rejects while this is off (it
-      was off when the v1.0.6 chain first ran on 2026-09-04 and was turned on
-      before the re-run). That job now lives in `flatpak-release-metadata.yml`
-      and opens the pull request with the release bot's token (next item), so
-      no workflow in the repository creates a pull request with `GITHUB_TOKEN`
-      any more. Whether to turn the setting off again is a separate decision;
-      make it only after a release has gone through the new workflow. Every
-      job still declares its own `permissions:` block, so the setting widens
-      nothing for jobs that do not ask for `pull-requests: write`.
+      workflow token permission stays **read**). It was turned on for the
+      Flatpak release-metadata job, which opened a pull request per release.
+      That job was removed together with the Flatpak packaging, and no workflow
+      in the repository creates a pull request any more, so the setting can be
+      turned off. Every job still declares its own `permissions:` block, so
+      while it stays on it widens nothing for jobs that do not ask for
+      `pull-requests: write`.
 - [x] **Release bot GitHub App** (`backspace-release-bot`), installed on
       this repository only. Its installation holds **Administration: read**,
       **Contents: read/write** and **Pull requests: read/write**, plus the
-      **Metadata: read** every app holds. Two repository secrets:
+      **Metadata: read** every app holds. The two write scopes were for the
+      Flatpak release-metadata job, removed together with the Flatpak
+      packaging; nothing uses them now, and they can be withdrawn from the
+      installation. Two repository secrets:
       `RELEASE_BOT_APP_ID` (the numeric App ID) and `RELEASE_BOT_PRIVATE_KEY`
       (its PEM private key). The private key only ever goes to
       `actions/create-github-app-token`, pinned by SHA
       (`bcd2ba49218906704ab6c1aa796996da409d3eb1`, v3.2.0), which mints an
       installation token narrowed to this repository and to the scopes the job
-      uses, and revokes it when the job ends. Two jobs do that, and no other
+      uses, and revokes it when the job ends. One job does that, and no other
       workflow reads the secrets.
-      **`update-flatpak-metadata` in `flatpak-release-metadata.yml`** mints
-      `permission-contents: write` and `permission-pull-requests: write`; the
-      job's own `GITHUB_TOKEN` is `contents: read`. The app exists for this job
-      because pushes and pull requests made with `GITHUB_TOKEN` start no
-      workflows: the required `Build & test` check never ran on the metadata
-      pull request (measured on #278, where the bot commit `8cc48c38` had 0
-      check runs and the human commit after it had 18), so a human had to push
-      to every one. The app's token starts CI, the job updates the branch when
-      main has moved past the tag (the ruleset's up-to-date rule), and it turns
-      on squash auto-merge (`allow_auto_merge` is on for the repository). The
-      workflow runs on `release: released`, or on `workflow_dispatch` with a
-      `tag` input to re-run a release. The `Require CI on main` ruleset carries
-      `require_extra_approval_for_unattributed_changes: true`, which does not
-      hold these pull requests: GitHub documents it as one extra approval for
-      Copilot pull requests not attributed to a person, with no effect when the
-      ruleset requires zero approvals, as this one does, and #278 and #283
-      (opened by the github-actions app) merged with 0 reviews under it. The
-      app's commits are attributed to `backspace-release-bot[bot]` in any case,
-      which is on the CLA allowlist in `cla.yml`. See
-      [desktop.md](desktop.md#release-publishing) for the release flow itself.
       **`collect` in `metrics.yml`** mints `permission-administration: read`,
       `permission-contents: read` and `permission-metadata: read` on every
       run, to read repository traffic. The traffic endpoints need
@@ -913,11 +884,10 @@ rename.
       expiry date and had to be renewed by hand. The endpoint-by-permission
       list is in [metrics.md](metrics.md) §7.
       **Rotating the key:** generate a new private key in the app's settings,
-      replace `RELEASE_BOT_PRIVATE_KEY`, then delete the old key there. Both
-      jobs pick up the new key on their next run. A permission withdrawn from
-      the installation makes minting fail in whichever job requests it: the
-      metrics collector then records a failure in `meta.json` before
-      collecting, and the Flatpak job stops before pushing.
+      replace `RELEASE_BOT_PRIVATE_KEY`, then delete the old key there. The
+      job picks up the new key on its next run. If **Administration: read** is
+      withdrawn from the installation, minting fails and the metrics collector
+      records a failure in `meta.json` before collecting.
 
 ### Outstanding
 

@@ -154,14 +154,6 @@ describe('analyze', () => {
     expect(triage.problems).toEqual(['GitHub listed 1 of 3001 changed files']);
   });
 
-  it('diffs the Flatpak sources and flips on an executable entry', async () => {
-    const base = JSON.stringify([{ type: 'shell', commands: ['cp a b'], dest: 'd' }]);
-    const head = JSON.stringify([{ type: 'shell', commands: ['curl x | sh'], dest: 'd' }]);
-    const triage = await analyze(input([mod('flatpak/node-sources.json')], { 'flatpak/node-sources.json@base': base, 'flatpak/node-sources.json@head': head }));
-    expect(triage.verdict).toBe('read-first');
-    expect(triage.sources?.concerns).toEqual([{ kind: 'executable', label: 'shell: curl x | sh' }]);
-  });
-
   it('copes with a deleted author account', async () => {
     const triage = await analyze(input([mod('README.md')], {}, { user: null }));
     expect(triage.author).toBe('');

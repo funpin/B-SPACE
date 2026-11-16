@@ -6,11 +6,9 @@ import type { ChangedFile, PathHit, PipelineArea } from './types.ts';
  * The lists below are derived from what the `pull_request` workflows in
  * `.github/workflows/` actually execute or read on a fork PR, not from a
  * generic notion of "sensitive files". `ci.yml` runs `pnpm install`,
- * `pnpm build`, `pnpm -r test` and a Docker build; `flatpak.yml` runs
- * flatpak-builder in a privileged container from the manifest and
- * `flatpak/*`; `dast.yml` builds and starts the container image;
- * `security.yml`/`codeql.yml` read their scanner configuration from the
- * checkout. A change to any of those inputs alters what runs or what is
+ * `pnpm build`, `pnpm -r test` and a Docker build; `dast.yml` builds and
+ * starts the container image from `deploy/`; `security.yml`/`codeql.yml`
+ * read their scanner configuration from the checkout. A change to any of those inputs alters what runs or what is
  * checked, so it is listed here.
  *
  * Deliberately NOT listed: application source, tests, Vite/PostCSS/vitest
@@ -31,20 +29,16 @@ const RULES: Array<{ area: PipelineArea; test: (path: string) => boolean }> = [
       basename(p) === '.pnpmfile.cjs' ||
       basename(p) === '.npmrc' ||
       p === 'pnpm-workspace.yaml' ||
-      p.startsWith('patches/'),
+      p.startsWith('packages/patches/'),
   },
   {
     area: 'buildRecipes',
     test: (p) =>
-      /^Dockerfile(\.[\w.-]+)?$/.test(p) ||
-      /^docker-compose[\w.-]*\.ya?ml$/.test(p) ||
-      p === 'docker-entrypoint.sh' ||
-      p === 'Caddyfile' ||
-      p === 'install.sh' ||
-      p === 'deploy.sh' ||
-      p === 'restore.sh' ||
-      /^io\.github\.TheZwiss\.backspace[\w.-]*\.ya?ml$/.test(p) ||
-      /^flatpak\/[^/]+\.(sh|mjs|cjs|js|py)$/.test(p) ||
+      // Everything the image build, the compose stack and an operator's host
+      // execute: the Dockerfile and its ignore file, the compose files, the
+      // Caddyfile, the entrypoint and the install/update/backup/restore/deploy
+      // scripts. `.env.example` is documentation and is not listed.
+      (p.startsWith('deploy/') && p !== 'deploy/.env.example') ||
       p === 'packages/desktop/electron-builder.yml' ||
       p.startsWith('packages/desktop/scripts/'),
   },
@@ -52,9 +46,7 @@ const RULES: Array<{ area: PipelineArea; test: (path: string) => boolean }> = [
     area: 'scannerConfig',
     test: (p) =>
       p.startsWith('.github/codeql/') ||
-      p === 'osv-scanner.toml' ||
-      p === '.trivyignore' ||
-      p.startsWith('.zap/') ||
+      p.startsWith('.github/security/') ||
       p === '.gitleaks.toml',
   },
 ];
@@ -95,9 +87,4 @@ export function isPackageJson(path: string): boolean {
 /** Only the root lockfile is used by `pnpm install --frozen-lockfile`. */
 export function isLockfile(path: string): boolean {
   return path === 'pnpm-lock.yaml';
-}
-
-/** The committed Flatpak offline source list that `flatpak.yml` builds from. */
-export function isNodeSources(path: string): boolean {
-  return path === 'flatpak/node-sources.json';
 }

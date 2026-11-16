@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Restore the Backspace SQLite DB from a snapshot in data/backups/.
 # Usage:
-#   ./restore.sh                 List available snapshots.
-#   ./restore.sh <snapshot.db>   Restore the named snapshot (path or basename).
+#   ./deploy/restore.sh                 List available snapshots.
+#   ./deploy/restore.sh <snapshot.db>   Restore the named snapshot (path or basename).
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 BACKUP_DIR="data/backups"
 DB="data/backspace.db"
@@ -28,7 +28,7 @@ if [[ $# -eq 0 ]]; then
     printf "  %s  (%s)\n" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
   done
   echo ""
-  echo "Restore with: ./restore.sh <snapshot-filename>"
+  echo "Restore with: ./deploy/restore.sh <snapshot-filename>"
   exit 0
 fi
 

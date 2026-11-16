@@ -369,7 +369,7 @@
       "fromInstallDir": "From your install directory:",
       "scriptDescription": "Takes a database snapshot, fetches the new image, and restarts only the B:SPACE container. If the new version does not come up healthy, or comes up still running the old code, it puts back the version you are on now.",
       "noScript": "I do not have update.sh",
-      "manualIntro": "update.sh ships from 1.0.5 onward. On a git checkout, <code>git pull</code> brings it in. Otherwise run the steps by hand, after taking a snapshot with <code>./backup.sh</code>.",
+      "manualIntro": "update.sh ships from 1.0.5 onward. On a git checkout, <code>git pull</code> brings it in. Otherwise run the steps by hand, after taking a snapshot with <code>./deploy/backup.sh</code>.",
       "prebuiltInstall": "Prebuilt-image install:",
       "sourceInstall": "From-source install:",
       "manualWarning": "Name the <code>backspace</code> service explicitly and do not pass <code>--remove-orphans</code>. Compose will suggest it if you run other containers in this project, and it would delete them."

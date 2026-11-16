@@ -15,7 +15,7 @@
 #             over a tunnel — WebRTC/UDP can't traverse it.)
 #
 # Usage:
-#   ./install.sh                    Interactive setup (auto-detects the mode)
+#   ./deploy/install.sh                    Interactive setup (auto-detects the mode)
 #
 #   Non-interactive — set any/all of these to skip the matching prompt:
 #     DOMAIN=chat.example.com \
@@ -26,13 +26,17 @@
 #     TELEMETRY=on|off \              # the optional daily usage ping; leave it
 #                                     # unset and the admin panel asks after the
 #                                     # first login
-#     ./install.sh
+#     ./deploy/install.sh
 #
-#   BACKSPACE_BUILD=true ./install.sh  Force a local from-source build instead of
+#   BACKSPACE_BUILD=true ./deploy/install.sh  Force a local from-source build instead of
 #                                      pulling the prebuilt image (fork operators).
 # ============================================================
 
 set -euo pipefail
+
+# This script lives in deploy/; the install itself (.env, data/, livekit.yaml)
+# lives in the repository root, and every path below is relative to that.
+cd "$(dirname "$0")/.."
 
 # ── Output helpers ──────────────────────────────────────────
 
@@ -196,6 +200,10 @@ step "Configuration"
 # Detect existing installation
 if [[ -f .env ]]; then
   info "Existing .env detected — secrets and settings will be preserved."
+  # An install from before the server files moved into deploy/ is brought onto
+  # the new layout first, so the project name its containers and volumes belong
+  # to is recorded before .env is rewritten below.
+  ./deploy/migrate-layout.sh
 fi
 
 # Helper: read existing .env value (|| true prevents set -e from killing
@@ -256,7 +264,7 @@ choose_mode_interactively() {
       1) DEPLOY_MODE=proxy ;;
       2) DEPLOY_MODE=tunnel ;;
       3)
-        error "Free ports 80 and 443, then re-run ./install.sh for All-in-One mode."
+        error "Free ports 80 and 443, then re-run ./deploy/install.sh for All-in-One mode."
         exit 1
         ;;
       *) DEPLOY_MODE=proxy ;;
@@ -308,15 +316,19 @@ if [[ "$DEPLOY_MODE" == "allinone" ]]; then
   fi
 fi
 
-# In proxy/tunnel mode, layer the proxy override so Caddy is dropped and the app
-# is published on a loopback port. Compose reads COMPOSE_FILE (from the shell and
-# from .env) to pick up both files for every command — the operator never needs
-# to remember `-f` flags afterwards.
+# The compose files live in deploy/, so Compose is told where they are through
+# COMPOSE_FILE (from the shell here, and from .env afterwards) — the operator
+# never needs to remember `-f` flags. In proxy/tunnel mode the proxy override is
+# layered on top, so Caddy is dropped and the app is published on a loopback port.
 if [[ "$DEPLOY_MODE" == "proxy" || "$DEPLOY_MODE" == "tunnel" ]]; then
-  export COMPOSE_FILE="docker-compose.yml:docker-compose.proxy.yml"
+  export COMPOSE_FILE="deploy/docker-compose.yml:deploy/docker-compose.proxy.yml"
 else
-  unset COMPOSE_FILE 2>/dev/null || true
+  export COMPOSE_FILE="deploy/docker-compose.yml"
 fi
+
+# Set only on an install that was created under another compose project name
+# (see deploy/migrate-layout.sh). Carried through the rewrite of .env below.
+COMPOSE_PROJECT_NAME_KEPT=$(env_val COMPOSE_PROJECT_NAME)
 
 # ── Domain ──────────────────────────────────────────────────
 # Required in every mode: it's the public hostname clients use and it drives the
@@ -535,18 +547,29 @@ step "Writing configuration files"
 
 DOMAIN=${DOMAIN}
 
-# Deployment mode: allinone | proxy | tunnel  (see ./install.sh --help / README)
+# Deployment mode: allinone | proxy | tunnel  (see ./deploy/install.sh --help / README)
 DEPLOY_MODE=${DEPLOY_MODE}
+
+# Where the compose files are. This line is what lets a plain 'docker compose'
+# command, run from this directory, find them — no -f flags needed. Do not
+# remove it.
+COMPOSE_FILE=${COMPOSE_FILE}
 EOF
+
+  if [[ -n "$COMPOSE_PROJECT_NAME_KEPT" ]]; then
+    cat << EOF
+
+# The compose project this install's containers and volumes were created under.
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME_KEPT}
+EOF
+  fi
 
   if [[ "$DEPLOY_MODE" == "proxy" || "$DEPLOY_MODE" == "tunnel" ]]; then
     cat << EOF
 
-# Reverse-proxy / tunnel mode: layer the proxy override so the bundled Caddy is
-# dropped and the app is published on 127.0.0.1:APP_PORT for your edge to reach.
-# COMPOSE_FILE makes every 'docker compose' command in this directory use both
-# files automatically — no -f flags needed.
-COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
+# Reverse-proxy / tunnel mode: COMPOSE_FILE above layers the proxy override, so
+# the bundled Caddy is dropped and the app is published on 127.0.0.1:APP_PORT
+# for your edge to reach.
 APP_PORT=${APP_PORT_FINAL}
 EOF
   fi
@@ -717,7 +740,7 @@ build_from_source() {
 # hosts the ~1.6GB local build that OOMs small boxes). Fall back to a from-source
 # build if the image can't be pulled (not published yet, private, or offline), or
 # if the operator forces a build (BACKSPACE_BUILD=true — e.g. running a fork).
-# Records which path this install actually took, so ./update.sh knows whether to
+# Records which path this install actually took, so ./deploy/update.sh knows whether to
 # pull an image or rebuild, and the admin Updates panel can say which it is.
 # Written *after* the decision resolves rather than alongside the rest of .env,
 # so a fallback-to-build is recorded truthfully instead of as the pull that was
@@ -741,7 +764,7 @@ record_install_channel() {
     cat >> .env << EOF
 
 # How this instance gets its image: prebuilt | source
-# Written by install.sh after the pull-or-build decision. ./update.sh reads it.
+# Written by install.sh after the pull-or-build decision. ./deploy/update.sh reads it.
 BACKSPACE_INSTALL_CHANNEL=${channel}
 EOF
   fi
@@ -1161,8 +1184,8 @@ echo -e "  ${BOLD}Commands${NC} (run from this directory):"
 echo "    docker compose logs -f          # Watch logs"
 echo "    docker compose restart          # Restart all services"
 echo "    docker compose down             # Stop everything"
-echo "    ./update.sh                                   # Update (snapshots first, rolls back if it fails)"
-echo "    ./update.sh --check                           # Check for an update, changing nothing"
+echo "    ./deploy/update.sh                                   # Update (snapshots first, rolls back if it fails)"
+echo "    ./deploy/update.sh --check                           # Check for an update, changing nothing"
 echo ""
 
 # The teaser for the ask that waits in the app. Skipped when TELEMETRY already

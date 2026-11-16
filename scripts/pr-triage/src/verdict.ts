@@ -12,24 +12,19 @@ import type { Triage } from './types.ts';
  * - a `package.json` whose `scripts`, `pnpm` block or `packageManager`
  *   changed,
  * - a lockfile whose `overrides` or `patchedDependencies` changed (the
- *   lockfile mirror of the `pnpm` block),
- * - a Flatpak source entry that the build executes or downloads from a
- *   host the generator never uses.
+ *   lockfile mirror of the `pnpm` block).
  *
  * Deliberately not a reason: new or bumped registry packages and
  * non-registry resolutions in the lockfile. pnpm 10 runs no dependency
  * install scripts unless the allowlist changes, and the allowlist is
  * covered above. Those rows are for the merge review.
  */
-export function readFirstReasons(triage: Pick<Triage, 'hits' | 'packageJson' | 'lockfile' | 'sources'>): string[] {
+export function readFirstReasons(triage: Pick<Triage, 'hits' | 'packageJson' | 'lockfile'>): string[] {
   const reasons: string[] = [];
   for (const hit of triage.hits) reasons.push(hit.path);
   for (const change of triage.packageJson) reasons.push(`${change.path} (${change.keys.join(', ')})`);
   if (triage.lockfile?.overridesChanged) reasons.push('pnpm-lock.yaml (overrides)');
   if (triage.lockfile?.patchedDependenciesChanged) reasons.push('pnpm-lock.yaml (patchedDependencies)');
-  for (const concern of triage.sources?.concerns ?? []) {
-    reasons.push(`flatpak/node-sources.json (${concern.label})`);
-  }
   return reasons;
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Trigger a manual DB snapshot inside the running Backspace container.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if ! docker ps --format '{{.Names}}' | grep -q '^backspace$'; then
   echo "Error: backspace container is not running." >&2

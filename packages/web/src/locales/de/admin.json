@@ -369,7 +369,7 @@
       "fromInstallDir": "Aus deinem Installationsverzeichnis:",
       "scriptDescription": "Erstellt einen Datenbank-Snapshot, holt das neue Image und startet nur den B:SPACE-Container neu. Startet die neue Version nicht fehlerfrei oder läuft danach weiter der alte Code, wird die Version wiederhergestellt, die du jetzt verwendest.",
       "noScript": "Ich habe kein update.sh",
-      "manualIntro": "update.sh ist ab 1.0.5 dabei. In einem Git-Checkout holt <code>git pull</code> es herein. Andernfalls führe die Schritte von Hand aus, nachdem du mit <code>./backup.sh</code> einen Snapshot erstellt hast.",
+      "manualIntro": "update.sh ist ab 1.0.5 dabei. In einem Git-Checkout holt <code>git pull</code> es herein. Andernfalls führe die Schritte von Hand aus, nachdem du mit <code>./deploy/backup.sh</code> einen Snapshot erstellt hast.",
       "prebuiltInstall": "Installation mit vorgefertigtem Image:",
       "sourceInstall": "Installation aus dem Quellcode:",
       "manualWarning": "Nenne den Dienst <code>backspace</code> ausdrücklich und übergib nicht <code>--remove-orphans</code>. Compose schlägt das vor, wenn in diesem Projekt weitere Container laufen, und würde sie löschen."

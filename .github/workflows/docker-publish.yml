@@ -48,7 +48,7 @@ jobs:
 
       # The runtime image bakes the git commit for the AGPL-3.0 § 13 source
       # offer (config.commit → GET /api/instance/info). The .git dir is not in
-      # the build context (.dockerignore), so resolve the short SHA here and feed
+      # the build context (deploy/Dockerfile.dockerignore), so resolve the short SHA here and feed
       # it to the build as a --build-arg, matching install.sh / deploy.sh.
       - name: Resolve build metadata
         id: meta_commit
@@ -99,6 +99,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: deploy/Dockerfile
           platforms: linux/amd64
           load: true
           push: false
@@ -142,6 +143,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: deploy/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}

@@ -75,7 +75,7 @@
       "better-sqlite3"
     ],
     "patchedDependencies": {
-      "uiohook-napi@1.5.5": "patches/uiohook-napi@1.5.5.patch"
+      "uiohook-napi@1.5.5": "packages/patches/uiohook-napi@1.5.5.patch"
     }
   },
   "packageManager": "pnpm@10.34.3",

@@ -19,6 +19,7 @@ data/
 *.db-journal
 
 # Environment — ignore every .env variant except the tracked example
+# (deploy/.env.example)
 .env
 .env.*
 !.env.example
@@ -36,8 +37,9 @@ id_ed25519*
 livekit.yaml
 
 # Local deploy targets & private ops notes — REAL hosts/IPs/users for the
-# maintainer's own infra. NEVER commit: this is a public repo. deploy.sh reads
-# .deploy.local at runtime if present; the committed defaults stay placeholders.
+# maintainer's own infra. NEVER commit: this is a public repo. deploy/deploy.sh
+# reads .deploy.local from the repository root at runtime if present; the
+# committed defaults stay placeholders.
 /.deploy.local
 /.deploy-local/
 
@@ -54,7 +56,7 @@ Desktop.ini
 *.swo
 *~
 
-# Internal process docs / scratch (never published; see scripts/prepare-public-release.sh)
+# Internal process docs / scratch (never published)
 *.rtf
 *.rtfd/
 
@@ -76,8 +78,6 @@ packages/web/src/**/*.js
 # Misc
 .cache/
 tmp/
-/io.github.TheZwiss.backspace.ci.yml
-/flatpak/node-sources.ci.json
 
 # Worktrees
 .worktrees/
@@ -88,13 +88,8 @@ tmp/
 # Playwright MCP session artifacts (snapshots, console logs, screenshots)
 .playwright-mcp/
 
-# Local files
-Gemini Starter.rtf
-
-# Test harness scratch directories
+# Test harness scratch directory (packages/server/test/helpers/twoInstanceHarness.ts)
 tests/.tmp/
-tests/reports/*
-!tests/reports/.gitkeep
 
 # Claude Code agent scratch — worktrees are embedded repos that, if committed
 # via `git add -A`, produce confusing partial-checkout behavior on clones.

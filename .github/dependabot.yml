@@ -3,9 +3,9 @@
 #   - github-actions → action version bumps (feeds the SHA-pin comments)
 #   - docker   → the Dockerfile base image (FROM node:24-slim, digest-pinned)
 #
-# NOTE (intentional): there is NO docker entry for docker-compose.yml. It sits
-# at the same "/" directory (a second docker entry would collide on
-# ecosystem+directory), and Dependabot's docker ecosystem parses Dockerfiles,
+# NOTE (intentional): there is NO docker entry for deploy/docker-compose.yml.
+# It sits in the same "/deploy" directory (a second docker entry would collide
+# on ecosystem+directory), and Dependabot's docker ecosystem parses Dockerfiles,
 # not `image:` refs in compose. The pinned caddy / livekit-server compose images
 # are updated MANUALLY — see the maintainer checklist in
 # docs/systems/security-scanning.md.
@@ -24,7 +24,7 @@ updates:
           - patch
     ignore:
       # uiohook-napi is pinned by an exact-version pnpm patch
-      # (patches/uiohook-napi@1.5.5.patch). A bump makes the patch path stop
+      # (packages/patches/uiohook-napi@1.5.5.patch). A bump makes the patch path stop
       # matching, breaking `pnpm install --frozen-lockfile` in CI and both
       # Docker stages until the patch is regenerated. Bump it by hand.
       - dependency-name: uiohook-napi
@@ -122,9 +122,7 @@ updates:
       # main process uses (`openAsHidden` on Settings, `wasOpenedAsHidden` on
       # LoginItemSettings, src/main.ts), and an Electron major also moves the
       # Chromium and Node the shipped app runs on. That wants its own PR with a
-      # real smoke test, not a dependency bump. Note a bump here also needs the
-      # Flatpak offline sources regenerated or that leg fails on a missing
-      # tarball. See docs/systems/desktop.md and docs/systems/desktop-security.md.
+      # real smoke test, not a dependency bump. See docs/systems/desktop.md and docs/systems/desktop-security.md.
       # Unblock: a dedicated desktop PR porting the hidden-launch handling.
       - dependency-name: electron
         update-types: ["version-update:semver-major"]
@@ -148,7 +146,7 @@ updates:
           - "*"
 
   - package-ecosystem: docker
-    directory: /
+    directory: /deploy
     schedule:
       interval: weekly
     ignore:

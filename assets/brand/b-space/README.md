@@ -84,7 +84,7 @@
 - **Интерфейс:** `BrandMark` (знак одним цветом: кнопка «Главная», строка «Backspace» в ЛС, шапка страницы проекта) и `Mascot` (персонаж с состояниями: пустые экраны, вход, регистрация, приглашение). Геометрия — `packages/web/src/components/brand/markGeometry.ts`; тест сверяет её с файлами этой папки.
 - **Лендинг:** `site/assets/logo.svg` (фавикон) и `logo-glyph.svg` (маска для `logo.css`).
 
-- **README на GitHub** (`README.md`, `README.en.md`): шапка с горизонтальным логотипом (`<picture>`: `png/lockup-128.png` для тёмной темы, `png/lockup-on-light-128.png` для светлой) и раздел о персонаже с `animated/states-row.svg` и `animated/<state>.svg`.
+- **README на GitHub** (`README.md`, `docs/README.en.md`): шапка с горизонтальным логотипом (`<picture>`: `png/lockup-128.png` для тёмной темы, `png/lockup-on-light-128.png` для светлой) и раздел о персонаже с `animated/states-row.svg` и `animated/<state>.svg`.
 
 ## Название в сборках
 

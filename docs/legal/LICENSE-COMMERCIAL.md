@@ -1,9 +1,15 @@
 # Backspace — Commercial License
 
+> This document comes from the original project,
+> [TheZwiss/backspace](https://github.com/TheZwiss/backspace), and is kept here
+> unchanged in substance. It concerns the original Backspace code and is granted
+> by its author. Changes made in the B:SPACE fork are offered under the
+> AGPL-3.0 only.
+
 Backspace is **dual-licensed**:
 
 1. **Open source** — the GNU Affero General Public License v3.0 (`AGPL-3.0-only`),
-   in the [LICENSE](LICENSE) file. Free for everyone.
+   in the [LICENSE](../../LICENSE) file. Free for everyone.
 2. **Commercial** — described here, for uses the AGPL does not permit.
 
 ## When you need a commercial license
@@ -28,7 +34,8 @@ publishing the source of any modifications you run as a network service — you 
 Relief from the AGPL's copyleft obligations for your specific use, under
 negotiated terms (scope, duration, support, and price depend on your use case).
 The maintainer can grant this because the licensing rights in the codebase are
-consolidated via the [Contributor License Agreement](CLA.md).
+consolidated via the original project's
+[Contributor License Agreement](https://github.com/TheZwiss/backspace/blob/main/CLA.md).
 
 ## Third-party components
 

@@ -5,16 +5,16 @@
 # Syncs code and rebuilds on remote server(s).
 #
 # Usage:
-#   ./deploy.sh              Deploy to both (default)
-#   ./deploy.sh pi           Deploy to Pi (nova.ddns.net)
-#   ./deploy.sh vm           Deploy to VM (orbit.ddns.net)
-#   ./deploy.sh all          Deploy to both
-#   ./deploy.sh --local      Force Pi via LAN IP
-#   ./deploy.sh --remote     Force Pi via public DNS
+#   ./deploy/deploy.sh              Deploy to both (default)
+#   ./deploy/deploy.sh pi           Deploy to Pi (nova.ddns.net)
+#   ./deploy/deploy.sh vm           Deploy to VM (orbit.ddns.net)
+#   ./deploy/deploy.sh all          Deploy to both
+#   ./deploy/deploy.sh --local      Force Pi via LAN IP
+#   ./deploy/deploy.sh --remote     Force Pi via public DNS
 # ============================================================
 
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # ── Build metadata ──────────────────────────────────────────
 # AGPL-3.0 § 13 source offer: capture the git commit locally and pass it to the
@@ -72,7 +72,6 @@ EXCLUDES=(
   --exclude='ARCHITECTURE_AUDIT.md'
   --exclude='Backspace-design-prototype.html'
   --exclude='assets/brand'
-  --exclude='electronbuild.sh'
   --exclude='multi-platform-roadmap.md'
 )
 
@@ -100,7 +99,7 @@ deploy() {
   # Rebuild
   echo "  [3/4] Building and restarting..."
   # Clean up stale renamed containers left by failed recreates (e.g. "d420a6c00439_backspace")
-  ssh "$PI_USER@$host" "cd $path && docker rm -f \$(docker ps -aq --filter 'name=_backspace' 2>/dev/null) 2>/dev/null; BACKSPACE_COMMIT='$BUILD_COMMIT' docker compose up -d --build"
+  ssh "$PI_USER@$host" "cd $path && ./deploy/migrate-layout.sh --yes && docker rm -f \$(docker ps -aq --filter 'name=_backspace' 2>/dev/null) 2>/dev/null; BACKSPACE_COMMIT='$BUILD_COMMIT' docker compose up -d --build"
 
   # Prune old images; keep build cache capped at 2GB for fast rebuilds
   echo "  [4/4] Pruning stale Docker data..."
@@ -148,7 +147,7 @@ case "$TARGET" in
     ;;
 
   *)
-    echo "Usage: ./deploy.sh [pi|vm|all|--local|--remote]"
+    echo "Usage: ./deploy/deploy.sh [pi|vm|all|--local|--remote]"
     exit 1
     ;;
 esac

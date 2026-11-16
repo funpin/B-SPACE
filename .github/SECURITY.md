@@ -42,7 +42,7 @@ report from a human researcher, which is why the section above exists.
 Findings are triaged, not accumulated. Every dismissal carries a written reason.
 The full policy, the workflow inventory, and the register of dismissed findings
 are in
-[`docs/systems/security-scanning.md`](docs/systems/security-scanning.md).
+[`docs/systems/security-scanning.md`](../docs/systems/security-scanning.md).
 
 Automated scanning has known gaps, and they are worth stating plainly. The
 dynamic scan does not authenticate, and because the web shell contains no links
