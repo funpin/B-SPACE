@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Downloads: what reaches the download delegate</title>
+<!--
+  The four ways the web client hands a file to the user, triggered one after
+  another. The shell's report lists what arrived at WKDownloadDelegate and
+  under which name; the page only says which pickers exist.
+-->
+<style>
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; }
+</style>
+</head>
+<body>
+<script>
+window.runProbe = async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const follow = (href, downloadName) => {
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    if (downloadName !== null) anchor.download = downloadName;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  };
+
+  const triggered = [];
+
+  const blobUrl = URL.createObjectURL(new Blob(['hello from a blob'], { type: 'text/plain' }));
+  follow(blobUrl, 'blob-file.txt');
+  triggered.push('blob URL with a download name');
+  await sleep(900);
+
+  follow('data:text/plain;base64,aGVsbG8gZnJvbSBhIGRhdGEgVVJM', 'data-file.txt');
+  triggered.push('data URL with a download name');
+  await sleep(900);
+
+  follow('fixture.bin', 'renamed.bin');
+  triggered.push('same-origin file with a download name');
+  await sleep(900);
+
+  follow('fixture.bin', null);
+  triggered.push('navigation to a type the view cannot show');
+  await sleep(1500);
+
+  return {
+    userAgent: navigator.userAgent,
+    triggered,
+    pickers: {
+      showSaveFilePicker: typeof window.showSaveFilePicker,
+      showOpenFilePicker: typeof window.showOpenFilePicker,
+      showDirectoryPicker: typeof window.showDirectoryPicker,
+    },
+    stillOnThisPage: location.pathname.endsWith('downloads.html'),
+  };
+};
+</script>
+</body>
+</html>

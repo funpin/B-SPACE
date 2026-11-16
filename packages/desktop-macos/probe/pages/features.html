@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Engine features the web client depends on</title>
+<!--
+  Presence of the CSS features, media formats and platform APIs the web client
+  uses, and what the engine says about itself. Run it in the shell and in a
+  Chromium browser; the differences are the list of places where the client
+  takes another branch.
+-->
+<style>
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; }
+</style>
+</head>
+<body>
+<script>
+window.runProbe = async () => {
+  const out = { userAgent: navigator.userAgent };
+
+  out.identity = {
+    platform: navigator.platform,
+    vendor: navigator.vendor,
+    userAgentData: navigator.userAgentData ? { platform: navigator.userAgentData.platform } : null,
+    maxTouchPoints: navigator.maxTouchPoints,
+    language: navigator.language,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    devicePixelRatio: window.devicePixelRatio,
+    isSecureContext: window.isSecureContext,
+    crossOriginIsolated: window.crossOriginIsolated,
+    visibilityState: document.visibilityState,
+    hasFocus: document.hasFocus(),
+  };
+
+  const declarations = {
+    appRegion: ['-webkit-app-region', 'drag'],
+    appRegionUnprefixed: ['app-region', 'drag'],
+    zoom: ['zoom', '1.5'],
+    backdropFilter: ['backdrop-filter', 'blur(16px) saturate(120%)'],
+    backdropFilterPrefixed: ['-webkit-backdrop-filter', 'blur(16px) saturate(120%)'],
+    scrollbarWidth: ['scrollbar-width', 'thin'],
+    scrollbarColor: ['scrollbar-color', 'red blue'],
+    scrollbarGutter: ['scrollbar-gutter', 'stable'],
+    overflowAnchor: ['overflow-anchor', 'none'],
+    colorMix: ['color', 'color-mix(in srgb, red 50%, blue)'],
+    textWrapBalance: ['text-wrap', 'balance'],
+    containerType: ['container-type', 'inline-size'],
+    fieldSizing: ['field-sizing', 'content'],
+    anchorName: ['anchor-name', '--a'],
+    interpolateSize: ['interpolate-size', 'allow-keywords'],
+    viewTransitionName: ['view-transition-name', 'a'],
+    dynamicViewportUnits: ['height', '100dvh'],
+    overscrollBehavior: ['overscroll-behavior', 'contain'],
+    contentVisibility: ['content-visibility', 'auto'],
+    userSelect: ['user-select', 'none'],
+    userSelectPrefixed: ['-webkit-user-select', 'none'],
+    subgrid: ['grid-template-columns', 'subgrid'],
+  };
+  out.css = {};
+  for (const [name, [property, value]] of Object.entries(declarations)) {
+    out.css[name] = CSS.supports(property, value);
+  }
+  const selectors = {
+    has: ':has(a)',
+    focusVisible: ':focus-visible',
+    webkitScrollbar: '::-webkit-scrollbar',
+    startingStyleNesting: '&',
+    popoverOpen: ':popover-open',
+  };
+  out.selectors = {};
+  for (const [name, selector] of Object.entries(selectors)) {
+    out.selectors[name] = CSS.supports(`selector(${selector})`);
+  }
+
+  const type = (value) => typeof value;
+  out.api = {
+    audioContextSetSinkId: type(window.AudioContext?.prototype?.setSinkId),
+    mediaElementSetSinkId: type(HTMLMediaElement.prototype.setSinkId),
+    selectAudioOutput: type(navigator.mediaDevices?.selectAudioOutput),
+    mediaDevices: type(navigator.mediaDevices),
+    getUserMedia: type(navigator.mediaDevices?.getUserMedia),
+    getDisplayMedia: type(navigator.mediaDevices?.getDisplayMedia),
+    enumerateDevices: type(navigator.mediaDevices?.enumerateDevices),
+    audioWorklet: type(window.AudioWorkletNode),
+    webAssembly: type(window.WebAssembly),
+    sharedArrayBuffer: type(window.SharedArrayBuffer),
+    videoDecoder: type(window.VideoDecoder),
+    videoEncoder: type(window.VideoEncoder),
+    audioDecoder: type(window.AudioDecoder),
+    videoTrackGeneratorInWindow: type(window.VideoTrackGenerator),
+    mediaStreamTrackProcessorInWindow: type(window.MediaStreamTrackProcessor),
+    rtcRtpScriptTransform: type(window.RTCRtpScriptTransform),
+    insertableStreams: type(window.RTCRtpSender?.prototype?.createEncodedStreams),
+    showSaveFilePicker: type(window.showSaveFilePicker),
+    showOpenFilePicker: type(window.showOpenFilePicker),
+    serviceWorker: type(navigator.serviceWorker),
+    caches: type(window.caches),
+    indexedDB: type(window.indexedDB),
+    notification: type(window.Notification),
+    notificationPermission: window.Notification ? Notification.permission : null,
+    clipboardWriteText: type(navigator.clipboard?.writeText),
+    clipboardWrite: type(navigator.clipboard?.write),
+    clipboardRead: type(navigator.clipboard?.read),
+    userActivation: type(navigator.userActivation),
+    wakeLock: type(navigator.wakeLock),
+    mediaSession: type(navigator.mediaSession),
+    locks: type(navigator.locks),
+    storageEstimate: type(navigator.storage?.estimate),
+    broadcastChannel: type(window.BroadcastChannel),
+    resizeObserver: type(window.ResizeObserver),
+    intersectionObserver: type(window.IntersectionObserver),
+    requestIdleCallback: type(window.requestIdleCallback),
+    schedulerPostTask: type(window.scheduler?.postTask),
+    structuredClone: type(window.structuredClone),
+    compressionStream: type(window.CompressionStream),
+    intlSegmenter: type(Intl.Segmenter),
+    intlDurationFormat: type(Intl.DurationFormat),
+    viewTransition: type(document.startViewTransition),
+    popover: type(HTMLElement.prototype.showPopover),
+    dialog: type(window.HTMLDialogElement),
+    fullscreenEnabled: document.fullscreenEnabled ?? null,
+    pictureInPictureEnabled: document.pictureInPictureEnabled ?? null,
+    eyeDropper: type(window.EyeDropper),
+    offscreenCanvas: type(window.OffscreenCanvas),
+    webGL2: (() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch (_) { return false; } })(),
+  };
+
+  // What a dedicated worker has: the native capture path decodes frames there.
+  out.worker = await new Promise((resolve) => {
+    const source = `postMessage({
+      videoDecoder: typeof VideoDecoder,
+      videoTrackGenerator: typeof VideoTrackGenerator,
+      mediaStreamTrackProcessor: typeof MediaStreamTrackProcessor,
+      webSocket: typeof WebSocket,
+      offscreenCanvas: typeof OffscreenCanvas,
+    });`;
+    try {
+      const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+      worker.onmessage = (event) => { worker.terminate(); resolve(event.data); };
+      worker.onerror = (event) => { worker.terminate(); resolve({ error: event.message || 'worker error' }); };
+      setTimeout(() => resolve({ error: 'no answer' }), 3000);
+    } catch (error) {
+      resolve({ error: String(error) });
+    }
+  });
+
+  const audio = document.createElement('audio');
+  const video = document.createElement('video');
+  out.media = {
+    oggVorbis: audio.canPlayType('audio/ogg; codecs="vorbis"'),
+    oggOpus: audio.canPlayType('audio/ogg; codecs="opus"'),
+    webmOpus: audio.canPlayType('audio/webm; codecs="opus"'),
+    mp3: audio.canPlayType('audio/mpeg'),
+    aac: audio.canPlayType('audio/mp4; codecs="mp4a.40.2"'),
+    flac: audio.canPlayType('audio/flac'),
+    wav: audio.canPlayType('audio/wav'),
+    mp4H264: video.canPlayType('video/mp4; codecs="avc1.42E01E"'),
+    mp4Hevc: video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"'),
+    mp4Av1: video.canPlayType('video/mp4; codecs="av01.0.05M.08"'),
+    webmVp8: video.canPlayType('video/webm; codecs="vp8"'),
+    webmVp9: video.canPlayType('video/webm; codecs="vp9"'),
+    webmAv1: video.canPlayType('video/webm; codecs="av01.0.05M.08"'),
+    quicktime: video.canPlayType('video/quicktime'),
+    matroska: video.canPlayType('video/x-matroska'),
+  };
+
+  // The system sounds are Ogg Vorbis decoded into a 48 kHz context.
+  out.audioContext = await (async () => {
+    try {
+      const context = new AudioContext({ sampleRate: 48000 });
+      const result = {
+        requestedSampleRate: 48000,
+        sampleRate: context.sampleRate,
+        stateAtCreation: context.state,
+        baseLatency: context.baseLatency ?? null,
+        outputLatency: context.outputLatency ?? null,
+      };
+      await context.close();
+      return result;
+    } catch (error) {
+      return { error: String(error) };
+    }
+  })();
+
+  // Stickers and avatars are plain <img>; these are the formats uploads accept
+  // (png, jpeg, webp, gif) plus AVIF.
+  out.images = {};
+  try {
+    const fixtures = await (await fetch('images.json')).json();
+    for (const [name, source] of Object.entries(fixtures)) {
+      const image = new Image();
+      image.src = source;
+      try {
+        await image.decode();
+        out.images[name] = { decoded: true, width: image.naturalWidth, height: image.naturalHeight };
+      } catch (error) {
+        out.images[name] = { decoded: false, error: String(error) };
+      }
+    }
+  } catch (error) {
+    out.images.error = String(error);
+  }
+
+  // Devices before any permission: what the settings screen sees on first run.
+  out.devices = await (async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return null;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const count = (kind) => devices.filter((device) => device.kind === kind).length;
+      return {
+        audioinput: count('audioinput'),
+        audiooutput: count('audiooutput'),
+        videoinput: count('videoinput'),
+        labelled: devices.filter((device) => device.label).length,
+      };
+    } catch (error) {
+      return { error: String(error) };
+    }
+  })();
+
+  out.supportedConstraints = navigator.mediaDevices?.getSupportedConstraints
+    ? Object.keys(navigator.mediaDevices.getSupportedConstraints()).sort()
+    : null;
+
+  // Cost of one request-and-reply through WKScriptMessageHandlerWithReply,
+  // the mechanism every `invoke` member of the bridge will use.
+  if (typeof window.probeNative === 'function') {
+    const rounds = 200;
+    const samples = [];
+    for (let index = 0; index < rounds; index += 1) {
+      const startedAt = performance.now();
+      await window.probeNative('textChecking');
+      samples.push(performance.now() - startedAt);
+    }
+    samples.sort((a, b) => a - b);
+    out.bridgeRoundTripMs = {
+      rounds,
+      median: samples[Math.floor(rounds / 2)],
+      p95: samples[Math.floor(rounds * 0.95)],
+      max: samples[rounds - 1],
+    };
+    out.window = await window.probeNative('windowInfo');
+    out.textChecking = await window.probeNative('textChecking');
+  }
+
+  return out;
+};
+</script>
+</body>
+</html>

@@ -52,6 +52,7 @@ EXCLUDES=(
   --exclude='packages/*/node_modules'
   --exclude='packages/web/dist'
   --exclude='packages/desktop'
+  --exclude='packages/desktop-macos'
   --exclude='installers'
   --exclude='data'
   --exclude='livekit.yaml'

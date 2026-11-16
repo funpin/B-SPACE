@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebRTC: codecs, encoder stats, loopback</title>
+<!--
+  Two peer connections in one page send a canvas stream to each other, once
+  per codec. The report says which codecs the engine offers, whether media
+  flows without any capture permission, and which fields its sender stats
+  carry. The screen share code reads `encoderImplementation` from those stats
+  (packages/web/src/utils/screenShare.ts, inspectPublishedEncoder).
+
+  This is one engine talking to itself. It says nothing about WebKit against
+  Chromium through an SFU; that needs a live instance.
+-->
+<style>
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; }
+</style>
+</head>
+<body>
+<script>
+window.runProbe = async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const out = { userAgent: navigator.userAgent };
+
+  const describeCodec = (codec) => codec.mimeType + (codec.sdpFmtpLine ? ` ${codec.sdpFmtpLine}` : '');
+  out.senderCodecs = RTCRtpSender.getCapabilities('video')?.codecs.map(describeCodec) ?? null;
+  out.receiverCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs.map(describeCodec) ?? null;
+  out.audioSenderCodecs = RTCRtpSender.getCapabilities('audio')?.codecs.map(describeCodec) ?? null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280;
+  canvas.height = 720;
+  const context = canvas.getContext('2d');
+  let frame = 0;
+  const timer = setInterval(() => {
+    frame += 1;
+    context.fillStyle = `hsl(${frame % 360} 80% 40%)`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#fff';
+    context.font = '96px sans-serif';
+    context.fillText(String(frame), 80, 200);
+  }, 16);
+  const stream = canvas.captureStream(60);
+  const track = stream.getVideoTracks()[0];
+  out.sourceTrack = { readyState: track.readyState, settings: track.getSettings() };
+
+  const loopback = async (mimeType, scalabilityMode) => {
+    const sender = new RTCPeerConnection();
+    const receiver = new RTCPeerConnection();
+    const candidates = [];
+    sender.onicecandidate = (event) => {
+      if (!event.candidate) return;
+      candidates.push(event.candidate.candidate);
+      receiver.addIceCandidate(event.candidate).catch(() => {});
+    };
+    receiver.onicecandidate = (event) => {
+      if (event.candidate) sender.addIceCandidate(event.candidate).catch(() => {});
+    };
+
+    const result = { mimeType, scalabilityMode };
+    try {
+      const encoding = { maxBitrate: 3_000_000 };
+      if (scalabilityMode) encoding.scalabilityMode = scalabilityMode;
+      const transceiver = sender.addTransceiver(track, { direction: 'sendonly', sendEncodings: [encoding] });
+      const preferred = RTCRtpSender.getCapabilities('video').codecs
+        .filter((codec) => codec.mimeType.toLowerCase() === mimeType.toLowerCase());
+      result.offeredVariants = preferred.length;
+      if (preferred.length === 0) {
+        result.skipped = 'the engine does not offer this codec';
+        return result;
+      }
+      try {
+        transceiver.setCodecPreferences(preferred);
+      } catch (error) {
+        result.codecPreferenceError = String(error);
+      }
+
+      await sender.setLocalDescription(await sender.createOffer());
+      await receiver.setRemoteDescription(sender.localDescription);
+      await receiver.setLocalDescription(await receiver.createAnswer());
+      await sender.setRemoteDescription(receiver.localDescription);
+      await sleep(4000);
+
+      result.iceConnectionState = sender.iceConnectionState;
+      result.connectionState = sender.connectionState;
+      result.candidateSamples = candidates.slice(0, 3);
+      result.encodingsAfterNegotiation = transceiver.sender.getParameters().encodings;
+
+      const codecs = new Map();
+      const senderStats = await transceiver.sender.getStats();
+      senderStats.forEach((report) => {
+        if (report.type === 'codec') codecs.set(report.id, report.mimeType);
+      });
+      senderStats.forEach((report) => {
+        if (report.type !== 'outbound-rtp') return;
+        result.outboundKeys = Object.keys(report).sort();
+        result.outbound = {
+          codec: codecs.get(report.codecId) ?? report.mimeType ?? null,
+          bytesSent: report.bytesSent ?? null,
+          framesEncoded: report.framesEncoded ?? null,
+          framesPerSecond: report.framesPerSecond ?? null,
+          frameWidth: report.frameWidth ?? null,
+          frameHeight: report.frameHeight ?? null,
+          active: report.active ?? null,
+          encoderImplementation: report.encoderImplementation ?? null,
+          powerEfficientEncoder: report.powerEfficientEncoder ?? null,
+          scalabilityMode: report.scalabilityMode ?? null,
+          qualityLimitationReason: report.qualityLimitationReason ?? null,
+          keyFramesEncoded: report.keyFramesEncoded ?? null,
+          pliCount: report.pliCount ?? null,
+        };
+      });
+      (await receiver.getStats()).forEach((report) => {
+        if (report.type !== 'inbound-rtp') return;
+        result.inboundKeys = Object.keys(report).sort();
+        result.inbound = {
+          bytesReceived: report.bytesReceived ?? null,
+          framesDecoded: report.framesDecoded ?? null,
+          framesPerSecond: report.framesPerSecond ?? null,
+          decoderImplementation: report.decoderImplementation ?? null,
+          powerEfficientDecoder: report.powerEfficientDecoder ?? null,
+        };
+      });
+    } catch (error) {
+      result.error = String(error);
+    } finally {
+      sender.close();
+      receiver.close();
+    }
+    return result;
+  };
+
+  out.runs = [];
+  out.runs.push(await loopback('video/H264', null));
+  out.runs.push(await loopback('video/VP9', 'L1T3'));
+  out.runs.push(await loopback('video/VP8', null));
+  out.runs.push(await loopback('video/AV1', 'L1T3'));
+
+  clearInterval(timer);
+  track.stop();
+  return out;
+};
+</script>
+</body>
+</html>

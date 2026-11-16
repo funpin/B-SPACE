@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Service worker and Cache Storage</title>
+<!--
+  Registers a worker, waits until it controls the page, fetches through it and
+  writes to Cache Storage. `navigator.serviceWorker` existing does not show any
+  of that. The worker is probe-sw.js beside this page.
+-->
+<style>
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; }
+</style>
+</head>
+<body>
+<script>
+window.runProbe = async () => {
+  const withTimeout = (promise, ms, label) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label}: no answer in ${ms} ms`)), ms)),
+  ]);
+
+  const out = {
+    userAgent: navigator.userAgent,
+    origin: location.origin,
+    isSecureContext: window.isSecureContext,
+    hasServiceWorker: 'serviceWorker' in navigator,
+    hasCaches: 'caches' in window,
+  };
+  if (!out.hasServiceWorker) return out;
+
+  let registration = null;
+  try {
+    registration = await withTimeout(navigator.serviceWorker.register('probe-sw.js'), 8000, 'register');
+    out.registered = true;
+    out.scope = registration.scope;
+    await withTimeout(navigator.serviceWorker.ready, 8000, 'ready');
+    if (!navigator.serviceWorker.controller) {
+      await withTimeout(new Promise((resolve) => {
+        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+      }), 8000, 'controllerchange');
+    }
+    out.controlled = Boolean(navigator.serviceWorker.controller);
+    out.answerThroughWorker = await withTimeout(fetch('sw-echo').then((response) => response.text()), 8000, 'fetch');
+  } catch (error) {
+    out.workerError = String(error);
+  }
+
+  if (out.hasCaches) {
+    try {
+      const cache = await withTimeout(caches.open('probe'), 8000, 'caches.open');
+      await cache.put('entry', new Response('cached'));
+      out.cacheRoundTrip = await (await cache.match('entry')).text();
+      await caches.delete('probe');
+    } catch (error) {
+      out.cacheError = String(error);
+    }
+  }
+
+  try {
+    out.storage = {
+      estimate: await navigator.storage?.estimate?.() ?? null,
+      persisted: await navigator.storage?.persisted?.() ?? null,
+    };
+  } catch (error) {
+    out.storageError = String(error);
+  }
+
+  if (registration) {
+    try {
+      out.unregistered = await registration.unregister();
+    } catch (error) {
+      out.unregisterError = String(error);
+    }
+  }
+  return out;
+};
+</script>
+</body>
+</html>

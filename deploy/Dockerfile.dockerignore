@@ -12,5 +12,6 @@ dist-electron
 .idea
 .vscode
 packages/desktop
+packages/desktop-macos
 npm
 livekit

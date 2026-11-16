@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Glass: does the backdrop blur</title>
+<!--
+  Needs the shell: it reads pixels back.
+
+  A sharp stripe pattern lies under five panels. One has no backdrop filter
+  (the reference), the others repeat the constructions of the Kamen glass
+  tiers in packages/web/src/styles/globals.css:
+    direct     backdrop-filter on the element itself            (.glass, .glass-bubble)
+    pseudo     on ::before at z-index -1 inside isolation       (.glass-modal)
+    nested     the pseudo construction with a glass child on it (modal with a glass close button)
+    animated   the pseudo construction after an entry animation (modals slide up)
+  Stripes that stay sharp under a panel mean the blur was not applied there.
+  Each panel is measured twice: in the view's own snapshot and in what the
+  window server shows, because the two are not guaranteed to agree.
+-->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: repeating-linear-gradient(90deg, #fff 0 4px, #000 4px 8px);
+    font: 12px system-ui;
+    color: #ddd;
+  }
+  .panel { position: absolute; top: 80px; width: 180px; height: 180px; border-radius: 16px; }
+  #reference { left: 40px; background: rgba(27, 27, 31, 0.78); }
+  #direct {
+    left: 260px;
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    backdrop-filter: blur(16px) saturate(120%);
+    background: rgba(27, 27, 31, 0.78);
+  }
+  .pseudo { isolation: isolate; }
+  .pseudo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(24px) saturate(120%);
+    backdrop-filter: blur(24px) saturate(120%);
+    background: rgba(27, 27, 31, 0.86);
+  }
+  #pseudo { left: 480px; }
+  #nested { left: 700px; }
+  #nested > .chip {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    backdrop-filter: blur(16px) saturate(120%);
+    background: rgba(27, 27, 31, 0.78);
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  #animated { left: 920px; animation: slideUp 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+</style>
+</head>
+<body>
+<div id="reference" class="panel"></div>
+<div id="direct" class="panel"></div>
+<div id="pseudo" class="panel pseudo"></div>
+<div id="nested" class="panel pseudo"><div class="chip"></div></div>
+<div id="animated" class="panel pseudo"></div>
+<script>
+window.runProbe = async () => {
+  const out = { userAgent: navigator.userAgent, native: typeof window.probeNative === 'function' };
+  if (!out.native) return out;
+  await new Promise((resolve) => setTimeout(resolve, 900));
+
+  out.panels = {};
+  for (const id of ['reference', 'direct', 'pseudo', 'nested', 'animated']) {
+    const rect = document.getElementById(id).getBoundingClientRect();
+    // The middle of the panel, away from its rounded corners and from the chip.
+    const sample = { x: rect.left + 40, y: rect.top + 60, width: 100, height: 80 };
+    const entry = {};
+    for (const source of ['snapshot', 'window']) {
+      try {
+        entry[source] = await window.probeNative('pixelStats', { ...sample, source });
+      } catch (error) {
+        entry[source] = { error: String(error) };
+      }
+    }
+    out.panels[id] = entry;
+  }
+  out.bareStripes = {
+    snapshot: await window.probeNative('pixelStats', { x: 40, y: 300, width: 100, height: 80, source: 'snapshot' }),
+    window: await window.probeNative('pixelStats', { x: 40, y: 300, width: 100, height: 80, source: 'window' }).catch((error) => ({ error: String(error) })),
+  };
+  return out;
+};
+</script>
+</body>
+</html>

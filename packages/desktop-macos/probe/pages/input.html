@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Typing and clicks: substitutions, user activation</title>
+<!--
+  Needs the shell (run with --activate): it types real key events and sends a
+  real click.
+
+  1. What the view does to typed text. Chromium leaves straight quotes and
+     double hyphens alone; WebKit follows the system keyboard settings unless
+     told otherwise. The report carries the typed sample as it ended up in a
+     textarea and in a contenteditable element, next to the state of the
+     editing toggles.
+  2. How long a click counts as a user gesture. The client awaits bridge
+     answers between the click and getDisplayMedia.
+-->
+<style>
+  body { font: 14px system-ui; background: #0c0c0e; color: #ddd; margin: 0; }
+  textarea, #editable { position: absolute; left: 20px; width: 500px; height: 60px; background: #1b1b1f; color: #ddd; border: 0; padding: 8px; }
+  textarea { top: 20px; }
+  #editable { top: 120px; }
+  #pad { position: absolute; left: 20px; top: 240px; width: 300px; height: 120px; background: #6e5bef; }
+</style>
+</head>
+<body>
+<textarea id="area"></textarea>
+<div id="editable" contenteditable="true"></div>
+<div id="pad"></div>
+<script>
+window.runProbe = async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const out = { userAgent: navigator.userAgent, native: typeof window.probeNative === 'function' };
+  if (!out.native) return out;
+
+  out.window = await window.probeNative('windowInfo');
+  out.textCheckingBefore = await window.probeNative('textChecking');
+
+  const sample = '"q" \'s\' a -- b ... (c) teh end';
+  out.typed = sample;
+  const area = document.getElementById('area');
+  const editable = document.getElementById('editable');
+
+  await window.probeNative('click', { x: 100, y: 50 });
+  await sleep(150);
+  out.focusedAfterClick = document.activeElement?.id || document.activeElement?.tagName;
+  await window.probeNative('type', { text: `${sample} ` });
+  await sleep(700);
+  out.textarea = area.value;
+
+  await window.probeNative('click', { x: 100, y: 150 });
+  await sleep(150);
+  await window.probeNative('type', { text: `${sample} ` });
+  await sleep(700);
+  out.contentEditable = editable.textContent;
+
+  out.textCheckingAfter = await window.probeNative('textChecking');
+
+  // User activation after a click, sampled across a bridge round trip and
+  // then over ten seconds.
+  out.userActivationApi = typeof navigator.userActivation;
+  if (navigator.userActivation) {
+    const pad = document.getElementById('pad');
+    const timeline = new Promise((resolve) => {
+      pad.addEventListener('mousedown', async () => {
+        const startedAt = performance.now();
+        const samples = [{ at: 'in the handler', ms: 0, isActive: navigator.userActivation.isActive }];
+        await window.probeNative('windowInfo');
+        samples.push({
+          at: 'after one bridge round trip',
+          ms: Math.round(performance.now() - startedAt),
+          isActive: navigator.userActivation.isActive,
+        });
+        for (const mark of [500, 1000, 2000, 4000, 6000, 10000]) {
+          await sleep(Math.max(0, mark - (performance.now() - startedAt)));
+          samples.push({
+            at: `${mark} ms`,
+            ms: Math.round(performance.now() - startedAt),
+            isActive: navigator.userActivation.isActive,
+            hasBeenActive: navigator.userActivation.hasBeenActive,
+          });
+        }
+        resolve(samples);
+      }, { once: true });
+      setTimeout(() => resolve('the click did not reach the page'), 15000);
+    });
+    await window.probeNative('click', { x: 100, y: 300 });
+    out.activation = await timeline;
+  }
+
+  return out;
+};
+</script>
+</body>
+</html>
