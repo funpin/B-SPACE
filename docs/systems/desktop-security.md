@@ -121,7 +121,7 @@ designated => identifier "com.backspace.desktop" and certificate root = H"18a130
 | Certificate | `CN=B-SPACE Code Signing, O=B-SPACE`, RSA 3072, self-signed, EKU codeSigning, valid to 2056-11-13 |
 | SHA-1 (what the DR pins) | `18A1302A31682D9B426C6297B4B642837AB22308` |
 | CI secrets | `MAC_SIGN_P12` (base64 of the `.p12`), `MAC_SIGN_P12_PASSWORD` |
-| Used by | `release.yml` (macOS job; `MAC_SIGN_REQUIRED=1` fails the release if the secret is missing), `desktop-test-build.yml` (when the secret is available) |
+| Used by | `release.yml` (macOS job; `MAC_SIGN_REQUIRED=1` fails the release if the secret is missing), `desktop-test-build.yml` (when the secret is available). The native macOS client signs the same way with `packages/desktop-macos/scripts/sign.sh`, a port of `macSign.js` reading the same variables; no workflow passes it the secret yet (`desktop-macos.yml` exercises it with a certificate made for the run) |
 | Signing | `macSign.js` imports the `.p12` into a throwaway keychain (random password, codesign-only partition list), signs `--timestamp=none` without hardened runtime, checks the DR names a certificate hash, deletes the keychain |
 | Backup | The owner keeps the `.p12` and its password outside the repository. **Losing them is permanent**: a new certificate is a new DR, so every installed copy would need one manual reinstall and fresh permission grants, exactly like the switch from ad-hoc |
 

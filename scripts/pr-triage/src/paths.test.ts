@@ -58,6 +58,9 @@ describe('classifyPaths', () => {
       'deploy/deploy.sh',
       'packages/desktop/electron-builder.yml',
       'packages/desktop/scripts/afterPack.js',
+      'packages/desktop-macos/Package.swift',
+      'packages/desktop-macos/scripts/bundle.sh',
+      'packages/desktop-macos/scripts/sign.sh',
     ];
     const hits = classifyPaths(files(...names));
     expect(hits.map((h) => h.path)).toEqual(names);
@@ -66,6 +69,11 @@ describe('classifyPaths', () => {
 
   it('leaves the documented env example and files that only share a name alone', () => {
     expect(classifyPaths(files('deploy/.env.example', 'Dockerfile', 'docker-compose.yml', 'install.sh'))).toEqual([]);
+    expect(classifyPaths(files(
+      'packages/desktop-macos/Sources/BSpaceCore/NavigationPolicy.swift',
+      'packages/desktop-macos/contract/harness.html',
+      'Package.swift',
+    ))).toEqual([]);
   });
 
   it('puts scanner configuration under scannerConfig', () => {

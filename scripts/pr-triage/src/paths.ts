@@ -7,8 +7,10 @@ import type { ChangedFile, PathHit, PipelineArea } from './types.ts';
  * `.github/workflows/` actually execute or read on a fork PR, not from a
  * generic notion of "sensitive files". `ci.yml` runs `pnpm install`,
  * `pnpm build`, `pnpm -r test` and a Docker build; `dast.yml` builds and
- * starts the container image from `deploy/`; `security.yml`/`codeql.yml`
- * read their scanner configuration from the checkout. A change to any of those inputs alters what runs or what is
+ * starts the container image from `deploy/`; `desktop-macos.yml` runs the
+ * SwiftPM manifest and the build scripts of the native macOS client;
+ * `security.yml`/`codeql.yml` read their scanner configuration from the
+ * checkout. A change to any of those inputs alters what runs or what is
  * checked, so it is listed here.
  *
  * Deliberately NOT listed: application source, tests, Vite/PostCSS/vitest
@@ -40,7 +42,13 @@ const RULES: Array<{ area: PipelineArea; test: (path: string) => boolean }> = [
       // scripts. `.env.example` is documentation and is not listed.
       (p.startsWith('deploy/') && p !== 'deploy/.env.example') ||
       p === 'packages/desktop/electron-builder.yml' ||
-      p.startsWith('packages/desktop/scripts/'),
+      p.startsWith('packages/desktop/scripts/') ||
+      // The native macOS client: its SwiftPM manifest is code the runner
+      // executes before anything is compiled, and its scripts build, sign and
+      // check the bundle. Its Swift sources are application source, like the
+      // TypeScript of every other package.
+      p === 'packages/desktop-macos/Package.swift' ||
+      p.startsWith('packages/desktop-macos/scripts/'),
   },
   {
     area: 'scannerConfig',

@@ -15,13 +15,16 @@
 #         release        the identity of the shipped app: com.backspace.desktop,
 #                        Application Support/Backspace, the backspace:// scheme.
 #                        This is what replaces the Electron build.
-#   --sign <identity>    codesign identity; "-" (default) signs ad hoc
 #   --run                start the bundle after building it, in the foreground
 #   --help               this text
 #
 # The version comes from the root package.json. The picker page, the bridge
 # contract and the icon are taken from packages/desktop, which owns them for
 # both shells. Prints the path of the bundle on standard output.
+#
+# Signing is scripts/sign.sh: with MAC_SIGN_P12 and MAC_SIGN_P12_PASSWORD in
+# the environment the bundle is signed with that certificate, otherwise ad hoc;
+# MAC_SIGN_REQUIRED=1 refuses the ad hoc fallback.
 
 set -euo pipefail
 # Resolved before the cd below: $0 may be relative to the caller's directory.
@@ -29,7 +32,6 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$SELF")/.."
 
 IDENTITY="dev"
-SIGN="-"
 RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -39,14 +41,9 @@ while [[ $# -gt 0 ]]; do
       IDENTITY="$2"
       shift
       ;;
-    --sign)
-      [[ $# -ge 2 ]] || { echo "bundle.sh: --sign needs a value" >&2; exit 64; }
-      SIGN="$2"
-      shift
-      ;;
     --run) RUN=true ;;
     --help|-h)
-      sed -n '2,24p' "$SELF" | sed 's/^# \{0,1\}//'
+      sed -n '2,27p' "$SELF" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -144,8 +141,7 @@ plutil -lint "$APP/Contents/Info.plist" >&2
 
 # Signed last, over the finished bundle, so the Info.plist and the resources
 # are bound to the signature.
-codesign --force --sign "$SIGN" "$APP" >&2
-codesign --verify --strict "$APP" >&2
+"$(dirname "$SELF")/sign.sh" "$APP"
 
 APP_PATH="$PWD/$APP"
 echo "$APP_PATH"

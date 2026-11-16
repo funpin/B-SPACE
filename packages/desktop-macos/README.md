@@ -45,8 +45,33 @@ the Electron build.
 
 The bundle takes three files from `packages/desktop`, which owns them for both
 shells: `resources/instance-picker.html`, `src/bridgeContract.json` and
-`build/icon.icns`. The version comes from the root `package.json`. The
-signature is ad hoc unless `--sign <identity>` names a certificate.
+`build/icon.icns`. The version comes from the root `package.json`.
+
+### Signing
+
+`bundle.sh` signs through `scripts/sign.sh`, a port of
+`packages/desktop/scripts/macSign.js` that reads the same variables. With
+`MAC_SIGN_P12` (base64 of a `.p12`) and `MAC_SIGN_P12_PASSWORD` set, the
+bundle is signed with that certificate through a throwaway keychain, and the
+script fails unless the designated requirement then names the certificate's
+hash; that requirement is what keeps macOS permissions across updates (see
+"Stable signing identity" in
+[desktop-security.md](../../docs/systems/desktop-security.md)). Without them
+the signature is ad hoc, which is right for a development build.
+`MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+
+`scripts/sign-selftest.sh` checks the certificate path without the project's
+certificate: it makes a throwaway one, builds the bundle signed with it,
+confirms the requirement and that the keychain search list is as it was, and
+signs the bundle ad hoc again.
+
+### CI
+
+`.github/workflows/desktop-macos.yml` runs `swift build`, `swift test`, the
+contract check and the signing self-test on a macOS runner. It starts only
+when something the package builds from changes (the package, the three files
+taken from `packages/desktop`, the root `package.json`, the workflow), because
+macOS minutes are the expensive kind.
 
 ### The bridge
 
