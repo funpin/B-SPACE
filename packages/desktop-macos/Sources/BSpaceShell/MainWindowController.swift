@@ -37,6 +37,10 @@ public final class MainWindowController: NSObject {
     private var knownInstanceOrigins: Set<String> = []
     /// The address the shell asked for itself, until that load ends.
     private var shellLoad: URL?
+    /// Counts the shell's own loads, so that one that waited for the import
+    /// does not go ahead after a newer one was asked for.
+    private var shellLoadCount = 0
+    private let localStorageImporter: LocalStorageImporter
     private var hasRevealedWindow = false
 
     private let windowStateStore: WindowStateStore
@@ -52,11 +56,25 @@ public final class MainWindowController: NSObject {
     /// How long the window has to stay still before its place is written.
     static let stateSaveDelay: TimeInterval = 0.3
 
-    /// - Parameter showsWindow: false in a test run that drives the shell
-    ///   without putting a window on screen.
-    public init(environment: ShellEnvironment, showsWindow: Bool = true) throws {
+    /// - Parameters:
+    ///   - showsWindow: false in a test run that drives the shell without
+    ///     putting a window on screen.
+    ///   - websiteDataStore: where the pages keep their data. A test run
+    ///     passes one that is not written to disk.
+    public init(
+        environment: ShellEnvironment,
+        showsWindow: Bool = true,
+        websiteDataStore: WKWebsiteDataStore = .default()
+    ) throws {
         self.environment = environment
         self.showsWindow = showsWindow
+        // The Electron build keeps its Chromium profile in the user-data
+        // folder itself.
+        localStorageImporter = LocalStorageImporter(
+            profileDirectory: environment.userDataDirectory,
+            ledgerDirectory: environment.userDataDirectory,
+            dataStore: websiteDataStore
+        )
         instanceStore = InstanceURLStore(directory: environment.userDataDirectory)
         windowStateStore = WindowStateStore(directory: environment.userDataDirectory)
 
@@ -66,6 +84,7 @@ public final class MainWindowController: NSObject {
         TextCheckingDefaults.apply()
 
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = websiteDataStore
         configuration.applicationNameForUserAgent = environment.userAgentApplicationName
         // Electron's default: media plays without a gesture. Voice and the
         // notification sounds rely on it.
@@ -151,10 +170,19 @@ public final class MainWindowController: NSObject {
     /// binds the page's navigations.
     public func load(_ url: URL) {
         shellLoad = url
+        shellLoadCount += 1
         if url.isFileURL {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-        } else {
-            webView.load(URLRequest(url: url))
+            return
+        }
+        // An instance the Electron build was signed in to gets that build's
+        // localStorage first, once (LocalStorageImporter). With nothing to
+        // bring over this goes straight on.
+        let count = shellLoadCount
+        localStorageImporter.importIfNeeded(for: url) { [weak self] _ in
+            guard let self, self.shellLoadCount == count else { return }
+            self.shellLoad = url
+            self.webView.load(URLRequest(url: url))
         }
     }
 

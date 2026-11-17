@@ -84,6 +84,7 @@ and formats, so either shell reads what the other wrote
 |------|------|------|
 | `instance-url.json` | The chosen instance | `InstanceURLStore` |
 | `window-state.json` | Size, position and whether the window was zoomed | `WindowStateStore`, `WindowPlacement` |
+| `local-storage-import.json` | The origins whose `localStorage` was brought over from the Electron build (native app only) | `LocalStorageImportLedger` |
 
 `window-state.json` holds Electron's coordinates: points from the top left
 corner of the primary display, Y growing downwards. AppKit counts from the
@@ -93,6 +94,46 @@ the window is centred at its saved size. The place is written 0.3 s after the
 window stops moving, when it is closed and when the app quits; while the
 window is zoomed the un-zoomed frame is what is written, and a full-screen
 window is not written at all.
+
+### What comes over from the Electron build
+
+The web client keeps the sign-in, the connected instances and its settings in
+`localStorage`. In the Electron build that is a LevelDB database inside the
+same folder (`Local Storage/leveldb`: the folder is also Electron's Chromium
+profile); in the native app it is WebKit's own storage. So that moving from one
+build to the other does not sign anyone out, the native app brings the items
+over:
+
+- **When.** Before the shell loads an instance, for that instance's origin
+  (and, for an `http://` address on the default port, the `https://` origin of
+  the same host, where a redirect would have put the storage). Once per origin:
+  `local-storage-import.json` lists the origins already offered their items.
+- **What.** Every item of the origin, as it is. Only the origin's own storage:
+  storage partitioned under an embedding site is left out. IndexedDB is not
+  brought over; the web client keeps only file handles of resumable uploads
+  there, and those are Chromium objects.
+- **Never over existing data.** If WebKit already holds items for the origin,
+  nothing is written: what the native app stored is newer.
+- **How.** `LevelDB` reads the database without the LevelDB library (manifest,
+  tables with Snappy blocks, write-ahead log; the newest entry for a key
+  wins). `ChromiumLocalStorage` turns the entries into items by origin.
+  `LocalStorageImporter` writes them through a second web view that never
+  shows and loads nothing from the network: an empty document given the
+  origin, in the main web view's data store. The items are arguments of a
+  function call, never page source.
+- **The Electron profile is only read**, so going back to the Electron build
+  finds it as it was.
+- **When it fails** (a damaged database, a refusal by the page) the instance
+  loads without it and the user signs in again. A failure to read is tried
+  again at the next launch; a refusal is not.
+
+`ContractCheck --check electron-profile --profile <folder>` lists what the
+import finds in a profile: origins, item counts and sizes, and with
+`--keys yes` the item names. It never prints a value.
+
+The tests read a database written by the real LevelDB library
+(`Tests/BSpaceCoreTests/Fixtures/chromium-local-storage`), made by
+`scripts/make-leveldb-fixture.mjs`; everything in it is made up.
 
 ### The bridge
 
@@ -120,7 +161,12 @@ scripts/contract-check.sh [--out report.json]
 runs the real shell with no window on screen and its settings in a temporary
 folder. It first checks the window state on this machine's displays
 (`ContractCheck --check window-state`: the window appears where the file says,
-the file follows a move, a lost place is centred). Then it loads
+the file follows a move, a lost place is centred) and the import of the
+Electron build's `localStorage` (`--check local-storage-import`: the fixture's
+items reach a page of their origin as they are, an origin is imported once,
+storage in use is kept, the shell imports before it loads an instance; the
+data store is never written to disk, and the one address asked of the network
+is a `.test` name that does not exist). Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

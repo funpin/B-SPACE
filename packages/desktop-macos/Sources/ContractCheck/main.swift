@@ -26,6 +26,18 @@ import WebKit
 // this machine, that the shell puts its window where window-state.json says,
 // writes the file again when the window moves, and centres the window when
 // the saved place is on no display. No window is shown.
+//
+// With --check local-storage-import --fixture <leveldb folder> it checks the
+// import of the Electron build's localStorage in a data store that is never
+// written to disk: the items of the fixture profile reach a page of their
+// origin as they are, an origin is imported once, storage already in use is
+// left alone, and the shell imports before it loads an instance. The one
+// address it asks the network for does not exist (a .test name).
+//
+// With --check electron-profile --profile <folder> it reads the localStorage of
+// an Electron profile the way the import does and prints, for every origin,
+// how many items there are and how large they are; --keys yes adds the item
+// names. Values are never printed: they hold the sign-in. Needs nothing else.
 
 /// Members the harness reads but does not call: they navigate the window away
 /// from the harness or act on a window that is not on screen. The picker and
@@ -114,7 +126,34 @@ func violations(report: [String: Any], members: [BridgeContract.Member]) -> [Str
     return found
 }
 
+/// Lists what the import would find in a profile, and ends the process.
+func describeElectronProfile(_ profile: URL, withKeys: Bool) -> Never {
+    let storage: ChromiumLocalStorage?
+    do {
+        storage = try ChromiumLocalStorage.read(profileDirectory: profile)
+    } catch {
+        fail("cannot read the profile's localStorage: \(error)")
+    }
+    guard let storage else {
+        print("no localStorage database in \(profile.path)")
+        exit(0)
+    }
+    for origin in storage.itemsByOrigin.keys.sorted() {
+        let items = storage.itemsByOrigin[origin] ?? [:]
+        let size = items.reduce(0) { $0 + $1.key.utf16.count + $1.value.utf16.count }
+        print("\(origin): \(items.count) items, \(size) UTF-16 units")
+        guard withKeys else { continue }
+        for key in items.keys.sorted() {
+            print("  \(key): \(items[key]?.utf16.count ?? 0)")
+        }
+    }
+    exit(0)
+}
+
 let arguments = options()
+if arguments["check"] == "electron-profile" {
+    describeElectronProfile(fileURL(arguments, "profile"), withKeys: arguments["keys"] == "yes")
+}
 let contractURL = fileURL(arguments, "contract")
 let pickerURL = fileURL(arguments, "picker")
 let visitAddress = arguments["visit"]
@@ -224,9 +263,169 @@ func checkWindowState() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
-if let checkName {
-    guard checkName == "window-state" else { fail("--check takes window-state") }
+/// Tells when a web view has finished loading.
+final class LoadWatcher: NSObject, WKNavigationDelegate {
+    var hasEnded = false
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { hasEnded = true }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { hasEnded = true }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        hasEnded = true
+    }
+}
+
+/// Runs the main run loop until `isDone` or the time is up.
+func wait(_ seconds: TimeInterval = 20, until isDone: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !isDone() && Date() < deadline {
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+    return isDone()
+}
+
+/// Runs `script` (the body of an async function) in an empty document of
+/// `origin` in `store`, a web view of its own: what a page of that origin
+/// would see. Nil when the document could not be made or the script failed.
+func evaluate(_ script: String, at origin: String, in store: WKWebsiteDataStore) -> Any? {
+    let configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = store
+    let view = WKWebView(frame: .zero, configuration: configuration)
+    let watcher = LoadWatcher()
+    view.navigationDelegate = watcher
+    view.loadHTMLString("<!doctype html><title></title>", baseURL: URL(string: origin + "/"))
+    guard wait(until: { watcher.hasEnded }) else { return nil }
+
+    var answer: Result<Any, Error>?
+    view.callAsyncJavaScript(script, arguments: [:], in: nil, in: .defaultClient) { answer = $0 }
+    guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+    return value
+}
+
+/// The localStorage import check. Ends the process.
+func checkLocalStorageImport(fixture: URL) -> Never {
+    let origin = "https://chat.example.test"
+    let readAll = "return Object.fromEntries(Object.entries(window.localStorage));"
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    // The fixture, laid out as the Electron build's profile.
+    let database = temporary.appendingPathComponent(ChromiumLocalStorage.relativePath, isDirectory: true)
+    let expected: [String: String]
+    do {
+        try FileManager.default.createDirectory(at: database.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: fixture, to: database)
+        guard let items = try ChromiumLocalStorage.read(profileDirectory: temporary)?.itemsByOrigin[origin], !items.isEmpty else {
+            fail("the fixture holds nothing for \(origin)")
+        }
+        expected = items
+    } catch {
+        fail("cannot prepare the fixture profile: \(error)")
+    }
+
+    func ledgerDirectory(_ name: String) -> URL {
+        temporary.appendingPathComponent(name, isDirectory: true)
+    }
+    func run(_ importer: LocalStorageImporter, _ address: String) -> [String: LocalStorageImporter.Outcome]? {
+        guard let url = URL(string: address) else { fail("bad address \(address)") }
+        var outcomes: [String: LocalStorageImporter.Outcome]?
+        importer.importIfNeeded(for: url) { outcomes = $0 }
+        return wait(until: { outcomes != nil }) ? outcomes : nil
+    }
+    func stored(in store: WKWebsiteDataStore) -> [String: String]? {
+        evaluate(readAll, at: origin, in: store) as? [String: String]
+    }
+
+    // 1. The items reach a page of their origin, all of them, as they are.
+    let store = WKWebsiteDataStore.nonPersistent()
+    let first = LocalStorageImporter(profileDirectory: temporary, ledgerDirectory: ledgerDirectory("one"), dataStore: store)
+    let firstOutcomes = run(first, origin + "/channels/1")
+    if firstOutcomes != [origin: .imported(expected.count)] {
+        problems.append("a first import should bring over \(expected.count) items, got \(String(describing: firstOutcomes))")
+    }
+    if let found = stored(in: store) {
+        if found != expected {
+            let wrong = expected.keys.filter { found[$0] != expected[$0] }.sorted().prefix(5)
+            problems.append("the page sees \(found.count) items, the profile has \(expected.count); first differences: \(wrong.joined(separator: ", "))")
+        }
+    } else {
+        problems.append("could not read the storage back after the import")
+    }
+
+    // 2. Once per origin: the ledger stops a second import, at once.
+    if LocalStorageImportLedger(directory: ledgerDirectory("one")).load() != [origin] {
+        problems.append("the import was not recorded in the ledger")
+    }
+    var answeredAtOnce: [String: LocalStorageImporter.Outcome]?
+    first.importIfNeeded(for: URL(fileURLWithPath: "/")) { answeredAtOnce = $0 }
+    if answeredAtOnce != [:] { problems.append("a file address should be answered at once with nothing") }
+    answeredAtOnce = nil
+    if let url = URL(string: origin + "/") {
+        first.importIfNeeded(for: url) { answeredAtOnce = $0 }
+    }
+    if answeredAtOnce != [:] { problems.append("an origin already imported should be answered at once with nothing") }
+
+    // 3. Storage already in use is left alone, whatever the profile says.
+    _ = evaluate("window.localStorage.setItem('backspace-language', 'de'); return true;", at: origin, in: store)
+    let second = LocalStorageImporter(profileDirectory: temporary, ledgerDirectory: ledgerDirectory("two"), dataStore: store)
+    let secondOutcomes = run(second, origin + "/")
+    if secondOutcomes != [origin: .kept] {
+        problems.append("storage in use should be kept, got \(String(describing: secondOutcomes))")
+    }
+    if stored(in: store)?["backspace-language"] != "de" {
+        problems.append("the import overwrote storage that was in use")
+    }
+    if LocalStorageImportLedger(directory: ledgerDirectory("two")).load() != [origin] {
+        problems.append("an origin whose storage was kept should be recorded too")
+    }
+
+    // 4. An http:// address that will be redirected to https:// gets the
+    //    https:// origin's items.
+    let redirected = WKWebsiteDataStore.nonPersistent()
+    let third = LocalStorageImporter(profileDirectory: temporary, ledgerDirectory: ledgerDirectory("three"), dataStore: redirected)
+    let thirdOutcomes = run(third, "http://chat.example.test/")
+    if thirdOutcomes != [origin: .imported(expected.count)] {
+        problems.append("an http:// address should import its https:// origin, got \(String(describing: thirdOutcomes))")
+    }
+
+    // 5. The shell imports before it loads an instance. The address does not
+    //    exist, so the load fails; what matters is what is in the storage.
+    let shellStore = WKWebsiteDataStore.nonPersistent()
+    do {
+        let shell = try MainWindowController(environment: environment, showsWindow: false, websiteDataStore: shellStore)
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        guard let url = URL(string: origin + "/") else { fail("bad address") }
+        shell.load(url)
+        if !wait(60, until: { hasEnded }) {
+            problems.append("the shell's load of the instance never ended")
+        }
+        if stored(in: shellStore) != expected {
+            problems.append("the shell loaded an instance without importing its storage first")
+        }
+        if LocalStorageImportLedger(directory: temporary).load() != [origin] {
+            problems.append("the shell did not record its import")
+        }
+    } catch {
+        fail(String(describing: error))
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "localStorage import: \(expected.count) items brought over, once per origin, storage in use kept"
+        : "localStorage import: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+switch checkName {
+case nil:
+    break
+case "window-state":
     checkWindowState()
+case "local-storage-import":
+    checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
+default:
+    fail("--check takes window-state, local-storage-import or electron-profile")
 }
 
 let contract: BridgeContract

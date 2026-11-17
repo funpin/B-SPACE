@@ -3,7 +3,8 @@
 # contract and the picker in packages/desktop and at contract/harness.html.
 # The shell under test is the real one (BSpaceShell), with no window on screen
 # and its settings in a temporary folder. Before the bridge it checks the
-# shell's window state on this machine's displays (--check window-state).
+# shell's window state on this machine's displays (--check window-state) and
+# the import of the Electron build's localStorage (--check local-storage-import).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -47,6 +48,14 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --check window-state >&2
+
+# The import of the Electron build's localStorage, from the fixture profile the
+# tests read, into a data store that is never written to disk.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --check local-storage-import \
+  --fixture "$PWD/Tests/BSpaceCoreTests/Fixtures/chromium-local-storage/leveldb" >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \
