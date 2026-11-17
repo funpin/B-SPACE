@@ -43,8 +43,30 @@ public final class SystemNotificationPresenter: NSObject, NotificationPresenter 
     /// the Electron build stands and nothing is asked.
     public func prepare() {
         center.getNotificationSettings { [center] settings in
+            // In the log once per launch: "why is there no notification, no
+            // badge" starts with what the user has allowed.
+            func allowed(_ setting: UNNotificationSetting) -> String {
+                setting == .enabled ? "yes" : "no"
+            }
+            NSLog(
+                "[notifications] permission %@: banners %@, sounds %@, badge %@",
+                Self.describe(settings.authorizationStatus),
+                allowed(settings.alertSetting),
+                allowed(settings.soundSetting),
+                allowed(settings.badgeSetting)
+            )
             guard settings.authorizationStatus == .notDetermined else { return }
             center.requestAuthorization(options: Self.permissions) { _, _ in }
+        }
+    }
+
+    private static func describe(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "not asked yet"
+        case .denied: return "refused"
+        case .authorized: return "given"
+        case .provisional: return "provisional"
+        @unknown default: return "unknown (\(status.rawValue))"
         }
     }
 
