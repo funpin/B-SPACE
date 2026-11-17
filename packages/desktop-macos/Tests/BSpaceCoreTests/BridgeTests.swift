@@ -33,7 +33,9 @@ private let small = """
 @Suite struct BridgeContractTests {
     @Test func readsTheRepositoryContract() throws {
         let contract = try BridgeContract(data: repositoryContractData())
-        #expect(contract.members(of: .backspace).count == 59)
+        #expect(contract.members(of: .backspace).count == 60)
+        #expect(contract.members(of: .backspace).filter { $0.nativeOnly == true }.map(\.name) == ["setDragRegions"])
+        #expect(contract.callChannels(of: .backspace)["set-drag-regions"] == .fire)
         #expect(contract.eventChannels(of: .backspace).count == 17)
         #expect(contract.members(of: .bspaceUpdate).count == 6)
         #expect(contract.callChannels(of: .backspace)["get-app-version"] == .invoke)
@@ -52,6 +54,8 @@ private let small = """
             #"{"backspace": [{"name": "a", "kind": "fire", "channel": "a"}, {"name": "a", "kind": "fire", "channel": "b"}], "bspaceUpdate": []}"#,
             #"{"backspace": [{"name": "a", "kind": "fire", "channel": "a"}, {"name": "b", "kind": "invoke", "channel": "a"}], "bspaceUpdate": []}"#,
             #"{"backspace": [{"name": "a b", "kind": "fire", "channel": "a"}], "bspaceUpdate": []}"#,
+            #"{"backspace": [{"name": "a", "kind": "fire", "channel": "a", "nativeOnly": false}], "bspaceUpdate": []}"#,
+            #"{"backspace": [{"name": "a", "kind": "fire", "channel": "a", "nativeOnly": "yes"}], "bspaceUpdate": []}"#,
         ]
         for json in cases {
             #expect(throws: BridgeContract.Malformed.self) { try contract(json) }
@@ -202,6 +206,7 @@ private let small = """
         "get-auto-launch-settings", "set-auto-launch-settings",
         "show-notification", "set-badge-count", "set-language",
         "renderer-ready", "recovery-action", "get-recovery-state",
+        "set-drag-regions",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

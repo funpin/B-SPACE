@@ -984,9 +984,15 @@ The bridges are also described as data. `bridgeContract.json` lists every member
 
 One channel may carry a call and an event (`keybind-portal-status`); two calls, or two events, may not share one.
 
+A member may also carry `"nativeOnly": true`: it exists in the native macOS shell alone, standing in for something Chromium does by itself and WebKit does not. The preloads do not have it and the main process does not know its channel (the contract test checks both), so the web client declares it optional in `electron.d.ts` and checks that it is there before calling. There is one so far:
+
+| Member | Channel | What it is for |
+|--------|---------|----------------|
+| `setDragRegions({ drag, noDrag })` | `set-drag-regions` (`fire`) | WebKit drops `-webkit-app-region`, so the web client reports the rectangles of its `.titlebar-drag` and `.titlebar-no-drag` elements (viewport coordinates, as `getBoundingClientRect()` gives them) and the shell drags the window by them. `packages/web/src/platform/windowDragRegions.ts` measures and reports; see "Dragging the window" in `packages/desktop-macos/README.md` for the shell's side. In Electron nothing is reported and the CSS property does the work. |
+
 Two shells implement the description: Electron's preload scripts here, and the native macOS shell (`packages/desktop-macos`), which builds its page-side script from the file as it is and refuses to start with a call channel nobody answers. The file is JSON so that the Swift build reads it without a generated copy. `bridgeContract.ts` parses and types it (`BRIDGE_CONTRACT`, `parseBridgeContract`).
 
-A sandboxed preload cannot require a local module, so `preload.ts` and `updatePreload.ts` stay written by hand. `bridgeContract.test.ts` reads their source with the TypeScript compiler and fails when a preload and the description disagree in either direction, when the description names a channel the main process does not know, or when the main window handles a channel the description lacks. **A new bridge member is added in three places in one change:** the preload, `bridgeContract.json`, and `electron.d.ts` in the web client; the native macOS shell then fails its own tests until it answers the new channel.
+A sandboxed preload cannot require a local module, so `preload.ts` and `updatePreload.ts` stay written by hand. `bridgeContract.test.ts` reads their source with the TypeScript compiler and fails when a preload and the description disagree in either direction, when the description names a channel the main process does not know, or when the main window handles a channel the description lacks. **A new bridge member is added in three places in one change:** the preload, `bridgeContract.json`, and `electron.d.ts` in the web client; the native macOS shell then fails its own tests until it answers the new channel. A `nativeOnly` member skips the preload and is added in the other two.
 
 Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectron()`).
 

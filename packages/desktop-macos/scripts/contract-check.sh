@@ -6,8 +6,8 @@
 # shell's window state on this machine's displays (--check window-state), the
 # import of the Electron build's localStorage (--check local-storage-import),
 # links and auto-launch settings (--check launch), notifications and the
-# badge (--check notifications), the menu bar (--check menu) and recovery
-# mode (--check recovery).
+# badge (--check notifications), the menu bar (--check menu), recovery mode
+# (--check recovery) and dragging the window (--check drag).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -98,6 +98,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check recovery >&2
+
+# Dragging the window: by the top strip of a page that reported nothing, then
+# by what the page reports; the page sees nothing of a press that drags.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check drag >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

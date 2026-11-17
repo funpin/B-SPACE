@@ -2,11 +2,126 @@ import AppKit
 import BSpaceCore
 import WebKit
 
-/// A `WKWebView` without WebKit's own context menu. Electron shows none, and
-/// the web client draws its own where it wants one.
+/// A transparent view laid over a part of the page that must stay a page.
+///
+/// The system starts a window drag itself, from the rectangles of the views
+/// that say they move the window (`mouseDownCanMoveWindow`), and a view that
+/// says it does not takes its rectangle out of them. It lets every press
+/// through to the web view under it.
+final class StayView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The content of the main window: the web view, filling it, and over the web
+/// view the views that keep everything but the page's title bar a page.
+final class ShellContentView: NSView {
+    private(set) var stayViews: [StayView] = []
+    /// Called when the view's size changes.
+    var onResize: (() -> Void)?
+
+    /// Top left origin, so a rectangle of the page is a frame here.
+    override var isFlipped: Bool { true }
+
+    /// Puts a web view under the views that keep the page a page, in place of
+    /// the one that was there.
+    func show(_ webView: NSView) {
+        for view in subviews where !(view is StayView) {
+            view.removeFromSuperview()
+        }
+        webView.frame = bounds
+        webView.autoresizingMask = [.width, .height]
+        addSubview(webView, positioned: .below, relativeTo: nil)
+    }
+
+    /// Lays a view over each rectangle, reusing the views there are.
+    func setStayRects(_ rects: [NSRect]) {
+        while stayViews.count > rects.count {
+            stayViews.removeLast().removeFromSuperview()
+        }
+        while stayViews.count < rects.count {
+            let view = StayView()
+            stayViews.append(view)
+            addSubview(view)
+        }
+        for (view, rect) in zip(stayViews, rects) where view.frame != rect {
+            view.frame = rect
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        onResize?()
+    }
+}
+
+/// A `WKWebView` without WebKit's own context menu (Electron shows none, and
+/// the web client draws its own where it wants one), which the window can be
+/// moved by.
 final class ShellWebView: WKWebView {
+    /// Whether pressing the mouse button at this point of the page drags the
+    /// window. The point is in the page's coordinates: from its top left
+    /// corner.
+    var dragsWindow: ((NSPoint) -> Bool)?
+    /// Called with a press on a part that drags the window, in place of the
+    /// page.
+    var onWindowDragMouseDown: ((NSEvent) -> Void)?
+    /// The press that is going on was kept from the page: so is the rest of it.
+    private var keepsPressFromPage = false
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         menu.removeAllItems()
+    }
+
+    /// A web view never lets its window be moved by it; this one does, and
+    /// `StayView`s over it take back everything but the page's title bar. The
+    /// system reads the answer when it lays the window out, not at each
+    /// press, so it cannot depend on where the mouse is. Asking for the drag
+    /// at the press instead (`performDrag(with:)`) is what Chromium does, and
+    /// on macOS 27 it starts the drag only now and then.
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    /// The system moves the window by the page's title bar without asking,
+    /// and the press still comes here. The page does not get it.
+    override func mouseDown(with event: NSEvent) {
+        if let dragsWindow, let onWindowDragMouseDown, dragsWindow(pagePoint(of: event)) {
+            keepsPressFromPage = true
+            onWindowDragMouseDown(event)
+            return
+        }
+        keepsPressFromPage = false
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !keepsPressFromPage else { return }
+        super.mouseDragged(with: event)
+    }
+
+    /// A release with no press before it would look to the page like the end
+    /// of a drag that began somewhere else.
+    override func mouseUp(with event: NSEvent) {
+        guard !keepsPressFromPage else {
+            keepsPressFromPage = false
+            return
+        }
+        super.mouseUp(with: event)
+    }
+
+    /// A title bar moves its window on the first press even when the window
+    /// is behind others. Everything else on the page keeps WebKit's answer.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        if let event, let dragsWindow, dragsWindow(pagePoint(of: event)) {
+            return true
+        }
+        return super.acceptsFirstMouse(for: event)
+    }
+
+    /// The view is flipped, and nothing zooms or insets the page, so a point
+    /// of the view is a point of the page's viewport.
+    private func pagePoint(of event: NSEvent) -> NSPoint {
+        convert(event.locationInWindow, from: nil)
     }
 }
 
@@ -43,6 +158,23 @@ public final class MainWindowController: NSObject {
     public var onLanguageChanged: ((DesktopLanguage) -> Void)?
     /// Called when the recovery page asks to quit.
     public var onQuitRequested: (() -> Void)?
+    /// What a double click on the title bar does, by the system's setting.
+    public var titleBarDoubleClickAction: () -> TitleBarDoubleClick = {
+        let defaults = UserDefaults.standard
+        return TitleBarDoubleClick.action(
+            setting: defaults.string(forKey: "AppleActionOnDoubleClick"),
+            minimizesOnDoubleClick: defaults.bool(forKey: "AppleMiniaturizeOnDoubleClick")
+        )
+    }
+    /// What the page of the window reported with `setDragRegions`, if it has.
+    public var reportedDragRegions: DragRegions? { dragMap.reported }
+    /// The parts of the window laid over to stay a page, in the page's
+    /// coordinates. The system drags the window by everything else.
+    public var stayRegionFrames: [NSRect] { contentView.stayViews.map(\.frame) }
+    /// Whether the system is told that the web view moves the window.
+    public var webViewMovesWindow: Bool {
+        webView.mouseDownCanMoveWindow && window.isMovableByWindowBackground && webView.superview === contentView
+    }
     /// Opens an address in the user's browser. A test run replaces it.
     public var openInBrowser: (String) -> Void = { address in
         guard let url = URL(string: address) else { return }
@@ -70,6 +202,10 @@ public final class MainWindowController: NSObject {
     private var bootTimer: DispatchWorkItem?
     private var hangTimer: Timer?
     private var deepLinks = DeepLinkInbox()
+    private var dragMap = WindowDragMap() {
+        didSet { layOutStayViews() }
+    }
+    private let contentView: ShellContentView
     /// The app was started hidden: the window waits to be asked for.
     private var staysHidden = false
     private var hasRevealedWindow = false
@@ -145,7 +281,8 @@ public final class MainWindowController: NSObject {
 
         let contentRect = NSRect(x: 0, y: 0, width: 1280, height: 800)
         webViewConfiguration = configuration
-        webView = Self.makeWebView(frame: contentRect, configuration: configuration)
+        let firstWebView = Self.makeWebView(frame: contentRect, configuration: configuration)
+        webView = firstWebView
 
         window = NSWindow(
             contentRect: contentRect,
@@ -163,7 +300,12 @@ public final class MainWindowController: NSObject {
         window.contentMinSize = NSSize(width: 940, height: 500)
         window.backgroundColor = Self.backgroundColor
         window.isReleasedWhenClosed = false
-        window.contentView = webView
+        // The system starts the drag, from the views that say they move the
+        // window: see `ShellWebView.mouseDownCanMoveWindow`.
+        window.isMovableByWindowBackground = true
+        contentView = ShellContentView(frame: contentRect)
+        contentView.show(firstWebView)
+        window.contentView = contentView
         window.center()
 
         super.init()
@@ -171,6 +313,11 @@ public final class MainWindowController: NSObject {
         // Before the delegate is set: placing the window must not count as
         // the user moving it.
         restoreWindowState()
+        takeTitleBarPresses(of: firstWebView)
+        contentView.onResize = { [weak self] in
+            self?.layOutStayViews()
+        }
+        layOutStayViews()
         bridge.attach(to: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -282,7 +429,7 @@ public final class MainWindowController: NSObject {
 
     // MARK: Web view
 
-    private static func makeWebView(frame: NSRect, configuration: WKWebViewConfiguration) -> WKWebView {
+    private static func makeWebView(frame: NSRect, configuration: WKWebViewConfiguration) -> ShellWebView {
         let view = ShellWebView(frame: frame, configuration: configuration)
         view.autoresizingMask = [.width, .height]
         view.underPageBackgroundColor = backgroundColor
@@ -306,16 +453,63 @@ public final class MainWindowController: NSObject {
 
         let fresh = Self.makeWebView(frame: stuck.frame, configuration: webViewConfiguration)
         webView = fresh
+        takeTitleBarPresses(of: fresh)
         bridge.attach(to: fresh)
         fresh.navigationDelegate = self
         fresh.uiDelegate = self
-        window.contentView = fresh
+        contentView.show(fresh)
 
         // The new view has no page: nothing listens, nothing is loading.
         shellLoad = nil
         deepLinks.pageChanged()
+        dragMap.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
+    }
+
+    // MARK: Dragging the window
+
+    /// Lays the views that keep the page a page over everything the window
+    /// is not dragged by. Done again whenever the page says where its title
+    /// bar is, another page is shown, or the window changes size: a window
+    /// that grew stays a page beside what the page last reported until the
+    /// page has measured itself again.
+    private func layOutStayViews() {
+        let size = contentView.bounds.size
+        let rects = dragMap.stayRects(width: Double(size.width), height: Double(size.height))
+        contentView.setStayRects(rects.map { NSRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
+    }
+
+    /// Has the web view hand over the presses on the parts of the page that
+    /// stand for a title bar.
+    private func takeTitleBarPresses(of view: ShellWebView) {
+        view.dragsWindow = { [weak self] point in
+            self?.dragMap.canDrag(x: Double(point.x), y: Double(point.y)) ?? false
+        }
+        view.onWindowDragMouseDown = { [weak self] event in
+            self?.titleBarPressed(event)
+        }
+    }
+
+    /// A press on the page's title bar. The system has already begun moving
+    /// the window by it; two presses do what the system's setting says a
+    /// double click on a title bar does. The page sees neither.
+    private func titleBarPressed(_ event: NSEvent) {
+        switch event.clickCount {
+        case 2:
+            // A full-screen window has no title bar to double-click.
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            switch titleBarDoubleClickAction() {
+            case .zoom:
+                window.zoom(nil)
+            case .minimize:
+                window.miniaturize(nil)
+            case .nothing:
+                break
+            }
+        default:
+            break
+        }
     }
 
     // MARK: Recovery
@@ -599,6 +793,12 @@ public final class MainWindowController: NSObject {
             NSApp.dockTile.badgeLabel = BadgeCount.label(for: arguments.number(at: 0))
         }
 
+        router.onFire("set-drag-regions") { [weak self] arguments in
+            // A report that cannot be read leaves the last one standing.
+            guard let self, let regions = DragRegions(arguments: arguments) else { return }
+            self.dragMap.report(regions)
+        }
+
         router.onFire("renderer-ready") { [weak self] _ in
             guard let self else { return }
             self.apply(self.bootWatch.rendererReady())
@@ -719,8 +919,10 @@ extension MainWindowController: WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // A new document: whatever listened for links in the old one is gone,
-        // and the web client in it has yet to say it started.
+        // what it said of its title bar is gone, and the web client in it has
+        // yet to say it started.
         deepLinks.pageChanged()
+        dragMap.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -744,6 +946,7 @@ extension MainWindowController: WKNavigationDelegate {
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         deepLinks.pageChanged()
+        dragMap.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
         // WebKit ends this process for its own reasons too (the system is

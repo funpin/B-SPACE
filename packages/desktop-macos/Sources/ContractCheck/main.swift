@@ -63,6 +63,14 @@ import WebKit
 // left alone, a page whose thread is stuck is called unresponsive, and Quit
 // reaches the app.
 //
+// With --check drag it checks, on the real shell, which parts of the window
+// the system is told it is dragged by: the top strip on a page that reported
+// nothing, what `setDragRegions` reported once it has, the top strip again on
+// the next page, and how those follow the window's size; that the page sees
+// nothing of a press on such a part and all of one anywhere else; and that a
+// double click asks the system's setting. The drag itself is the system's:
+// it needs a real mouse and is not part of this check.
+//
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
 // how many items there are and how large they are; --keys yes adds the item
@@ -1003,9 +1011,192 @@ func checkRecovery() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The window drag check. Ends the process.
+func checkDrag() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    // The page keeps what it saw of the mouse, and says it is ready.
+    let recorder = """
+    <!doctype html><title>drag</title><body style="margin:0;height:100vh"><script>
+    window.__presses = [];
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      addEventListener(type, (event) => window.__presses.push(type + ' ' + event.clientX + ' ' + event.clientY), true);
+    }
+    window.backspace.rendererReady();
+    </script></body>
+    """
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer(pages: ["/first": recorder, "/second": recorder])
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin() else { fail("the local page server did not start") }
+
+    var doubleClicks = 0
+    shell.titleBarDoubleClickAction = {
+        doubleClicks += 1
+        return .nothing
+    }
+
+    func open(_ path: String) {
+        guard let url = URL(string: origin + path) else { fail("bad address \(path)") }
+        var loaded = false
+        shell.onMainFrameLoadEnded = { _ in loaded = true }
+        shell.load(url)
+        if !wait(until: { loaded && shell.webView.url == url }) { fail("\(path) did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    var eventNumber = 0
+    /// A press and a release at a point of the page, as the window gets them.
+    func press(_ x: Double, _ y: Double, clicks: Int = 1) {
+        let location = shell.webView.convert(NSPoint(x: x, y: y), to: nil)
+        for (type, pressure) in [(NSEvent.EventType.leftMouseDown, Float(1)), (.leftMouseUp, Float(0))] {
+            eventNumber += 1
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: location,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: shell.window.windowNumber,
+                context: nil,
+                eventNumber: eventNumber,
+                clickCount: clicks,
+                pressure: pressure
+            ) else { fail("could not make a mouse event") }
+            // Straight to the view: a window that is not on screen is sent
+            // no mouse events, and where a press lands is AppKit's part.
+            if type == .leftMouseDown {
+                shell.webView.mouseDown(with: event)
+            } else {
+                shell.webView.mouseUp(with: event)
+            }
+        }
+    }
+    /// What the page saw since the last call.
+    func seen() -> [String] {
+        // Long enough for a press the page was sent to arrive.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        return page("const seen = window.__presses; window.__presses = []; return seen;") as? [String] ?? ["no answer"]
+    }
+    /// Whether the system is told the window is dragged by this point: no
+    /// view that keeps the page a page lies over it.
+    func movesWindow(_ x: Double, _ y: Double) -> Bool {
+        !shell.stayRegionFrames.contains { $0.contains(NSPoint(x: x, y: y)) }
+    }
+    /// One press: whether the point drags the window, and what the page saw.
+    func expect(_ x: Double, _ y: Double, drags expected: Bool, _ what: String) {
+        let moves = movesWindow(x, y)
+        press(x, y)
+        let saw = seen()
+        if expected {
+            if !moves || !saw.isEmpty {
+                problems.append("\(what): expected a part that drags and nothing for the page, got \(moves ? "one that drags" : "one that stays a page") and \(saw)")
+            }
+        } else {
+            let whole = ["mousedown \(Int(x)) \(Int(y))", "mouseup \(Int(x)) \(Int(y))", "click \(Int(x)) \(Int(y))"]
+            if moves || saw != whole {
+                problems.append("\(what): expected a part that stays a page and a whole click for it, got \(moves ? "one that drags" : "one that stays a page") and \(saw)")
+            }
+        }
+    }
+    func resize(width: Double, height: Double) {
+        shell.window.setContentSize(NSSize(width: width, height: height))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    }
+
+    // 1. A page that reported nothing is dragged by the top strip, at any
+    //    width of the window.
+    resize(width: 1280, height: 800)
+    open("/first")
+    if !shell.webViewMovesWindow { problems.append("the system is not told that the web view moves the window") }
+    if shell.reportedDragRegions != nil { problems.append("a page that reported nothing has regions") }
+    expect(640, 10, drags: true, "the top strip of a page that reported nothing")
+    expect(640, 31, drags: true, "the last row of the top strip")
+    expect(640, 32, drags: false, "the first row under the top strip")
+    expect(640, 400, drags: false, "the middle of the page")
+    resize(width: 1500, height: 700)
+    expect(1490, 10, drags: true, "the top strip at the far end of a window that grew")
+    expect(1490, 40, drags: false, "under the top strip of a window that grew")
+    resize(width: 1280, height: 800)
+
+    // 2. A double click on it asks the system's setting, and the page sees
+    //    nothing of it.
+    press(640, 10, clicks: 2)
+    let sawOfDoubleClick = seen()
+    if doubleClicks != 1 || !sawOfDoubleClick.isEmpty {
+        problems.append("a double click on the strip: asked the setting \(doubleClicks) time(s), the page saw \(sawOfDoubleClick)")
+    }
+
+    // 3. A window behind others is dragged by the first press.
+    let far = shell.webView.convert(NSPoint(x: 640, y: 10), to: nil)
+    if let first = NSEvent.mouseEvent(
+        with: .leftMouseDown, location: far, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: shell.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+    ) {
+        if !shell.webView.acceptsFirstMouse(for: first) { problems.append("the strip does not take the first press on a window behind others") }
+    }
+
+    // 4. What the page reports replaces the strip.
+    _ = page("window.backspace.setDragRegions({ drag: [{ x: 0, y: 0, width: innerWidth, height: 60 }, { x: 200, y: 300, width: 100, height: 40 }], noDrag: [{ x: 100, y: 10, width: 50, height: 30 }] }); return true;")
+    if !wait(until: { shell.reportedDragRegions != nil }) { problems.append("the page's report did not arrive") }
+    expect(640, 50, drags: true, "a reported region, below where the strip ends")
+    expect(120, 20, drags: false, "a reported exception inside the region")
+    expect(160, 20, drags: true, "the region beside the exception")
+    expect(640, 70, drags: false, "the page under the reported region")
+    expect(250, 320, drags: true, "a reported region in the middle of the page")
+    // A window that grew stays a page beside what was reported, until the
+    // page measures itself again.
+    resize(width: 1500, height: 800)
+    expect(640, 50, drags: true, "a reported region after the window grew")
+    expect(1400, 30, drags: false, "beside a reported region after the window grew")
+    resize(width: 1280, height: 800)
+
+    // 5. A report that cannot be read changes nothing.
+    let standing = shell.reportedDragRegions
+    _ = page("window.backspace.setDragRegions({ drag: 'everything' }); window.backspace.setDragRegions(); window.backspace.setDragRegions({ drag: [{ x: 0, y: 0, width: -5, height: 5 }] }); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    if shell.reportedDragRegions != standing { problems.append("a report that cannot be read changed the regions") }
+
+    // 6. A page that says it has nothing to drag by is believed.
+    _ = page("window.backspace.setDragRegions({ drag: [], noDrag: [] }); return true;")
+    if !wait(until: { shell.reportedDragRegions?.drag.isEmpty == true }) { problems.append("an empty report did not arrive") }
+    expect(640, 10, drags: false, "the top of a page that reported nothing to drag by")
+
+    // 7. The next page starts from the top strip again.
+    open("/second")
+    if shell.reportedDragRegions != nil { problems.append("the next page kept the regions of the last one") }
+    expect(640, 10, drags: true, "the top strip of the next page")
+    expect(640, 50, drags: false, "under the top strip of the next page")
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "drag: the system is told the window is dragged by the top strip, then by what the page reports; the page sees no press there and all of every other click"
+        : "drag: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "drag":
+    checkDrag()
 case "recovery":
     checkRecovery()
 case "menu":
@@ -1019,7 +1210,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag or electron-profile")
 }
 
 let contract: BridgeContract
@@ -1092,10 +1283,18 @@ func visit(_ address: String) {
                 case .failure(let error):
                     fail("the page could not be asked: \(error.localizedDescription)")
                 case .success(let value):
-                    guard
-                        let facts = value as? [String: Any],
-                        let data = try? JSONSerialization.data(withJSONObject: facts, options: [.prettyPrinted, .sortedKeys])
-                    else { fail("the page gave no answer") }
+                    guard var facts = value as? [String: Any] else { fail("the page gave no answer") }
+                    // What the shell was told of the page's title bar: null
+                    // when the page reported nothing and the top strip stands.
+                    func plain(_ rects: [PlainRect]) -> [[String: Double]] {
+                        rects.map { ["x": $0.x, "y": $0.y, "width": $0.width, "height": $0.height] }
+                    }
+                    facts["shellDragRegions"] = controller.reportedDragRegions.map {
+                        ["drag": plain($0.drag), "noDrag": plain($0.noDrag)]
+                    } ?? NSNull()
+                    guard let data = try? JSONSerialization.data(withJSONObject: facts, options: [.prettyPrinted, .sortedKeys]) else {
+                        fail("the page's answer is not JSON")
+                    }
                     FileHandle.standardOutput.write(data)
                     FileHandle.standardOutput.write(Data("\n".utf8))
                     exit(0)

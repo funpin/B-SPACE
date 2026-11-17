@@ -97,20 +97,31 @@ function readPreload(bridge: BridgeName): BridgeMember[] {
 }
 
 describe('bridge contract', () => {
-  it.each(Object.keys(PRELOADS) as BridgeName[])('%s: the preload exposes exactly what the contract describes', (bridge) => {
-    expect(readPreload(bridge)).toEqual(BRIDGE_CONTRACT[bridge]);
+  it.each(Object.keys(PRELOADS) as BridgeName[])('%s: the preload exposes exactly what the contract describes for it', (bridge) => {
+    expect(readPreload(bridge)).toEqual(BRIDGE_CONTRACT[bridge].filter((member) => !member.nativeOnly));
   });
 
   it('counts what the native macOS shell has to carry', () => {
     const members = BRIDGE_CONTRACT.backspace;
-    expect(members).toHaveLength(59);
+    expect(members).toHaveLength(60);
     expect(members.filter((member) => member.kind === 'subscribe')).toHaveLength(17);
+  });
+
+  it('keeps the members only the native macOS shell has out of Electron', () => {
+    const nativeOnly = Object.values(BRIDGE_CONTRACT).flat().filter((member) => member.nativeOnly);
+    expect(nativeOnly.map((member) => member.name)).toEqual(['setDragRegions']);
+    const everywhere = [mainProcessSources(), ...Object.values(PRELOADS).map((file) => fs.readFileSync(path.join(__dirname, file), 'utf-8'))].join('\n');
+    for (const member of nativeOnly) {
+      expect(everywhere).not.toContain(member.name);
+      if (member.kind !== 'value') expect(everywhere).not.toContain(`'${member.channel}'`);
+    }
   });
 
   it('names no channel the main process does not know', () => {
     const sources = mainProcessSources();
     const unknown = Object.values(BRIDGE_CONTRACT)
       .flat()
+      .filter((member) => !member.nativeOnly)
       .flatMap((member) => (member.kind === 'value' ? [] : [member.channel]))
       .filter((channel) => !sources.includes(`'${channel}'`));
     expect(unknown).toEqual([]);
@@ -136,6 +147,15 @@ describe('parseBridgeContract', () => {
     expect(parseBridgeContract(valid()).backspace).toEqual([{ name: 'getVersion', kind: 'invoke', channel: 'get-app-version' }]);
   });
 
+  it('reads a member only the native macOS shell has', () => {
+    const contract = valid();
+    contract.backspace = [{ name: 'setDragRegions', kind: 'fire', channel: 'set-drag-regions', nativeOnly: true }];
+    expect(parseBridgeContract(contract).backspace).toEqual([
+      { name: 'setDragRegions', kind: 'fire', channel: 'set-drag-regions', nativeOnly: true },
+    ]);
+    expect(parseBridgeContract(valid()).backspace[0]).not.toHaveProperty('nativeOnly');
+  });
+
   it('lets one channel carry a call and an event', () => {
     const contract = valid();
     contract.backspace = [
@@ -154,6 +174,8 @@ describe('parseBridgeContract', () => {
     ['a subscription that does not say whether it can be removed', { ...valid(), backspace: [{ name: 'a', kind: 'subscribe', channel: 'a' }] }],
     ['"unsubscribe" on a call', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a', unsubscribe: true }] }],
     ['an unknown field', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a', stage: 2 }] }],
+    ['"nativeOnly" that is not true', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a', nativeOnly: false }] }],
+    ['"nativeOnly" that is not a boolean', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a', nativeOnly: 'yes' }] }],
     ['a name declared twice', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a' }, { name: 'a', kind: 'fire', channel: 'b' }] }],
     ['two calls on one channel', { ...valid(), backspace: [{ name: 'a', kind: 'fire', channel: 'a' }, { name: 'b', kind: 'invoke', channel: 'a' }] }],
     ['two events on one channel', { ...valid(), backspace: [{ name: 'a', kind: 'subscribe', channel: 'a', unsubscribe: true }, { name: 'b', kind: 'subscribe', channel: 'a', unsubscribe: false }] }],

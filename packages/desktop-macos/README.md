@@ -247,6 +247,63 @@ decisions are in `BSpaceCore/Recovery.swift`, a port of
   `check-update` opens the latest release too, and `install-update` does
   nothing.
 
+### Dragging the window
+
+The window has no title bar of its own: the page draws one, and Electron
+learns which parts of it drag the window from the CSS property
+`-webkit-app-region`. WebKit does not know the property and drops it from the
+style sheet, so here the page says where its title bar is, and the shell tells
+the system to drag the window by those parts.
+
+- **What the page reports.** The web client measures the elements it marks
+  `.titlebar-drag` and `.titlebar-no-drag` and calls
+  `window.backspace.setDragRegions({ drag, noDrag })` with their rectangles,
+  in points from the top left corner of the page
+  (`packages/web/src/platform/windowDragRegions.ts`). It reports again when
+  such an element appears, goes away or changes size, and when the window is
+  resized. The member is marked `nativeOnly` in the contract: Electron's
+  preload does not have it, and there the client reports nothing.
+- **A page that reports nothing** is dragged by a strip along its top edge,
+  32 points high (`WindowDragMap.fallbackStripHeight`). That covers the
+  shell's own pages (the instance picker, recovery), whose title bar is that
+  strip, and a server whose web client is older than `setDragRegions`. Every
+  new page starts from the strip again.
+- **A report is taken whole or not at all** (`DragRegions`): `drag` has to be
+  a list, every rectangle four finite numbers with a size that is not
+  negative, and at most 64 of a kind. A report that cannot be read leaves
+  the last one standing. An empty `drag` is believed: such a page is not
+  dragged anywhere.
+- **Who starts the drag.** The system does, by itself, from the rectangles
+  of the views that say they move the window (`mouseDownCanMoveWindow`, in a
+  window that is `isMovableByWindowBackground`). It reads those answers when
+  the window is laid out, not at each press, so the shell cannot decide
+  press by press. `ShellWebView` says it moves the window, and
+  `ShellContentView` lays transparent `StayView`s, which say they do not and
+  let every press through, over everything that must stay a page:
+  `WindowDragMap.stayRects` gives their rectangles, the view short of the
+  dragged parts plus the exceptions. They are laid out again when the page
+  reports, when another page is shown and when the window changes size; a
+  window that grew stays a page beside what was last reported until the page
+  has measured itself again.
+- **Why not `performDrag(with:)`.** Asking for the drag at the press is what
+  the first version did, and what Chromium does. On macOS 27 the system
+  honours it only now and then, in an ordinary window with a plain view too,
+  and the Electron build drags as badly there. Measured with a bench of
+  windows dragged by hand: 2 of 18 presses moved the window that asked, 12
+  of 12 the one built as above. Two things that look simpler do not work:
+  answering `mouseDownCanMoveWindow` by where the mouse is (the answer is
+  kept from the last layout), and views that move the window laid over a web
+  view that does not (a view that does not takes its whole rectangle out).
+- **Where a press goes.** A press on a dragged part still reaches the web
+  view, after the system has begun moving the window. `ShellWebView` keeps
+  it from the page, release included; anywhere else the page gets the whole
+  click.
+- **A double click** on a dragged part does what the system's setting says a
+  double click on a title bar does (`TitleBarDoubleClick`, from
+  `AppleActionOnDoubleClick` and the older `AppleMiniaturizeOnDoubleClick`):
+  zoom, minimize or nothing. "Fill" has no public call and is done as zoom.
+  A full-screen window ignores it.
+
 ### Notifications and the badge
 
 - **`showNotification(title, body, options)`** becomes a system notification
@@ -280,6 +337,10 @@ in [desktop.md](../../docs/systems/desktop.md)). `BridgeScript` turns it into
 the script injected at document start in the main frame; `BridgeRouter` routes
 what the page posts to handlers by channel name; `BridgeHost` connects the two
 to WebKit and sends the shell's events back.
+
+A member marked `nativeOnly` exists in this shell alone, for something
+Chromium does by itself and WebKit does not: `setDragRegions` is the one so
+far (see "Dragging the window").
 
 Every call channel of the contract has to be answered before the first page
 loads, or the app stops at launch. Channels whose feature is not ported yet
@@ -318,7 +379,16 @@ and the shell's language following `set-language`), and recovery mode
 loaded, a page that never reports that it started and a page whose thread is
 stuck each end on the recovery page with the right reason; a second failure
 changes what that page says without loading it again; a page that reports is
-left alone; Reload, Change Instance, Quit and the releases page work). Then it loads
+left alone; Reload, Change Instance, Quit and the releases page work), and
+dragging the window (`--check drag`: a page that reported nothing is dragged
+by its top strip and no lower; what `setDragRegions` reports replaces the
+strip, exceptions included; a report that cannot be read changes nothing; the
+next page starts from the strip again; the page sees nothing of a press that
+drags and the whole click of one that does not; a double click asks the
+system's setting; the parts follow the window's size). The check reads which
+parts the system is told about and gives its presses to the web view
+directly. The drag itself is the system's and needs a real mouse: it was
+tried by hand on the built app. Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

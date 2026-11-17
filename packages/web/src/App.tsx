@@ -9,6 +9,7 @@ import { TelemetryAsk } from './components/telemetry/TelemetryAsk';
 import { ScreenShareSetup } from './components/voice/ScreenShareSetup';
 import { useAuthStore } from './stores/authStore';
 import { isElectron } from './platform/platform';
+import { reportWindowDragRegions } from './platform/windowDragRegions';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
@@ -46,6 +47,10 @@ export function App() {
       window.backspace.rendererReady();
     }
   }, []);
+
+  // Electron reads the title bar's drag region from CSS. The native macOS
+  // shell cannot, and is told where it is; elsewhere this does nothing.
+  useEffect(() => reportWindowDragRegions(), []);
 
   const showTitleBar = isElectron();
 

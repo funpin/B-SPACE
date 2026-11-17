@@ -58,7 +58,8 @@
     { "name": "rendererReady", "kind": "fire", "channel": "renderer-ready" },
     { "name": "getRecoveryState", "kind": "invoke", "channel": "get-recovery-state" },
     { "name": "onRecoveryStateChanged", "kind": "subscribe", "channel": "recovery-state-changed", "unsubscribe": true },
-    { "name": "recoveryAction", "kind": "fire", "channel": "recovery-action" }
+    { "name": "recoveryAction", "kind": "fire", "channel": "recovery-action" },
+    { "name": "setDragRegions", "kind": "fire", "channel": "set-drag-regions", "nativeOnly": true }
   ],
   "bspaceUpdate": [
     { "name": "getState", "kind": "invoke", "channel": "update-window:get" },
