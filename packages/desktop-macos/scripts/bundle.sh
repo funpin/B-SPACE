@@ -19,8 +19,8 @@
 #   --help               this text
 #
 # The version comes from the root package.json. The picker page, the bridge
-# contract and the icon are taken from packages/desktop, which owns them for
-# both shells. Prints the path of the bundle on standard output.
+# contract, the strings and the icon are taken from packages/desktop, which
+# owns them for both shells. Prints the path of the bundle on standard output.
 #
 # Signing is scripts/sign.sh: with MAC_SIGN_P12 and MAC_SIGN_P12_PASSWORD in
 # the environment the bundle is signed with that certificate, otherwise ad hoc;
@@ -81,7 +81,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "bundle.sh: could not read a plain version from the root package.json (got \"$VERSION\")" >&2
   exit 1
 fi
-for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/build/icon.icns"; do
+for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/src/desktopStrings.json" "$DESKTOP/build/icon.icns"; do
   [[ -f "$resource" ]] || { echo "bundle.sh: $resource is missing" >&2; exit 1; }
 done
 
@@ -95,6 +95,16 @@ cp .build/release/BSpaceApp "$APP/Contents/MacOS/$EXECUTABLE"
 cp "$DESKTOP/resources/instance-picker.html" "$APP/Contents/Resources/instance-picker.html"
 cp "$DESKTOP/src/bridgeContract.json" "$APP/Contents/Resources/bridgeContract.json"
 cp "$DESKTOP/build/icon.icns" "$APP/Contents/Resources/icon.icns"
+# What the shell says on its own (menus), in every language of the web client.
+cp "$DESKTOP/src/desktopStrings.json" "$APP/Contents/Resources/desktop-strings.json"
+# The texts of the system's permission prompts, from the same catalog: one
+# <language>.lproj/InfoPlist.strings per language in the bundle, and the
+# English ones for the Info.plist below, which must name every permission.
+PERMISSION_XML="$(swift "$(dirname "$SELF")/permission-texts.swift" "$DESKTOP/src/desktopStrings.json" "$APP/Contents/Resources")"
+[[ -n "$PERMISSION_XML" ]] || { echo "bundle.sh: no permission texts were written" >&2; exit 1; }
+for localization in "$APP"/Contents/Resources/*.lproj; do
+  plutil -lint "$localization/InfoPlist.strings" >&2
+done
 
 # The keys of the Electron build's Info.plist that carry over (pre-audit, 4.2).
 # App Transport Security: an instance reached over http:// by a domain name
@@ -114,6 +124,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>${DISPLAY_NAME}</string>
   <key>CFBundleExecutable</key><string>${EXECUTABLE}</string>
   <key>CFBundleIconFile</key><string>icon.icns</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -129,9 +140,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <dict>
     <key>NSAllowsArbitraryLoads</key><true/>
   </dict>
-  <key>NSMicrophoneUsageDescription</key><string>B:SPACE uses the microphone for voice channels and calls.</string>
-  <key>NSCameraUsageDescription</key><string>B:SPACE uses the camera for video in voice channels and calls.</string>
-  <key>NSAudioCaptureUsageDescription</key><string>B:SPACE needs access to system audio to share sound during screen sharing.</string>
+${PERMISSION_XML}
   ${USER_DATA_XML}
   ${URL_SCHEME_XML}
 </dict>

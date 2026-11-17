@@ -11,155 +11,31 @@
  * strings and no React, and pulling the library into the Electron bundle
  * for that would be weight without benefit. Keys mirror the web's
  * `desktop` namespace conventions so the two are easy to compare.
+ *
+ * The strings are in `desktopStrings.json`, next to this file.
  */
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import catalogs from './desktopStrings.json';
 
-export type DesktopLanguage = 'en' | 'ru' | 'de' | 'pt' | 'zh';
+/**
+ * The strings themselves, by language. One file for both desktop shells: the
+ * native macOS client (packages/desktop-macos) reads it too. Keys under
+ * `mac.` are that client's own (the standard menu items Electron fills in
+ * from its roles, and the texts of the system's permission prompts); they sit
+ * here so that a language is added in one place.
+ */
+export type DesktopLanguage = keyof typeof catalogs;
 
-const DESKTOP_LANGUAGES: readonly DesktopLanguage[] = ['en', 'ru', 'de', 'pt', 'zh'];
+const DESKTOP_LANGUAGES = Object.keys(catalogs) as DesktopLanguage[];
 
-const en = {
-  'tray.show': 'Show B:SPACE',
-  'tray.hide': 'Hide',
-  'tray.changeInstance': 'Change Instance',
-  'tray.sourceCode': 'Source code (AGPL)',
-  'tray.quit': 'Quit',
-  'tray.inVoice': 'In voice: {channel}',
-  'tray.mute': 'Mute Microphone',
-  'tray.deafen': 'Deafen',
-  'tray.disconnect': 'Disconnect',
-  'tray.status': 'Status',
-  'tray.status.online': 'Online',
-  'tray.status.idle': 'Idle',
-  'tray.status.dnd': 'Do Not Disturb',
-  'menu.edit': 'Edit',
-  'menu.window': 'Window',
-  'update.check': 'Check for Updates…',
-  'update.checkAfterFailure': 'Check for Updates… (last attempt failed)',
-  'update.checking': 'Checking for Updates…',
-  'update.downloading': 'Downloading Update…',
-  'update.ready': 'Update Ready',
-  'update.available': 'Update Available',
-  'update.restartToInstall': 'Restart to Install Update',
-  'update.downloadVersion': 'Download B:SPACE {version}…',
-  'update.download': 'Download the Update…',
-} as const;
-
-export type DesktopStringKey = keyof typeof en;
+export type DesktopStringKey = keyof typeof catalogs.en;
 
 type Catalog = Record<DesktopStringKey, string>;
 
-const ru: Catalog = {
-  'tray.show': 'Показать B:SPACE',
-  'tray.hide': 'Скрыть',
-  'tray.changeInstance': 'Сменить сервер',
-  'tray.sourceCode': 'Исходный код (AGPL)',
-  'tray.quit': 'Выйти',
-  'tray.inVoice': 'В голосовом: {channel}',
-  'tray.mute': 'Отключить микрофон',
-  'tray.deafen': 'Отключить звук',
-  'tray.disconnect': 'Отключиться',
-  'tray.status': 'Статус',
-  'tray.status.online': 'В сети',
-  'tray.status.idle': 'Неактивен',
-  'tray.status.dnd': 'Не беспокоить',
-  'menu.edit': 'Правка',
-  'menu.window': 'Окно',
-  'update.check': 'Проверить обновления…',
-  'update.checkAfterFailure': 'Проверить обновления… (последняя попытка не удалась)',
-  'update.checking': 'Проверка обновлений…',
-  'update.downloading': 'Загрузка обновления…',
-  'update.ready': 'Обновление готово',
-  'update.available': 'Доступно обновление',
-  'update.restartToInstall': 'Перезапустить для установки',
-  'update.downloadVersion': 'Скачать B:SPACE {version}…',
-  'update.download': 'Скачать обновление…',
-};
-
-const de: Catalog = {
-  'tray.show': 'B:SPACE anzeigen',
-  'tray.hide': 'Ausblenden',
-  'tray.changeInstance': 'Instanz wechseln',
-  'tray.sourceCode': 'Quellcode (AGPL)',
-  'tray.quit': 'Beenden',
-  'tray.inVoice': 'Im Sprachkanal: {channel}',
-  'tray.mute': 'Mikrofon stummschalten',
-  'tray.deafen': 'Ton ausschalten',
-  'tray.disconnect': 'Trennen',
-  'tray.status': 'Status',
-  'tray.status.online': 'Online',
-  'tray.status.idle': 'Abwesend',
-  'tray.status.dnd': 'Nicht stören',
-  'menu.edit': 'Bearbeiten',
-  'menu.window': 'Fenster',
-  'update.check': 'Nach Updates suchen…',
-  'update.checkAfterFailure': 'Nach Updates suchen… (letzter Versuch fehlgeschlagen)',
-  'update.checking': 'Suche nach Updates…',
-  'update.downloading': 'Update wird heruntergeladen…',
-  'update.ready': 'Update bereit',
-  'update.available': 'Update verfügbar',
-  'update.restartToInstall': 'Neu starten und Update installieren',
-  'update.downloadVersion': 'B:SPACE {version} herunterladen…',
-  'update.download': 'Update herunterladen…',
-};
-
-const zh: Catalog = {
-  'tray.show': '显示 B:SPACE',
-  'tray.hide': '隐藏',
-  'tray.changeInstance': '切换实例',
-  'tray.sourceCode': '源代码 (AGPL)',
-  'tray.quit': '退出',
-  'tray.inVoice': '语音中：{channel}',
-  'tray.mute': '静音麦克风',
-  'tray.deafen': '拒听',
-  'tray.disconnect': '断开连接',
-  'tray.status': '状态',
-  'tray.status.online': '在线',
-  'tray.status.idle': '离开',
-  'tray.status.dnd': '请勿打扰',
-  'menu.edit': '编辑',
-  'menu.window': '窗口',
-  'update.check': '检查更新…',
-  'update.checkAfterFailure': '检查更新…（上次尝试失败）',
-  'update.checking': '正在检查更新…',
-  'update.downloading': '正在下载更新…',
-  'update.ready': '更新已就绪',
-  'update.available': '有可用更新',
-  'update.restartToInstall': '重启以安装更新',
-  'update.downloadVersion': '下载 B:SPACE {version}…',
-  'update.download': '下载更新…',
-};
-
-const pt: Catalog = {
-  'tray.show': 'Mostrar B:SPACE',
-  'tray.hide': 'Ocultar',
-  'tray.changeInstance': 'Mudar instância',
-  'tray.sourceCode': 'Código-fonte (AGPL)',
-  'tray.quit': 'Sair',
-  'tray.inVoice': 'Em voz: {channel}',
-  'tray.mute': 'Silenciar microfone',
-  'tray.deafen': 'Ensurdecer',
-  'tray.disconnect': 'Desconectar',
-  'tray.status': 'Status',
-  'tray.status.online': 'Online',
-  'tray.status.idle': 'Ausente',
-  'tray.status.dnd': 'Não perturbe',
-  'menu.edit': 'Editar',
-  'menu.window': 'Janela',
-  'update.check': 'Verificar atualizações…',
-  'update.checkAfterFailure': 'Verificar atualizações… (última tentativa falhou)',
-  'update.checking': 'Verificando atualizações…',
-  'update.downloading': 'Baixando atualização…',
-  'update.ready': 'Atualização pronta',
-  'update.available': 'Atualização disponível',
-  'update.restartToInstall': 'Reiniciar para instalar',
-  'update.downloadVersion': 'Baixar B:SPACE {version}…',
-  'update.download': 'Baixar atualização…',
-};
-
-export const DESKTOP_CATALOGS: Record<DesktopLanguage, Catalog> = { en, ru, de, pt, zh };
+/** Typed so that a language missing a key does not compile. */
+export const DESKTOP_CATALOGS: Record<DesktopLanguage, Catalog> = catalogs;
 
 export function isDesktopLanguage(value: unknown): value is DesktopLanguage {
   return typeof value === 'string' && (DESKTOP_LANGUAGES as readonly string[]).includes(value);

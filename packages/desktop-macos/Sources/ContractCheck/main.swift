@@ -11,7 +11,7 @@ import WebKit
 // sends one event on every event channel, and compares what the page saw with
 // what bridgeContract.json promises.
 //
-// Usage: ContractCheck --contract <json> --picker <html> --harness <html> [--out <json>]
+// Usage: ContractCheck --contract <json> --picker <html> --strings <json> --harness <html> [--out <json>]
 // Exit status: 0 when the bridge keeps the contract, 1 when it does not,
 // 2 when the check could not run.
 //
@@ -47,6 +47,12 @@ import WebKit
 // brings the payload back to the page, a click on a notification from another
 // origin does not, and setBadgeCount sets and clears the Dock badge. Nothing
 // is shown: no notification, no window.
+//
+// With --check menu it builds the menu bar in every language the shell has and
+// checks that no item is left without a title or with a placeholder in it,
+// that the items with shortcuts kept them, and that the shell's language
+// follows what the page reports on set-language (and ignores a language it
+// does not have), remembering it in language.json.
 //
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
@@ -170,19 +176,27 @@ if arguments["check"] == "electron-profile" {
 }
 let contractURL = fileURL(arguments, "contract")
 let pickerURL = fileURL(arguments, "picker")
+let stringsURL = fileURL(arguments, "strings")
 let visitAddress = arguments["visit"]
 let checkName = arguments["check"]
 let harnessURL = visitAddress == nil && checkName == nil ? fileURL(arguments, "harness") : nil
 
 let temporary = FileManager.default.temporaryDirectory
     .appendingPathComponent("bspace-contract-check-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+let strings: DesktopStrings
+do {
+    strings = try DesktopStrings(data: Data(contentsOf: stringsURL))
+} catch {
+    fail("cannot read the strings: \(error)")
+}
 let environment = ShellEnvironment(
-    resources: ShellResources(pickerURL: pickerURL, contractURL: contractURL),
+    resources: ShellResources(pickerURL: pickerURL, contractURL: contractURL, stringsURL: stringsURL),
     userDataDirectory: temporary,
     appVersion: "0.0.0-check",
     safariVersion: ShellEnvironment.installedSafariVersion(),
     overrideURL: nil,
-    language: "en"
+    strings: strings,
+    language: strings.english
 )
 
 /// The login item of a check run: remembers what it was asked and registers
@@ -717,9 +731,131 @@ func checkNotifications() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The actions of the menu in a check run: they do nothing.
+final class CheckMenuActions: NSObject, AppMenuActions {
+    func openSourceCode(_ sender: Any?) {}
+    func changeInstance(_ sender: Any?) {}
+}
+
+/// The menu check. Ends the process.
+func checkMenu() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let blank = temporary.appendingPathComponent("blank.html", isDirectory: false)
+    do {
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try Data("<!doctype html><title></title>".utf8).write(to: blank)
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+
+    // 1. The menu bar, in every language.
+    let actions = CheckMenuActions()
+    let shortcuts: [String: String] = [
+        "hide:": "h", "hideOtherApplications:": "h", "terminate:": "q",
+        "undo:": "z", "redo:": "z", "cut:": "x", "copy:": "c", "paste:": "v", "selectAll:": "a",
+        "performMiniaturize:": "m", "performClose:": "w",
+    ]
+    var titlesByLanguage: [DesktopLanguage: [String]] = [:]
+    if strings.languages.count < 5 { problems.append("the catalog has \(strings.languages.count) languages, expected the web client's five") }
+    for language in strings.languages {
+        let menu = AppMenu.build(strings: strings, language: language, actions: actions)
+        var titles: [String] = []
+        var seen: Set<String> = []
+        if menu.items.count != 3 { problems.append("\(language.code): \(menu.items.count) menus, expected 3") }
+        for top in menu.items {
+            titles.append(top.title)
+            for item in top.submenu?.items ?? [] where !item.isSeparatorItem {
+                titles.append(item.title)
+                let action = item.action.map(NSStringFromSelector) ?? ""
+                if item.title.isEmpty || item.title.contains("{") || item.title.contains("mac.") || item.title.contains("tray.") {
+                    problems.append("\(language.code): an item with the title '\(item.title)' (\(action))")
+                }
+                if action.isEmpty { problems.append("\(language.code): '\(item.title)' does nothing") }
+                if let shortcut = shortcuts[action] {
+                    seen.insert(action)
+                    if item.keyEquivalent != shortcut {
+                        problems.append("\(language.code): '\(item.title)' has the shortcut '\(item.keyEquivalent)', expected '\(shortcut)'")
+                    }
+                }
+                if action == "openSourceCode:" || action == "changeInstance:" {
+                    seen.insert(action)
+                    if item.target !== actions { problems.append("\(language.code): '\(item.title)' has no target") }
+                }
+            }
+        }
+        let expected = Set(shortcuts.keys).union(["openSourceCode:", "changeInstance:"])
+        if seen != expected {
+            problems.append("\(language.code): the menu lacks \(expected.subtracting(seen).sorted())")
+        }
+        titlesByLanguage[language] = titles
+    }
+    // A translation that is missing would repeat the English one.
+    if let english = titlesByLanguage[strings.english] {
+        for language in strings.languages where language != strings.english {
+            let same = zip(english, titlesByLanguage[language] ?? []).filter { $0 == $1 }.map(\.0)
+            // The app's name, and a word that is the same in both languages.
+            if same.count > 2 {
+                problems.append("\(language.code): these titles are the English ones: \(same)")
+            }
+        }
+    }
+
+    // 2. The language follows the page.
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(blank)
+    guard wait(until: { hasEnded }) else { fail("the empty page did not load") }
+    func page(_ script: String) {
+        var isDone = false
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { _ in isDone = true }
+        _ = wait(until: { isDone })
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    }
+    var reported: [String] = []
+    shell.onLanguageChanged = { reported.append($0.code) }
+    let store = LanguageStore(directory: temporary)
+
+    if shell.language != strings.english { problems.append("the shell should start in the language it was given") }
+    page("window.backspace.setLanguage('ru');")
+    if shell.language.code != "ru" || reported != ["ru"] {
+        problems.append("setLanguage('ru') left the shell in \(shell.language.code), reported \(reported)")
+    }
+    if store.load() != "ru" { problems.append("language.json does not hold the language that was set") }
+    page("window.backspace.setLanguage('xx'); window.backspace.setLanguage(); window.backspace.setLanguage(7);")
+    if shell.language.code != "ru" || reported != ["ru"] || store.load() != "ru" {
+        problems.append("a language the shell does not have changed it")
+    }
+    page("window.backspace.setLanguage('ru');")
+    if reported != ["ru"] { problems.append("the same language again was reported as a change") }
+    page("window.backspace.setLanguage('zh');")
+    if shell.language.code != "zh" || reported != ["ru", "zh"] || store.load() != "zh" {
+        problems.append("setLanguage('zh') left the shell in \(shell.language.code)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "menu: built in \(strings.languages.count) languages, the language follows the page"
+        : "menu: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "menu":
+    checkMenu()
 case "notifications":
     checkNotifications()
 case "launch":
@@ -729,7 +865,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu or electron-profile")
 }
 
 let contract: BridgeContract

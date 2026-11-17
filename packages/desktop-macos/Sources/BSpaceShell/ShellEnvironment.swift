@@ -9,18 +9,23 @@ public struct ShellResources {
     public let pickerURL: URL
     /// `bridgeContract.json`, the description of the bridges.
     public let contractURL: URL
+    /// `desktop-strings.json` (`desktopStrings.json` in `packages/desktop`):
+    /// what the shells say on their own, in every language they have.
+    public let stringsURL: URL
 
-    public init(pickerURL: URL, contractURL: URL) {
+    public init(pickerURL: URL, contractURL: URL, stringsURL: URL) {
         self.pickerURL = pickerURL
         self.contractURL = contractURL
+        self.stringsURL = stringsURL
     }
 
     public static func bundled(in bundle: Bundle = .main) -> ShellResources? {
         guard
             let picker = bundle.url(forResource: "instance-picker", withExtension: "html"),
-            let contract = bundle.url(forResource: "bridgeContract", withExtension: "json")
+            let contract = bundle.url(forResource: "bridgeContract", withExtension: "json"),
+            let strings = bundle.url(forResource: "desktop-strings", withExtension: "json")
         else { return nil }
-        return ShellResources(pickerURL: picker, contractURL: contract)
+        return ShellResources(pickerURL: picker, contractURL: contract, stringsURL: strings)
     }
 }
 
@@ -37,8 +42,11 @@ public struct ShellEnvironment {
     /// `BACKSPACE_URL`: an address that overrides the saved instance, for
     /// managed deployments.
     public var overrideURL: String?
-    /// The language the picker opens in before the web client has ever run.
-    public var language: String
+    /// What the shell says on its own, read from `resources.stringsURL`.
+    public var strings: DesktopStrings
+    /// The language the shell starts in: the one the web client last
+    /// reported, else the system's (`DesktopStrings.resolve`).
+    public var language: DesktopLanguage
 
     public init(
         resources: ShellResources,
@@ -46,9 +54,11 @@ public struct ShellEnvironment {
         appVersion: String,
         safariVersion: String?,
         overrideURL: String?,
-        language: String
+        strings: DesktopStrings,
+        language: DesktopLanguage
     ) {
         self.resources = resources
+        self.strings = strings
         self.userDataDirectory = userDataDirectory
         self.appVersion = appVersion
         self.safariVersion = safariVersion
@@ -63,7 +73,7 @@ public struct ShellEnvironment {
         public var description: String {
             switch self {
             case .resourcesMissing:
-                return "The application bundle is incomplete: instance-picker.html or bridgeContract.json is missing from its resources."
+                return "The application bundle is incomplete: instance-picker.html, bridgeContract.json or desktop-strings.json is missing from its resources."
             case .noApplicationSupportDirectory:
                 return "The Application Support folder of this user could not be found."
             }
@@ -78,13 +88,19 @@ public struct ShellEnvironment {
         }
         let directoryName = AppIdentity.userDataDirectoryName(infoDictionary: bundle.infoDictionary)
         let override = ProcessInfo.processInfo.environment["BACKSPACE_URL"].flatMap { $0.isEmpty ? nil : $0 }
+        let userData = support.appendingPathComponent(directoryName, isDirectory: true)
+        let strings = try DesktopStrings(data: Data(contentsOf: resources.stringsURL))
         return ShellEnvironment(
             resources: resources,
-            userDataDirectory: support.appendingPathComponent(directoryName, isDirectory: true),
+            userDataDirectory: userData,
             appVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
             safariVersion: installedSafariVersion(),
             overrideURL: override,
-            language: preferredLanguage()
+            strings: strings,
+            language: strings.resolve(
+                stored: LanguageStore(directory: userData).load(),
+                systemLanguage: Locale.preferredLanguages.first
+            )
         )
     }
 
@@ -97,13 +113,6 @@ public struct ShellEnvironment {
             let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
         else { return nil }
         return info["CFBundleShortVersionString"] as? String
-    }
-
-    /// The first of the user's languages, as a two-letter code. The picker
-    /// falls back to English for one it has no strings for.
-    public static func preferredLanguage() -> String {
-        let identifier = Locale.preferredLanguages.first ?? "en"
-        return Locale(identifier: identifier).language.languageCode?.identifier ?? "en"
     }
 
     /// What `WKWebView` appends to its User-Agent.

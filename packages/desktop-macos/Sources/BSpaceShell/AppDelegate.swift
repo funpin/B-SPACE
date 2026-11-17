@@ -3,7 +3,7 @@ import BSpaceCore
 
 /// The application: one running copy, one main window that outlives being
 /// closed, and a menu.
-public final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions {
     private var mainWindow: MainWindowController?
     /// Links the system handed over before the window existed.
     private var linksBeforeLaunch: [String] = []
@@ -27,11 +27,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.comeForward(link: link)
         }
 
-        NSApp.mainMenu = AppMenu.build()
         do {
             let environment = try ShellEnvironment.ofRunningApplication()
+            let strings = environment.strings
             let controller = try MainWindowController(environment: environment)
             mainWindow = controller
+            // The menu follows the language of the web client.
+            NSApp.mainMenu = AppMenu.build(strings: strings, language: controller.language, actions: self)
+            controller.onLanguageChanged = { [weak self] language in
+                guard let self else { return }
+                NSApp.mainMenu = AppMenu.build(strings: strings, language: language, actions: self)
+            }
             LaunchContext.claimDeepLinks()
 
             // A launch by a link is a request to see the app, whatever the
@@ -69,6 +75,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 comeForward(link: link)
             }
         }
+    }
+
+    public func openSourceCode(_ sender: Any?) {
+        mainWindow?.openSourceCode()
+    }
+
+    public func changeInstance(_ sender: Any?) {
+        mainWindow?.changeInstance()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Brings the window forward, with a link for the page if there is one.

@@ -30,6 +30,11 @@ public final class MainWindowController: NSObject {
     public var onMainFrameLoadEnded: ((Error?) -> Void)?
     /// Set once the app is quitting: closing the window then really closes it.
     public var isQuitting = false
+    /// The language of everything the shell says itself. Follows the web
+    /// client's choice, reported on `set-language`.
+    public private(set) var language: DesktopLanguage
+    /// Called when the web client reports another language.
+    public var onLanguageChanged: ((DesktopLanguage) -> Void)?
 
     private let environment: ShellEnvironment
     private let instanceStore: InstanceURLStore
@@ -80,6 +85,7 @@ public final class MainWindowController: NSObject {
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
+        language = environment.language
         autoLaunch = AutoLaunch(
             store: AutoLaunchStore(directory: environment.userDataDirectory),
             loginItem: loginItem
@@ -212,7 +218,7 @@ public final class MainWindowController: NSObject {
 
     public func loadPicker() {
         var components = URLComponents(url: environment.resources.pickerURL, resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "lang", value: environment.language)]
+        components?.queryItems = [URLQueryItem(name: "lang", value: language.code)]
         load(components?.url ?? environment.resources.pickerURL)
     }
 
@@ -236,6 +242,41 @@ public final class MainWindowController: NSObject {
     private func revealWindow() {
         guard !hasRevealedWindow, !staysHidden else { return }
         showWindow()
+    }
+
+    // MARK: Menu actions
+
+    /// Forgets the saved instance and opens the picker, with the window in
+    /// front: "Change Instance" in the application menu.
+    public func changeInstance() {
+        instanceStore.clear()
+        loadPicker()
+        showWindow()
+    }
+
+    /// Opens the source code of the instance in the user's browser: the
+    /// address the instance names for itself, or the project's own.
+    public func openSourceCode() {
+        let page = webView.url.flatMap { WebOrigin.of($0) }
+        let instance = environment.overrideURL ?? instanceStore.load() ?? page
+        guard let infoURL = SourceCode.instanceInfoURL(instanceAddress: instance) else {
+            Self.openInBrowser(SourceCode.projectAddress)
+            return
+        }
+        var request = URLRequest(url: infoURL)
+        request.timeoutInterval = 5
+        URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, _ in
+            let answered = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+            let address = SourceCode.address(fromInstanceInfo: answered ? data : nil)
+            DispatchQueue.main.async {
+                Self.openInBrowser(address)
+            }
+        }.resume()
+    }
+
+    private static func openInBrowser(_ address: String) {
+        guard let url = URL(string: address) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: Notifications
@@ -372,6 +413,20 @@ public final class MainWindowController: NSObject {
                 let request = NotificationRequest(arguments: arguments, pageURL: self.webView.url)
             else { return }
             self.notifications?.show(request)
+        }
+        router.onFire("set-language") { [weak self] arguments in
+            guard
+                let self,
+                let language = self.environment.strings.language(code: arguments.string(at: 0))
+            else { return }
+            do {
+                try LanguageStore(directory: self.environment.userDataDirectory).save(language)
+            } catch {
+                NSLog("[language] could not remember the language: %@", error.localizedDescription)
+            }
+            guard language != self.language else { return }
+            self.language = language
+            self.onLanguageChanged?(language)
         }
         router.onFire("set-badge-count") { arguments in
             NSApp.dockTile.badgeLabel = BadgeCount.label(for: arguments.number(at: 0))

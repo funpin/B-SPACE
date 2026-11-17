@@ -19,6 +19,7 @@ on:
     paths:
       - packages/desktop-macos/**
       - packages/desktop/src/bridgeContract.json
+      - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
       - packages/desktop/build/icon.icns
       - package.json
@@ -30,6 +31,7 @@ on:
     paths:
       - packages/desktop-macos/**
       - packages/desktop/src/bridgeContract.json
+      - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
       - packages/desktop/build/icon.icns
       - package.json

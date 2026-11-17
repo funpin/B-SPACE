@@ -84,6 +84,7 @@ and formats, so either shell reads what the other wrote
 |------|------|------|
 | `instance-url.json` | The chosen instance | `InstanceURLStore` |
 | `window-state.json` | Size, position and whether the window was zoomed | `WindowStateStore`, `WindowPlacement` |
+| `language.json` | The language the web client last reported, for the shell's own strings | `LanguageStore` |
 | `auto-launch.json` | Whether the app starts hidden when opened at login (`startMinimized`); its `openAtLogin` is written and never read back | `AutoLaunchStore` |
 | `local-storage-import.json` | The origins whose `localStorage` was brought over from the Electron build (native app only) | `LocalStorageImportLedger` |
 
@@ -176,6 +177,34 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   and `startMinimized` is on. The page loads and connects all the same. A
   launch by a link is never hidden.
 
+### Language and the menu bar
+
+- **Strings.** What the shell says on its own comes from
+  `packages/desktop/src/desktopStrings.json`, the one catalog of both desktop
+  shells (the Electron build's `l10n.ts` reads the same file); `bundle.sh`
+  copies it into the bundle and `DesktopStrings` reads it. The languages are
+  the keys of that file: adding one there is all the shell needs. A catalog in
+  which a language lacks a key the shell uses is refused at launch.
+- **Which language.** The web client owns the choice and reports it on
+  `set-language`; the shell remembers it in `language.json` and starts in it
+  next time. Before the web client has said anything, the system's first
+  language decides, then English (`DesktopStrings.resolve`). A language the
+  catalog lacks is ignored.
+- **The menu bar** (`AppMenu`) is the one `buildAppMenuTemplate` gives the
+  Electron build: the application menu (About, Source code, Change Instance,
+  Hide, Hide Others, Show All, Quit), Edit and Window. It is rebuilt when the
+  language changes. "Source code" asks the instance for the address of its
+  own source (`GET /api/instance/info`, `sourceCodeUrl`) and opens that, or
+  the project's repository. "Change Instance" forgets the saved instance and
+  opens the picker. Two differences from Electron: no "Toggle Developer
+  Tools" (a `WKWebView`'s inspector cannot be opened from code; attach from
+  Safari's Develop menu), and Window has Close (Command-W).
+- **Permission prompts.** The texts the system shows when the app first asks
+  for the microphone, the camera or the system's sound are in the same
+  catalog (`mac.permission.<Info.plist key>`). `scripts/permission-texts.swift`
+  writes them into the bundle, one `<language>.lproj/InfoPlist.strings` per
+  language; the system picks by its own language, not the web client's.
+
 ### Notifications and the badge
 
 - **`showNotification(title, body, options)`** becomes a system notification
@@ -235,7 +264,9 @@ nothing), and notifications and the badge (`--check notifications`, on a page
 the driver serves from the loopback address so that it has a real origin: what
 the page asks for reaches a presenter that only records, a click hands the
 payload back, a click on a notification from another origin does not, the
-badge is set and cleared). Then it loads
+badge is set and cleared), and the menu bar (`--check menu`: built in every
+language of the catalog with no item left untitled, the shortcuts in place,
+and the shell's language following `set-language`). Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
@@ -258,6 +289,7 @@ body of an async function whose return value is printed:
 ```bash
 .build/release/ContractCheck --contract ../desktop/src/bridgeContract.json \
   --picker ../desktop/resources/instance-picker.html \
+  --strings ../desktop/src/desktopStrings.json \
   --visit https://your.instance.example --settle 6
 ```
 
