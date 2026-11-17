@@ -6,6 +6,9 @@ public protocol NotificationPresenter: AnyObject {
     /// Called on the main queue with what the clicked notification carried
     /// (`NotificationRequest.userInfo`).
     var onClick: (([AnyHashable: Any]) -> Void)? { get set }
+    /// Called when the window is first shown: the moment to ask the user for
+    /// permission, if it has never been asked.
+    func prepare()
     func show(_ request: NotificationRequest)
 }
 
@@ -28,12 +31,28 @@ public final class SystemNotificationPresenter: NSObject, NotificationPresenter 
         center.delegate = self
     }
 
-    /// Asks for permission the first time (the system answers at once from
-    /// then on) and shows the notification if it is given. The permission is
-    /// kept per bundle identifier, so the one given to the Electron build
-    /// stands.
+    /// What the app asks to be allowed. The badge is part of it: the system
+    /// shows the Dock icon's badge only for an app allowed to badge its icon.
+    private static let permissions: UNAuthorizationOptions = [.alert, .sound, .badge]
+
+    /// Asks for permission if the user has never been asked. The system's
+    /// question is a banner that goes away by itself after a while and then
+    /// counts as "no"; so it is put when the user is looking at the window,
+    /// not when the first notification comes, which is exactly when they are
+    /// not. The permission is kept per bundle identifier, so the one given to
+    /// the Electron build stands and nothing is asked.
+    public func prepare() {
+        center.getNotificationSettings { [center] settings in
+            guard settings.authorizationStatus == .notDetermined else { return }
+            center.requestAuthorization(options: Self.permissions) { _, _ in }
+        }
+    }
+
+    /// Shows the notification if the app is allowed to. Asking again here
+    /// costs nothing once the user has answered, and covers a notification
+    /// that comes before the window was ever shown.
     public func show(_ request: NotificationRequest) {
-        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+        center.requestAuthorization(options: Self.permissions) { [weak self] granted, error in
             guard let self else { return }
             guard granted else {
                 DispatchQueue.main.async {

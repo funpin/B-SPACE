@@ -15,6 +15,10 @@ import BSpaceCore
 /// Without an Edit menu a `WKWebView` has no Copy and Paste: the key
 /// equivalents live on the menu items, not in the view.
 ///
+/// The items the system adds on its own (dictation, emoji, window tiling,
+/// the Option-key alternates) are in the system's language, whatever the web
+/// client is set to; so they are in an Electron app.
+///
 /// Two differences from the Electron build. There is no "Toggle Developer
 /// Tools": a `WKWebView`'s inspector cannot be opened from code (plan,
 /// deviation 4). And Window has Close, the standard Command-W, which the
@@ -40,6 +44,13 @@ public enum AppMenu {
             item.keyEquivalentModifierMask = modifiers
             return item
         }
+        /// Undo and Redo: AppKit writes its own title into these two each
+        /// time the menu is validated, in the system's language.
+        func pinned(_ key: DesktopStrings.Key, _ action: Selector, modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
+            let item = PinnedTitleMenuItem(pinnedTitle: text(key), action: action, keyEquivalent: "z")
+            item.keyEquivalentModifierMask = modifiers
+            return item
+        }
         func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             let menu = NSMenu(title: title)
@@ -62,8 +73,8 @@ public enum AppMenu {
             standard(.quit, #selector(NSApplication.terminate(_:)), "q"),
         ]))
         menu.addItem(submenu(text(.editMenu), [
-            standard(.undo, Selector(("undo:")), "z"),
-            standard(.redo, Selector(("redo:")), "z", modifiers: [.command, .shift]),
+            pinned(.undo, Selector(("undo:")), modifiers: .command),
+            pinned(.redo, Selector(("redo:")), modifiers: [.command, .shift]),
             .separator(),
             standard(.cut, #selector(NSText.cut(_:)), "x"),
             standard(.copy, #selector(NSText.copy(_:)), "c"),
@@ -80,5 +91,24 @@ public enum AppMenu {
         menu.addItem(window)
         NSApp.windowsMenu = window.submenu
         return menu
+    }
+}
+
+/// A menu item whose title stays what it was given. AppKit retitles the Undo
+/// and Redo items from the undo manager whenever it validates the menu, in the
+/// language of the system; the menu is in the language of the web client, and
+/// with the two set apart every other item would be in one language and these
+/// two in another.
+final class PinnedTitleMenuItem: NSMenuItem {
+    private var pinnedTitle: String?
+
+    convenience init(pinnedTitle: String, action: Selector, keyEquivalent: String) {
+        self.init(title: pinnedTitle, action: action, keyEquivalent: keyEquivalent)
+        self.pinnedTitle = pinnedTitle
+    }
+
+    override var title: String {
+        get { super.title }
+        set { super.title = pinnedTitle ?? newValue }
     }
 }

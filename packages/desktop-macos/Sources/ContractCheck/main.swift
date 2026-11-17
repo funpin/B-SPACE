@@ -221,6 +221,8 @@ final class CheckNotificationPresenter: NotificationPresenter {
     var onClick: (([AnyHashable: Any]) -> Void)?
     private(set) var shown: [NotificationRequest] = []
 
+    func prepare() {}
+
     func show(_ request: NotificationRequest) {
         shown.append(request)
     }
@@ -781,6 +783,13 @@ func checkMenu() -> Never {
                     problems.append("\(language.code): an item with the title '\(item.title)' (\(action))")
                 }
                 if action.isEmpty { problems.append("\(language.code): '\(item.title)' does nothing") }
+                if action == "undo:" || action == "redo:" {
+                    // AppKit rewrites these two when it validates the menu.
+                    let own = item.title
+                    item.title = "rewritten"
+                    top.submenu?.update()
+                    if item.title != own { problems.append("\(language.code): '\(own)' let its title be rewritten to '\(item.title)'") }
+                }
                 if let shortcut = shortcuts[action] {
                     seen.insert(action)
                     if item.keyEquivalent != shortcut {

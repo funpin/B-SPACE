@@ -210,9 +210,13 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
 - **`showNotification(title, body, options)`** becomes a system notification
   (`SystemNotificationPresenter`, `UNUserNotificationCenter`), with the default
   sound, shown even while the app is in front: the web client decides when a
-  notification is due. Permission is asked the first time one is shown; it is
-  kept per bundle identifier, so the one given to the Electron build stands.
-  A call with no title shows nothing.
+  notification is due. A call with no title shows nothing.
+- **Permission** (alerts, sounds and the icon's badge) is asked when the
+  window is first shown, if the user has never been asked. The system's
+  question is a banner that goes away after a while and then counts as a
+  refusal, so it must not wait for the first notification, which comes when
+  nobody is looking. Permission is kept per bundle identifier: the one given
+  to the Electron build stands and nothing is asked.
 - **A click** brings the window forward and sends `options` back on
   `notification-click`, but only if the page is still of the origin that asked
   for the notification (`NotificationRequest.clickPayload`): identifiers from
@@ -221,7 +225,8 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   app for a click to work, and a click still arrives after a restart. A click
   that comes before the page listens only brings the window forward.
 - **`setBadgeCount(n)`** sets the Dock icon's badge to the whole number when
-  it is one or more and clears it otherwise (`BadgeCount`).
+  it is one or more and clears it otherwise (`BadgeCount`). The system shows
+  the badge only while the app is allowed to badge its icon.
 - An executable that is not an application bundle has no notification centre
   and shows none.
 

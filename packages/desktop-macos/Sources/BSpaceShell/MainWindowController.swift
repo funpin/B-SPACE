@@ -233,6 +233,10 @@ public final class MainWindowController: NSObject {
         if !hasRevealedWindow, restoresZoomed, !window.isZoomed {
             window.zoom(nil)
         }
+        if !hasRevealedWindow {
+            // The user is looking at the app for the first time in this run.
+            notifications?.prepare()
+        }
         hasRevealedWindow = true
         window.makeKeyAndOrderFront(nil)
     }
