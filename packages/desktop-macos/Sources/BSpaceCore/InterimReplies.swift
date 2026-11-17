@@ -28,12 +28,8 @@ public enum InterimReplies {
 
     /// `invoke` channels with the answer each gives for now.
     public static func invokeReplies() -> [String: BridgeReply] {
-        let noAutoLaunch: [String: Any] = ["openAtLogin": false, "startMinimized": false]
         return [
-            // Stage 2. Auto-launch: the answer of a build that cannot register
-            // a login item. Recovery: the initial state, nothing went wrong.
-            "get-auto-launch-settings": .value(noAutoLaunch),
-            "set-auto-launch-settings": .value(noAutoLaunch),
+            // Stage 2. Recovery: the initial state, nothing went wrong.
             "get-recovery-state": .value([
                 "mode": "normal",
                 "reason": NSNull(),

@@ -66,6 +66,8 @@ public enum BridgeScript {
                 const list = listeners.get(member.channel) || [];
                 list.push(entry);
                 listeners.set(member.channel, list);
+                // The shell holds some events until someone listens for them.
+                send('subscribe', member.channel, []).catch(() => {});
                 if (!member.unsubscribe) return undefined;
                 return () => {
                   const current = listeners.get(member.channel) || [];

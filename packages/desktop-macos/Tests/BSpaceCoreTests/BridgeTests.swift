@@ -64,6 +64,8 @@ private let small = """
         let source = try BridgeScript.source(bridge: .backspace, contract: contract(small), values: ["platform": "darwin"])
         #expect(source.contains(#"{"kind":"value","name":"platform"}"#))
         #expect(source.contains(#"{"channel":"news","kind":"subscribe","name":"onNews","unsubscribe":true}"#))
+        // The page tells the shell when it starts listening on a channel.
+        #expect(source.contains("send('subscribe', member.channel, [])"))
         #expect(source.contains(#"const values = {"platform":"darwin"};"#))
         #expect(source.contains(#"window.webkit.messageHandlers["backspace"]"#))
         #expect(source.contains(#"Object.defineProperty(window, "__backspaceDeliver""#))
@@ -134,6 +136,33 @@ private let small = """
         #expect(value as? String == "first")
     }
 
+    @Test func tellsWhenThePageSubscribes() throws {
+        let router = try router()
+        var subscriptions = 0
+        router.onSubscribe("news") { subscriptions += 1 }
+
+        var replies: [BridgeReply] = []
+        let subscription = try message(router, kind: "subscribe", channel: "news")
+        router.dispatch(subscription) { replies.append($0) }
+        router.dispatch(subscription) { replies.append($0) }
+
+        #expect(subscriptions == 2)
+        guard replies.count == 2, case .undefined = replies[0], case .undefined = replies[1] else {
+            Issue.record("expected two undefined replies, got \(replies)")
+            return
+        }
+    }
+
+    @Test func acceptsASubscriptionNobodyWaitsFor() throws {
+        let router = try router()
+        var replies: [BridgeReply] = []
+        router.dispatch(try message(router, kind: "subscribe", channel: "news")) { replies.append($0) }
+        guard replies.count == 1, case .undefined = replies[0] else {
+            Issue.record("expected one undefined reply, got \(replies)")
+            return
+        }
+    }
+
     @Test func refusesWhatTheContractDoesNotAllow() throws {
         let router = try router()
         router.onFire("ping") { _ in }
@@ -144,7 +173,9 @@ private let small = """
         #expect(router.decode(["kind": "fire", "channel": "unknown", "args": "[]"]).failure == BridgeError("No handler registered for 'unknown'"))
         #expect(router.decode(["kind": "invoke", "channel": "ping", "args": "[]"]).failure != nil)
         #expect(router.decode(["kind": "fire", "channel": "ask", "args": "[]"]).failure != nil)
-        #expect(router.decode(["kind": "subscribe", "channel": "news", "args": "[]"]).failure != nil)
+        #expect(router.decode(["kind": "subscribe", "channel": "ping", "args": "[]"]).failure == BridgeError("'ping' is not an event channel"))
+        #expect(router.decode(["kind": "subscribe", "channel": "unknown", "args": "[]"]).failure != nil)
+        #expect(router.decode(["kind": "value", "channel": "news", "args": "[]"]).failure != nil)
         #expect(router.decode(["kind": "fire", "channel": "ping", "args": "{}"]).failure != nil)
         #expect(router.decode(["kind": "fire", "channel": "ping", "args": "not json"]).failure != nil)
     }
@@ -168,6 +199,7 @@ private let small = """
     private let ported: Set<String> = [
         "minimize-window", "maximize-window", "close-window", "set-connected-origins",
         "get-app-version", "is-sandboxed", "get-instance-url", "set-instance-url", "clear-instance-url",
+        "get-auto-launch-settings", "set-auto-launch-settings",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

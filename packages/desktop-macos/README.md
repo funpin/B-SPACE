@@ -84,6 +84,7 @@ and formats, so either shell reads what the other wrote
 |------|------|------|
 | `instance-url.json` | The chosen instance | `InstanceURLStore` |
 | `window-state.json` | Size, position and whether the window was zoomed | `WindowStateStore`, `WindowPlacement` |
+| `auto-launch.json` | Whether the app starts hidden when opened at login (`startMinimized`); its `openAtLogin` is written and never read back | `AutoLaunchStore` |
 | `local-storage-import.json` | The origins whose `localStorage` was brought over from the Electron build (native app only) | `LocalStorageImportLedger` |
 
 `window-state.json` holds Electron's coordinates: points from the top left
@@ -135,6 +136,46 @@ The tests read a database written by the real LevelDB library
 (`Tests/BSpaceCoreTests/Fixtures/chromium-local-storage`), made by
 `scripts/make-leveldb-fixture.mjs`; everything in it is made up.
 
+### Starting the app
+
+Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
+`BSpaceShell/AppLaunchSupport.swift`, the order of things in `AppDelegate`.
+
+- **One copy.** macOS keeps to one copy of an app opened from the Finder or
+  the Dock. A copy started past that (the executable run directly, `open -n`)
+  looks for others with its bundle identifier; the one that started first
+  stays (`SingleInstance.survivor`, by the kernel's start time, then by process
+  identifier, so two copies launched together agree). The copy that gives way
+  sends the other a distributed notification named
+  `<bundle identifier>.second-instance`, carrying the `backspace://` link it
+  was launched with if there was one, activates it and exits before creating
+  a window. The copy that stays shows its window. An executable with no bundle
+  (a test run) skips all of this.
+- **`backspace://` links.** They come from the system
+  (`application(_:open:)`), from the command line, or from a second copy.
+  Anything that does not start with `backspace://` is dropped before it
+  reaches the page. A link is sent on the `deep-link` channel and the window
+  comes forward. If the page is not listening yet (the link launched the app,
+  or the page is reloading) the link waits in `DeepLinkInbox`, the newest
+  replacing an older one, and is sent when the page subscribes: the bridge
+  script posts a `subscribe` message each time the page starts listening on an
+  event channel (`BridgeRouter.onSubscribe`). A bundle whose Info.plist
+  declares the scheme makes itself its handler at every launch, as Electron
+  does; a development bundle does not declare it.
+- **Opening at login.** `SystemLoginItem` is the app's own login item
+  (`SMAppService.mainApp`). It belongs to the bundle identifier, so the item
+  the Electron build registered is the same one. `getAutoLaunchSettings`
+  answers with what the system says for `openAtLogin` and what
+  `auto-launch.json` says for `startMinimized`. `setAutoLaunchSettings`
+  changes the fields it is given, asks the system only when `openAtLogin`
+  really changes, and answers with the state after the change as the system
+  reports it: if the system refuses, the client's switch goes back.
+- **A hidden start.** The window stays hidden until something asks for it
+  (the Dock icon, a link, a second launch) when the app is run with
+  `--hidden`, or when the system opened it at login (the launch event says so)
+  and `startMinimized` is on. The page loads and connects all the same. A
+  launch by a link is never hidden.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -166,7 +207,11 @@ Electron build's `localStorage` (`--check local-storage-import`: the fixture's
 items reach a page of their origin as they are, an origin is imported once,
 storage in use is kept, the shell imports before it loads an instance; the
 data store is never written to disk, and the one address asked of the network
-is a `.test` name that does not exist). Then it loads
+is a `.test` name that does not exist), and what reaches the page from outside
+(`--check launch`: a link is held until the page listens and delivered once,
+a later one goes straight through, what is not a link is dropped, and the
+auto-launch settings go through the bridge to a login item that registers
+nothing). Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

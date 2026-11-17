@@ -34,6 +34,12 @@ import WebKit
 // left alone, and the shell imports before it loads an instance. The one
 // address it asks the network for does not exist (a .test name).
 //
+// With --check launch it checks what reaches the page from outside the app:
+// a backspace:// link that arrives before the page listens for links is held
+// and delivered once it does, a later one is delivered at once, anything else
+// is dropped; and the auto-launch settings go through the bridge to a login
+// item that registers nothing.
+//
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
 // how many items there are and how large they are; --keys yes adds the item
@@ -171,6 +177,22 @@ let environment = ShellEnvironment(
     language: "en"
 )
 
+/// The login item of a check run: remembers what it was asked and registers
+/// nothing with the system.
+final class CheckLoginItem: LoginItem {
+    var isEnabled = false
+    var refuses = false
+    private(set) var requests: [Bool] = []
+
+    struct Refused: Error {}
+
+    func setEnabled(_ enabled: Bool) throws {
+        requests.append(enabled)
+        if refuses { throw Refused() }
+        isEnabled = enabled
+    }
+}
+
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 
@@ -191,7 +213,7 @@ func checkWindowState() -> Never {
     }
     func makeController() -> MainWindowController {
         do {
-            return try MainWindowController(environment: environment, showsWindow: true)
+            return try MainWindowController(environment: environment, showsWindow: true, loginItem: CheckLoginItem())
         } catch {
             fail(String(describing: error))
         }
@@ -390,7 +412,12 @@ func checkLocalStorageImport(fixture: URL) -> Never {
     //    exist, so the load fails; what matters is what is in the storage.
     let shellStore = WKWebsiteDataStore.nonPersistent()
     do {
-        let shell = try MainWindowController(environment: environment, showsWindow: false, websiteDataStore: shellStore)
+        let shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: shellStore,
+            loginItem: CheckLoginItem()
+        )
         var hasEnded = false
         shell.onMainFrameLoadEnded = { _ in hasEnded = true }
         guard let url = URL(string: origin + "/") else { fail("bad address") }
@@ -417,22 +444,139 @@ func checkLocalStorageImport(fixture: URL) -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The launch check: links and the auto-launch settings. Ends the process.
+func checkLaunch() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let loginItem = CheckLoginItem()
+    let shell: MainWindowController
+    let blank = temporary.appendingPathComponent("blank.html", isDirectory: false)
+    do {
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try Data("<!doctype html><title></title>".utf8).write(to: blank)
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: loginItem
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+
+    /// Loads an empty page in the shell: a new document with the bridge in it.
+    func loadBlank() {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(blank)
+        guard wait(until: { hasEnded }) else { fail("the empty page did not load") }
+    }
+    /// Runs the body of an async function in the page.
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    let listen = "window.__links = []; window.backspace.onDeepLink((link) => window.__links.push(link)); return true;"
+    func links() -> [String]? {
+        page("return window.__links === undefined ? null : window.__links;") as? [String]
+    }
+    func expectLinks(_ expected: [String], _ what: String) {
+        if !wait(5, until: { links() == expected }) {
+            problems.append("\(what): the page has \(String(describing: links())), expected \(expected)")
+        }
+    }
+
+    // 1. Links that come before the page listens are held; the newest of
+    //    them is delivered when it does.
+    loadBlank()
+    shell.openDeepLink("backspace://join/one")
+    shell.openDeepLink("backspace://join/two")
+    _ = page(listen)
+    expectLinks(["backspace://join/two"], "a link held until the page listened")
+
+    // 2. With a listener in place a link goes straight through.
+    shell.openDeepLink("backspace://channel/1/2")
+    expectLinks(["backspace://join/two", "backspace://channel/1/2"], "a link sent to a listening page")
+
+    // 3. What is not a backspace:// link never reaches the page.
+    shell.openDeepLink("https://example.test/")
+    shell.openDeepLink("javascript:alert(1)")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+    expectLinks(["backspace://join/two", "backspace://channel/1/2"], "an address that is not a link")
+
+    // 4. A new document has no listener: links are held again, and the ones
+    //    already delivered do not come back.
+    loadBlank()
+    shell.openDeepLink("backspace://join/three")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+    if links() != nil { problems.append("a link reached a page that had not subscribed") }
+    _ = page(listen)
+    expectLinks(["backspace://join/three"], "a link held across a reload")
+
+    // 5. The auto-launch settings, through the bridge.
+    func settings(_ script: String) -> [String: Bool]? {
+        page(script) as? [String: Bool]
+    }
+    func expectSettings(_ found: [String: Bool]?, openAtLogin: Bool, startMinimized: Bool, _ what: String) {
+        if found != ["openAtLogin": openAtLogin, "startMinimized": startMinimized] {
+            problems.append("\(what): got \(String(describing: found))")
+        }
+    }
+    expectSettings(settings("return await window.backspace.getAutoLaunchSettings();"),
+                   openAtLogin: false, startMinimized: true, "the settings of a fresh install")
+    expectSettings(settings("return await window.backspace.setAutoLaunchSettings({ openAtLogin: true });"),
+                   openAtLogin: true, startMinimized: true, "switching opening at login on")
+    if !loginItem.isEnabled { problems.append("the login item was not registered") }
+    expectSettings(settings("return await window.backspace.setAutoLaunchSettings({ startMinimized: false });"),
+                   openAtLogin: true, startMinimized: false, "changing only the hidden start")
+    expectSettings(settings("return await window.backspace.setAutoLaunchSettings();"),
+                   openAtLogin: true, startMinimized: false, "a call with nothing to change")
+    expectSettings(settings("return await window.backspace.setAutoLaunchSettings('junk');"),
+                   openAtLogin: true, startMinimized: false, "a call with something that is not settings")
+    if loginItem.requests != [true] {
+        problems.append("the system should have been asked once, it was asked \(loginItem.requests)")
+    }
+    let file = AutoLaunchStore(directory: temporary).fileURL
+    if (try? String(contentsOf: file, encoding: .utf8)) != #"{"openAtLogin":true,"startMinimized":false}"# {
+        problems.append("auto-launch.json does not hold what was set")
+    }
+    // The system refuses: the answer is what it still says, not what was asked.
+    loginItem.refuses = true
+    expectSettings(settings("return await window.backspace.setAutoLaunchSettings({ openAtLogin: false });"),
+                   openAtLogin: true, startMinimized: false, "a change the system refused")
+    expectSettings(settings("return await window.backspace.getAutoLaunchSettings();"),
+                   openAtLogin: true, startMinimized: false, "the settings after a refusal")
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "launch: links held until the page listens, auto-launch settings through the bridge"
+        : "launch: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "launch":
+    checkLaunch()
 case "window-state":
     checkWindowState()
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch or electron-profile")
 }
 
 let contract: BridgeContract
 let controller: MainWindowController
 do {
     contract = try BridgeContract(data: Data(contentsOf: contractURL))
-    controller = try MainWindowController(environment: environment, showsWindow: false)
+    controller = try MainWindowController(environment: environment, showsWindow: false, loginItem: CheckLoginItem())
 } catch {
     fail(String(describing: error))
 }

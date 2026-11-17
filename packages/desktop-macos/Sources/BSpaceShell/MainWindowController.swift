@@ -41,6 +41,10 @@ public final class MainWindowController: NSObject {
     /// does not go ahead after a newer one was asked for.
     private var shellLoadCount = 0
     private let localStorageImporter: LocalStorageImporter
+    private let autoLaunch: AutoLaunch
+    private var deepLinks = DeepLinkInbox()
+    /// The app was started hidden: the window waits to be asked for.
+    private var staysHidden = false
     private var hasRevealedWindow = false
 
     private let windowStateStore: WindowStateStore
@@ -61,13 +65,20 @@ public final class MainWindowController: NSObject {
     ///     putting a window on screen.
     ///   - websiteDataStore: where the pages keep their data. A test run
     ///     passes one that is not written to disk.
+    ///   - loginItem: the system's record of opening at login. A test run
+    ///     passes one that registers nothing.
     public init(
         environment: ShellEnvironment,
         showsWindow: Bool = true,
-        websiteDataStore: WKWebsiteDataStore = .default()
+        websiteDataStore: WKWebsiteDataStore = .default(),
+        loginItem: LoginItem = SystemLoginItem()
     ) throws {
         self.environment = environment
         self.showsWindow = showsWindow
+        autoLaunch = AutoLaunch(
+            store: AutoLaunchStore(directory: environment.userDataDirectory),
+            loginItem: loginItem
+        )
         // The Electron build keeps its Chromium profile in the user-data
         // folder itself.
         localStorageImporter = LocalStorageImporter(
@@ -141,7 +152,12 @@ public final class MainWindowController: NSObject {
 
     /// Clears the caches Electron clears at launch, then loads the first page:
     /// the override address, else the saved instance, else the picker.
-    public func start() {
+    ///
+    /// - Parameter hidden: the window is not shown when the page is ready,
+    ///   only when something asks for it (the Dock icon, a link, a second
+    ///   launch). The page loads and connects all the same.
+    public func start(hidden: Bool = false) {
+        staysHidden = hidden
         let stale: Set<String> = [
             WKWebsiteDataTypeDiskCache,
             WKWebsiteDataTypeMemoryCache,
@@ -207,9 +223,30 @@ public final class MainWindowController: NSObject {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Shows the window for the first time, once its page is ready, unless
+    /// the app was started hidden.
     private func revealWindow() {
-        guard !hasRevealedWindow else { return }
+        guard !hasRevealedWindow, !staysHidden else { return }
         showWindow()
+    }
+
+    // MARK: Links
+
+    /// Takes a `backspace://` link from outside the app: sends it to the page,
+    /// or keeps it until the page listens for links. Anything that is not
+    /// such a link is ignored.
+    ///
+    /// - Parameter showingWindow: bring the window forward now. False for the
+    ///   link the app was launched with: the window appears when its first
+    ///   page is ready, as on any launch.
+    public func openDeepLink(_ link: String, showingWindow: Bool = true) {
+        guard DeepLink.accepts(link) else { return }
+        if let ready = deepLinks.receive(link) {
+            bridge.emit("deep-link", payload: ready)
+        }
+        if showingWindow {
+            showWindow()
+        }
     }
 
     // MARK: Window state
@@ -284,6 +321,10 @@ public final class MainWindowController: NSObject {
 
     // MARK: Bridge
 
+    private static func bridgeValue(_ settings: AutoLaunchSettings) -> [String: Any] {
+        ["openAtLogin": settings.openAtLogin, "startMinimized": settings.startMinimized]
+    }
+
     private func registerBridgeHandlers() {
         let router = bridge.router
 
@@ -300,6 +341,26 @@ public final class MainWindowController: NSObject {
             guard let origins = arguments.array(at: 0) else { return }
             self?.knownInstanceOrigins = Set(origins.compactMap { $0 as? String }.filter { !$0.isEmpty })
         }
+
+        router.onSubscribe("deep-link") { [weak self] in
+            guard let self, let waiting = self.deepLinks.listenerAppeared() else { return }
+            self.bridge.emit("deep-link", payload: waiting)
+        }
+
+        router.onInvoke("get-auto-launch-settings", answering: { [autoLaunch] _ in
+            .value(Self.bridgeValue(autoLaunch.current))
+        })
+        router.onInvoke("set-auto-launch-settings", answering: { [autoLaunch] arguments in
+            let requested = arguments.object(at: 0) ?? [:]
+            let (settings, failure) = autoLaunch.update(
+                openAtLogin: requested["openAtLogin"] as? Bool,
+                startMinimized: requested["startMinimized"] as? Bool
+            )
+            if let failure {
+                NSLog("[auto-launch] the change was not fully applied: %@", failure.localizedDescription)
+            }
+            return .value(Self.bridgeValue(settings))
+        })
 
         router.onInvoke("get-app-version", answering: { [environment] _ in
             .value(environment.appVersion)
@@ -387,6 +448,11 @@ extension MainWindowController: WKNavigationDelegate {
         download.delegate = self
     }
 
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // A new document: whatever listened for links in the old one is gone.
+        deepLinks.pageChanged()
+    }
+
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         mainFrameLoadEnded(error: nil)
     }
@@ -404,6 +470,7 @@ extension MainWindowController: WKNavigationDelegate {
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        deepLinks.pageChanged()
         NSLog("[navigation] the web content process ended; reloading")
         if let url = webView.url {
             load(url)
