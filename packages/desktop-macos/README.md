@@ -176,6 +176,26 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   and `startMinimized` is on. The page loads and connects all the same. A
   launch by a link is never hidden.
 
+### Notifications and the badge
+
+- **`showNotification(title, body, options)`** becomes a system notification
+  (`SystemNotificationPresenter`, `UNUserNotificationCenter`), with the default
+  sound, shown even while the app is in front: the web client decides when a
+  notification is due. Permission is asked the first time one is shown; it is
+  kept per bundle identifier, so the one given to the Electron build stands.
+  A call with no title shows nothing.
+- **A click** brings the window forward and sends `options` back on
+  `notification-click`, but only if the page is still of the origin that asked
+  for the notification (`NotificationRequest.clickPayload`): identifiers from
+  one instance must not open things on another. The origin and the payload
+  travel with the notification through the system, so nothing is held in the
+  app for a click to work, and a click still arrives after a restart. A click
+  that comes before the page listens only brings the window forward.
+- **`setBadgeCount(n)`** sets the Dock icon's badge to the whole number when
+  it is one or more and clears it otherwise (`BadgeCount`).
+- An executable that is not an application bundle has no notification centre
+  and shows none.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -211,7 +231,11 @@ is a `.test` name that does not exist), and what reaches the page from outside
 (`--check launch`: a link is held until the page listens and delivered once,
 a later one goes straight through, what is not a link is dropped, and the
 auto-launch settings go through the bridge to a login item that registers
-nothing). Then it loads
+nothing), and notifications and the badge (`--check notifications`, on a page
+the driver serves from the loopback address so that it has a real origin: what
+the page asks for reaches a presenter that only records, a click hands the
+payload back, a click on a notification from another origin does not, the
+badge is set and cleared). Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

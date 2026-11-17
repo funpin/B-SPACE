@@ -4,8 +4,9 @@
 # The shell under test is the real one (BSpaceShell), with no window on screen
 # and its settings in a temporary folder. Before the bridge it checks the
 # shell's window state on this machine's displays (--check window-state), the
-# import of the Electron build's localStorage (--check local-storage-import)
-# and links and auto-launch settings (--check launch).
+# import of the Electron build's localStorage (--check local-storage-import),
+# links and auto-launch settings (--check launch) and notifications and the
+# badge (--check notifications).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -64,6 +65,13 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --check launch >&2
+
+# Notifications and the Dock badge, on a page served from the loopback
+# address. No notification is shown.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --check notifications >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

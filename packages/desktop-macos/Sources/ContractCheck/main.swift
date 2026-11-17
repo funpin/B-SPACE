@@ -1,6 +1,7 @@
 import AppKit
 import BSpaceCore
 import BSpaceShell
+import Network
 import WebKit
 
 // Runs the bridge contract check against the real shell: the same window
@@ -39,6 +40,13 @@ import WebKit
 // and delivered once it does, a later one is delivered at once, anything else
 // is dropped; and the auto-launch settings go through the bridge to a login
 // item that registers nothing.
+//
+// With --check notifications it checks notifications and the badge on a page
+// with a real origin, served from this process on the loopback address: what
+// the page asks for reaches the presenter (one that only records), a click
+// brings the payload back to the page, a click on a notification from another
+// origin does not, and setBadgeCount sets and clears the Dock badge. Nothing
+// is shown: no notification, no window.
 //
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
@@ -193,6 +201,52 @@ final class CheckLoginItem: LoginItem {
     }
 }
 
+/// The notification presenter of a check run: records what it is asked to
+/// show and shows nothing.
+final class CheckNotificationPresenter: NotificationPresenter {
+    var onClick: (([AnyHashable: Any]) -> Void)?
+    private(set) var shown: [NotificationRequest] = []
+
+    func show(_ request: NotificationRequest) {
+        shown.append(request)
+    }
+}
+
+/// Serves one empty page on the loopback address, on a port the system picks:
+/// a page with a real http origin, with nothing asked of the network outside
+/// this machine.
+final class LocalPageServer {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "local-page-server")
+
+    init() throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredInterfaceType = .loopback
+        listener = try NWListener(using: parameters)
+        listener.newConnectionHandler = { [queue] connection in
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
+                let body = "<!doctype html><title>check</title>"
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                    + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
+                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
+        }
+        listener.start(queue: queue)
+    }
+
+    /// The server's origin, once it is listening.
+    func origin() -> String? {
+        let deadline = Date().addingTimeInterval(5)
+        while listener.port == nil && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return listener.port.map { "http://127.0.0.1:\($0.rawValue)" }
+    }
+}
+
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 
@@ -213,7 +267,7 @@ func checkWindowState() -> Never {
     }
     func makeController() -> MainWindowController {
         do {
-            return try MainWindowController(environment: environment, showsWindow: true, loginItem: CheckLoginItem())
+            return try MainWindowController(environment: environment, showsWindow: true, loginItem: CheckLoginItem(), notifications: nil)
         } catch {
             fail(String(describing: error))
         }
@@ -559,9 +613,115 @@ func checkLaunch() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The notifications check. Ends the process.
+func checkNotifications() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let presenter = CheckNotificationPresenter()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: presenter
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+
+    var hasEnded = false
+    var loadError: Error?
+    shell.onMainFrameLoadEnded = { error in
+        hasEnded = true
+        loadError = error
+    }
+    shell.load(address)
+    guard wait(until: { hasEnded }), loadError == nil else {
+        fail("the local page did not load: \(loadError?.localizedDescription ?? "no answer")")
+    }
+
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func clicks() -> [[String: String]]? {
+        page("return window.__clicks;") as? [[String: String]]
+    }
+
+    // 1. What the page asks for reaches the presenter, with the page's origin.
+    _ = page("""
+        window.__clicks = [];
+        window.backspace.onNotificationClick((options) => window.__clicks.push(options));
+        window.backspace.showNotification('Ann', 'hello', { spaceId: '1', channelId: '2' });
+        window.backspace.showNotification('Plain');
+        window.backspace.showNotification('', 'nothing to show');
+        return true;
+        """)
+    let expected = [
+        NotificationRequest(title: "Ann", body: "hello", origin: origin, optionsJSON: #"{"channelId":"2","spaceId":"1"}"#),
+        NotificationRequest(title: "Plain", body: "", origin: origin, optionsJSON: nil),
+    ]
+    if !wait(5, until: { presenter.shown.count >= expected.count }) || presenter.shown != expected {
+        problems.append("the presenter was asked for \(presenter.shown), expected \(expected)")
+    }
+
+    // 2. A click hands the payload back to the page; one without a payload,
+    //    and one from another origin, only bring the window forward.
+    if presenter.shown.count == expected.count {
+        presenter.onClick?(presenter.shown[0].userInfo)
+        presenter.onClick?(presenter.shown[1].userInfo)
+    }
+    presenter.onClick?(NotificationRequest(
+        title: "Elsewhere", body: "", origin: "https://other.example.test", optionsJSON: #"{"channelId":"9"}"#
+    ).userInfo)
+    if !wait(5, until: { clicks()?.isEmpty == false }) {
+        problems.append("a click did not reach the page")
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+    if clicks() != [["spaceId": "1", "channelId": "2"]] {
+        problems.append("the page got the clicks \(String(describing: clicks())), expected one, with the payload it gave")
+    }
+
+    // 3. The badge on the Dock icon.
+    func badge(after script: String) -> String? {
+        _ = page(script + " return true;")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        return NSApp.dockTile.badgeLabel
+    }
+    if badge(after: "window.backspace.setBadgeCount(7);") != "7" {
+        problems.append("setBadgeCount(7) left the badge at \(String(describing: NSApp.dockTile.badgeLabel))")
+    }
+    if badge(after: "window.backspace.setBadgeCount(0);") != nil {
+        problems.append("setBadgeCount(0) did not clear the badge")
+    }
+    if badge(after: "window.backspace.setBadgeCount(3); window.backspace.setBadgeCount('many');") != nil {
+        problems.append("a count that is not a number did not clear the badge")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "notifications: asked for with the page's origin, clicks back to the same origin only, badge set and cleared"
+        : "notifications: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "notifications":
+    checkNotifications()
 case "launch":
     checkLaunch()
 case "window-state":
@@ -569,14 +729,14 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications or electron-profile")
 }
 
 let contract: BridgeContract
 let controller: MainWindowController
 do {
     contract = try BridgeContract(data: Data(contentsOf: contractURL))
-    controller = try MainWindowController(environment: environment, showsWindow: false, loginItem: CheckLoginItem())
+    controller = try MainWindowController(environment: environment, showsWindow: false, loginItem: CheckLoginItem(), notifications: nil)
 } catch {
     fail(String(describing: error))
 }

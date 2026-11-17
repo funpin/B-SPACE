@@ -15,8 +15,8 @@ import Foundation
 public enum InterimReplies {
     /// `fire` channels that are accepted and do nothing yet.
     public static let fireChannels: Set<String> = [
-        // Stage 2: notifications and badge, language, recovery.
-        "show-notification", "set-badge-count", "set-language", "renderer-ready", "recovery-action",
+        // Stage 2: language, recovery.
+        "set-language", "renderer-ready", "recovery-action",
         // Stage 3: tray, global shortcuts.
         "set-tray-state", "set-tray-context", "keybind-portal-retry",
         // Stage 4: screen sharing, viewers' pointers.

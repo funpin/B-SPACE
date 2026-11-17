@@ -40,6 +40,14 @@ public struct BridgeArguments {
         return number.boolValue
     }
 
+    /// A JavaScript number. A boolean is not one.
+    public func number(at index: Int) -> Double? {
+        guard let number = value(at: index) as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            return nil
+        }
+        return number.doubleValue
+    }
+
     public func array(at index: Int) -> [Any]? {
         value(at: index) as? [Any]
     }

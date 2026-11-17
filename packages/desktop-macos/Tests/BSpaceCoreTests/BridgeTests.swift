@@ -200,6 +200,7 @@ private let small = """
         "minimize-window", "maximize-window", "close-window", "set-connected-origins",
         "get-app-version", "is-sandboxed", "get-instance-url", "set-instance-url", "clear-instance-url",
         "get-auto-launch-settings", "set-auto-launch-settings",
+        "show-notification", "set-badge-count",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

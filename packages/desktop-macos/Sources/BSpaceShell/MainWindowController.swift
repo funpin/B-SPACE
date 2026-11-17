@@ -42,6 +42,7 @@ public final class MainWindowController: NSObject {
     private var shellLoadCount = 0
     private let localStorageImporter: LocalStorageImporter
     private let autoLaunch: AutoLaunch
+    private let notifications: NotificationPresenter?
     private var deepLinks = DeepLinkInbox()
     /// The app was started hidden: the window waits to be asked for.
     private var staysHidden = false
@@ -67,14 +68,18 @@ public final class MainWindowController: NSObject {
     ///     passes one that is not written to disk.
     ///   - loginItem: the system's record of opening at login. A test run
     ///     passes one that registers nothing.
+    ///   - notifications: what shows notifications; nil shows none. A test
+    ///     run passes one that only records them.
     public init(
         environment: ShellEnvironment,
         showsWindow: Bool = true,
         websiteDataStore: WKWebsiteDataStore = .default(),
-        loginItem: LoginItem = SystemLoginItem()
+        loginItem: LoginItem = SystemLoginItem(),
+        notifications: NotificationPresenter? = SystemNotificationPresenter()
     ) throws {
         self.environment = environment
         self.showsWindow = showsWindow
+        self.notifications = notifications
         autoLaunch = AutoLaunch(
             store: AutoLaunchStore(directory: environment.userDataDirectory),
             loginItem: loginItem
@@ -146,6 +151,9 @@ public final class MainWindowController: NSObject {
         webView.uiDelegate = self
         window.delegate = self
         registerBridgeHandlers()
+        notifications?.onClick = { [weak self] userInfo in
+            self?.notificationClicked(userInfo)
+        }
     }
 
     // MARK: Loading
@@ -228,6 +236,22 @@ public final class MainWindowController: NSObject {
     private func revealWindow() {
         guard !hasRevealedWindow, !staysHidden else { return }
         showWindow()
+    }
+
+    // MARK: Notifications
+
+    /// A click on a notification brings the window forward and, if the page
+    /// is still of the instance that asked for the notification, tells the
+    /// page what to open.
+    private func notificationClicked(_ userInfo: [AnyHashable: Any]) {
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        showWindow()
+        NSApp.activate(ignoringOtherApps: true)
+        if let payload = NotificationRequest.clickPayload(userInfo: userInfo, currentPageURL: webView.url) {
+            bridge.emit("notification-click", payload: payload)
+        }
     }
 
     // MARK: Links
@@ -340,6 +364,17 @@ public final class MainWindowController: NSObject {
         router.onFire("set-connected-origins") { [weak self] arguments in
             guard let origins = arguments.array(at: 0) else { return }
             self?.knownInstanceOrigins = Set(origins.compactMap { $0 as? String }.filter { !$0.isEmpty })
+        }
+
+        router.onFire("show-notification") { [weak self] arguments in
+            guard
+                let self,
+                let request = NotificationRequest(arguments: arguments, pageURL: self.webView.url)
+            else { return }
+            self.notifications?.show(request)
+        }
+        router.onFire("set-badge-count") { arguments in
+            NSApp.dockTile.badgeLabel = BadgeCount.label(for: arguments.number(at: 0))
         }
 
         router.onSubscribe("deep-link") { [weak self] in
