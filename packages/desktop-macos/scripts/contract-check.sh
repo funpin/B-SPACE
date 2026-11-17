@@ -2,7 +2,8 @@
 # Runs the bridge contract check: builds ContractCheck and points it at the
 # contract and the picker in packages/desktop and at contract/harness.html.
 # The shell under test is the real one (BSpaceShell), with no window on screen
-# and its settings in a temporary folder.
+# and its settings in a temporary folder. Before the bridge it checks the
+# shell's window state on this machine's displays (--check window-state).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -39,6 +40,14 @@ cd "$(dirname "$SELF")/.."
 DESKTOP="$(cd ../desktop && pwd)"
 
 swift build -c release --product ContractCheck >&2
+
+# The shell's window, on this machine's displays: restored from
+# window-state.json, written back after a move, centred when its place is gone.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --check window-state >&2
+
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \

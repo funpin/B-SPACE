@@ -73,6 +73,27 @@ when something the package builds from changes (the package, the three files
 taken from `packages/desktop`, the root `package.json`, the workflow), because
 macOS minutes are the expensive kind.
 
+### Settings files
+
+The app keeps its settings where the Electron build does, in the same files
+and formats, so either shell reads what the other wrote
+(`~/Library/Application Support/Backspace`; a development build uses
+`Backspace-Dev`). Every file is written atomically.
+
+| File | What | Code |
+|------|------|------|
+| `instance-url.json` | The chosen instance | `InstanceURLStore` |
+| `window-state.json` | Size, position and whether the window was zoomed | `WindowStateStore`, `WindowPlacement` |
+
+`window-state.json` holds Electron's coordinates: points from the top left
+corner of the primary display, Y growing downwards. AppKit counts from the
+bottom left, upwards; `WindowPlacement.flipped` converts both ways. A saved
+place that is no longer on any display (the monitor is gone) is dropped and
+the window is centred at its saved size. The place is written 0.3 s after the
+window stops moving, when it is closed and when the app quits; while the
+window is zoomed the un-zoomed frame is what is written, and a full-screen
+window is not written at all.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -97,7 +118,10 @@ scripts/contract-check.sh [--out report.json]
 ```
 
 runs the real shell with no window on screen and its settings in a temporary
-folder, loads `contract/harness.html`, and lets that page use the bridge the
+folder. It first checks the window state on this machine's displays
+(`ContractCheck --check window-state`: the window appears where the file says,
+the file follows a move, a lost place is centred). Then it loads
+`contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
 (exit status 1) when a `fire` member returns anything but `undefined`, an

@@ -37,6 +37,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        mainWindow?.saveWindowState()
         mainWindow?.isQuitting = true
         return .terminateNow
     }

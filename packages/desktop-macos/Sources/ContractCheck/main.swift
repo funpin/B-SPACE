@@ -21,6 +21,11 @@ import WebKit
 // without a person at the window. --script <file> asks the page something
 // else: the file is the body of an async function, and what it returns is
 // printed.
+//
+// With --check window-state in place of --harness it checks, on the displays of
+// this machine, that the shell puts its window where window-state.json says,
+// writes the file again when the window moves, and centres the window when
+// the saved place is on no display. No window is shown.
 
 /// Members the harness reads but does not call: they navigate the window away
 /// from the harness or act on a window that is not on screen. The picker and
@@ -113,7 +118,8 @@ let arguments = options()
 let contractURL = fileURL(arguments, "contract")
 let pickerURL = fileURL(arguments, "picker")
 let visitAddress = arguments["visit"]
-let harnessURL = visitAddress == nil ? fileURL(arguments, "harness") : nil
+let checkName = arguments["check"]
+let harnessURL = visitAddress == nil && checkName == nil ? fileURL(arguments, "harness") : nil
 
 let temporary = FileManager.default.temporaryDirectory
     .appendingPathComponent("bspace-contract-check-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
@@ -128,6 +134,100 @@ let environment = ShellEnvironment(
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
+
+/// The window state check. Runs before anything else is created, with its own
+/// window controllers, and ends the process.
+func checkWindowState() -> Never {
+    guard let screen = NSScreen.screens.first else { fail("there is no display to place a window on") }
+    let primaryHeight = Double(screen.frame.height)
+    func electron(_ rect: NSRect) -> PlainRect {
+        WindowPlacement.flipped(
+            PlainRect(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height),
+            primaryDisplayHeight: primaryHeight
+        )
+    }
+    func describe(_ rect: PlainRect?) -> String {
+        guard let rect else { return "no position" }
+        return "\(rect.x),\(rect.y) \(rect.width)x\(rect.height)"
+    }
+    func makeController() -> MainWindowController {
+        do {
+            return try MainWindowController(environment: environment, showsWindow: true)
+        } catch {
+            fail(String(describing: error))
+        }
+    }
+
+    let workArea = electron(screen.visibleFrame)
+    let store = WindowStateStore(directory: temporary)
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    // 1. A saved place inside the work area is where the window appears.
+    let saved = WindowState(width: 960, height: 520, x: workArea.x + 24, y: workArea.y + 16, isMaximized: false)
+    do {
+        try store.save(saved)
+    } catch {
+        fail("cannot write the window state: \(error.localizedDescription)")
+    }
+    let first = makeController()
+    let restored = electron(first.window.frame)
+    if restored != saved.bounds {
+        problems.append("saved \(describe(saved.bounds)), the window is at \(describe(restored))")
+    }
+
+    // 2. Moving and resizing the window is written back, in the file's
+    //    coordinates, once the window has been still for a moment.
+    var moved = first.window.frame
+    moved.origin.x += 30
+    moved.origin.y -= 20
+    moved.size.width += 40
+    moved.size.height += 20
+    first.window.setFrame(moved, display: false)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+    let written = store.load()
+    if written.bounds != electron(first.window.frame) {
+        problems.append("after a move the window is at \(describe(electron(first.window.frame))), the file says \(describe(written.bounds))")
+    }
+    if written.bounds == saved.bounds {
+        problems.append("moving the window did not change the file")
+    }
+
+    // 3. A place on no display is dropped: the saved size, centred.
+    do {
+        try store.save(WindowState(width: 960, height: 520, x: 90_000, y: 90_000, isMaximized: false))
+    } catch {
+        fail("cannot write the window state: \(error.localizedDescription)")
+    }
+    let second = makeController()
+    let fallback = second.window.frame
+    if fallback.width != 960 || fallback.height != 520 {
+        problems.append("a lost place should keep the saved size, the window is \(fallback.width)x\(fallback.height)")
+    }
+    if !screen.frame.contains(fallback) {
+        problems.append("a lost place should put the window on the primary display, it is at \(describe(electron(fallback)))")
+    }
+
+    // 4. Saving on request writes at once (what closing and quitting rely on).
+    var nudged = second.window.frame
+    nudged.origin.x += 10
+    second.window.setFrame(nudged, display: false)
+    second.saveWindowState()
+    if store.load().bounds != electron(second.window.frame) {
+        problems.append("saveWindowState() did not write the current place")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty ? "window state: restored, saved after a move, centred when lost" : "window state: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+if let checkName {
+    guard checkName == "window-state" else { fail("--check takes window-state") }
+    checkWindowState()
+}
 
 let contract: BridgeContract
 let controller: MainWindowController

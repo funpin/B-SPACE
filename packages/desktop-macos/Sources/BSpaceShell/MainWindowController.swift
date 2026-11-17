@@ -39,12 +39,26 @@ public final class MainWindowController: NSObject {
     private var shellLoad: URL?
     private var hasRevealedWindow = false
 
+    private let windowStateStore: WindowStateStore
+    /// The frame the window has when it is neither zoomed nor full screen:
+    /// what is saved while it is, so that the next launch restores a window
+    /// that can be un-zoomed to a sensible size.
+    private var normalFrame: NSRect?
+    /// The saved state said the window was zoomed; applied when it first shows.
+    private var restoresZoomed = false
+    private var isFullScreen = false
+    private var pendingStateSave: DispatchWorkItem?
+
+    /// How long the window has to stay still before its place is written.
+    static let stateSaveDelay: TimeInterval = 0.3
+
     /// - Parameter showsWindow: false in a test run that drives the shell
     ///   without putting a window on screen.
     public init(environment: ShellEnvironment, showsWindow: Bool = true) throws {
         self.environment = environment
         self.showsWindow = showsWindow
         instanceStore = InstanceURLStore(directory: environment.userDataDirectory)
+        windowStateStore = WindowStateStore(directory: environment.userDataDirectory)
 
         let contract = try BridgeContract(data: Data(contentsOf: environment.resources.contractURL))
         bridge = BridgeHost(contract: contract, bridge: .backspace)
@@ -94,6 +108,9 @@ public final class MainWindowController: NSObject {
 
         super.init()
 
+        // Before the delegate is set: placing the window must not count as
+        // the user moving it.
+        restoreWindowState()
         bridge.attach(to: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -155,6 +172,9 @@ public final class MainWindowController: NSObject {
 
     public func showWindow() {
         guard showsWindow else { return }
+        if !hasRevealedWindow, restoresZoomed, !window.isZoomed {
+            window.zoom(nil)
+        }
         hasRevealedWindow = true
         window.makeKeyAndOrderFront(nil)
     }
@@ -162,6 +182,76 @@ public final class MainWindowController: NSObject {
     private func revealWindow() {
         guard !hasRevealedWindow else { return }
         showWindow()
+    }
+
+    // MARK: Window state
+
+    private static func plain(_ rect: NSRect) -> PlainRect {
+        PlainRect(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
+    }
+
+    /// The height of the primary display, the one whose corner both coordinate
+    /// systems start from. AppKit lists it first.
+    private static var primaryDisplayHeight: Double? {
+        NSScreen.screens.first.map { Double($0.frame.height) }
+    }
+
+    /// Puts the window where `window-state.json` says, if that place is still
+    /// on a display; otherwise gives it the saved size and centres it.
+    private func restoreWindowState() {
+        guard showsWindow, let primaryHeight = Self.primaryDisplayHeight else { return }
+        let displays = NSScreen.screens.map { screen in
+            DisplayGeometry(
+                frame: WindowPlacement.flipped(Self.plain(screen.frame), primaryDisplayHeight: primaryHeight),
+                workArea: WindowPlacement.flipped(Self.plain(screen.visibleFrame), primaryDisplayHeight: primaryHeight)
+            )
+        }
+        let minimum = window.contentMinSize
+        let state = WindowPlacement.restorable(
+            windowStateStore.load(),
+            displays: displays,
+            minimumWidth: minimum.width,
+            minimumHeight: minimum.height
+        )
+        if let bounds = state.bounds {
+            let frame = WindowPlacement.flipped(bounds, primaryDisplayHeight: primaryHeight)
+            window.setFrame(NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height), display: false)
+        } else {
+            window.setContentSize(NSSize(width: state.width, height: state.height))
+            window.center()
+        }
+        normalFrame = window.frame
+        restoresZoomed = state.isMaximized
+    }
+
+    private func windowFrameChanged() {
+        guard showsWindow, !isFullScreen else { return }
+        if !window.isZoomed {
+            normalFrame = window.frame
+        }
+        pendingStateSave?.cancel()
+        let save = DispatchWorkItem { [weak self] in self?.saveWindowState() }
+        pendingStateSave = save
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.stateSaveDelay, execute: save)
+    }
+
+    /// Writes the window's place now. Called when it has stopped moving, when
+    /// it is closed and when the app quits. A full-screen window is not
+    /// written: the state stays the one it had before it went full screen.
+    public func saveWindowState() {
+        pendingStateSave?.cancel()
+        pendingStateSave = nil
+        guard showsWindow, !isFullScreen, let primaryHeight = Self.primaryDisplayHeight else { return }
+        let isZoomed = window.isZoomed
+        let frame = isZoomed ? (normalFrame ?? window.frame) : window.frame
+        let bounds = WindowPlacement.flipped(Self.plain(frame), primaryDisplayHeight: primaryHeight)
+        let state = WindowState(width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y, isMaximized: isZoomed)
+        do {
+            try windowStateStore.save(state)
+        } catch {
+            // Losing the window's place is not worth interrupting anyone for.
+            NSLog("[window] could not save the window state: %@", error.localizedDescription)
+        }
     }
 
     // MARK: Bridge
@@ -474,9 +564,28 @@ extension MainWindowController: NSWindowDelegate {
         bridge.emit("window-focus-changed", payload: false)
     }
 
+    public func windowDidResize(_ notification: Notification) {
+        windowFrameChanged()
+    }
+
+    public func windowDidMove(_ notification: Notification) {
+        windowFrameChanged()
+    }
+
+    public func windowWillEnterFullScreen(_ notification: Notification) {
+        // Whatever was pending is the last frame before full screen: write it.
+        saveWindowState()
+        isFullScreen = true
+    }
+
+    public func windowDidExitFullScreen(_ notification: Notification) {
+        isFullScreen = false
+    }
+
     /// Closing the window hides it; the app and its connection stay up, as in
     /// the Electron build. Quitting is the only way to really close it.
     public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        saveWindowState()
         if isQuitting { return true }
         window.orderOut(nil)
         return false
