@@ -11,7 +11,8 @@ import WebKit
 // sends one event on every event channel, and compares what the page saw with
 // what bridgeContract.json promises.
 //
-// Usage: ContractCheck --contract <json> --picker <html> --strings <json> --harness <html> [--out <json>]
+// Usage: ContractCheck --contract <json> --picker <html> --strings <json> --recovery <html>
+//                      --harness <html> [--out <json>]
 // Exit status: 0 when the bridge keeps the contract, 1 when it does not,
 // 2 when the check could not run.
 //
@@ -53,6 +54,14 @@ import WebKit
 // that the items with shortcuts kept them, and that the shell's language
 // follows what the page reports on set-language (and ignores a language it
 // does not have), remembering it in language.json.
+//
+// With --check recovery it checks recovery mode on the real shell, with its
+// clocks shortened: an address that cannot be loaded ends on the recovery
+// page with the reason, a second failure changes what that page says without
+// loading it again, Reload and Change Instance leave recovery, a page that
+// never reports that it started is called stalled and one that reports is
+// left alone, a page whose thread is stuck is called unresponsive, and Quit
+// reaches the app.
 //
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
@@ -177,6 +186,7 @@ if arguments["check"] == "electron-profile" {
 let contractURL = fileURL(arguments, "contract")
 let pickerURL = fileURL(arguments, "picker")
 let stringsURL = fileURL(arguments, "strings")
+let recoveryURL = fileURL(arguments, "recovery")
 let visitAddress = arguments["visit"]
 let checkName = arguments["check"]
 let harnessURL = visitAddress == nil && checkName == nil ? fileURL(arguments, "harness") : nil
@@ -190,7 +200,7 @@ do {
     fail("cannot read the strings: \(error)")
 }
 let environment = ShellEnvironment(
-    resources: ShellResources(pickerURL: pickerURL, contractURL: contractURL, stringsURL: stringsURL),
+    resources: ShellResources(pickerURL: pickerURL, contractURL: contractURL, stringsURL: stringsURL, recoveryURL: recoveryURL),
     userDataDirectory: temporary,
     appVersion: "0.0.0-check",
     safariVersion: ShellEnvironment.installedSafariVersion(),
@@ -228,21 +238,25 @@ final class CheckNotificationPresenter: NotificationPresenter {
     }
 }
 
-/// Serves one empty page on the loopback address, on a port the system picks:
-/// a page with a real http origin, with nothing asked of the network outside
-/// this machine.
+/// Serves pages on the loopback address, on a port the system picks: pages
+/// with a real http origin, with nothing asked of the network outside this
+/// machine. A path with no page of its own gets an empty one.
 final class LocalPageServer {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "local-page-server")
 
-    init() throws {
+    /// - Parameter pages: the document for a path ("/ready"), as HTML.
+    init(pages: [String: String] = [:]) throws {
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
         listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [queue] connection in
             connection.start(queue: queue)
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
-                let body = "<!doctype html><title>check</title>"
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { request, _, _, _ in
+                // "GET /path HTTP/1.1": the path is the second word.
+                let line = request.flatMap { String(data: $0, encoding: .utf8) }?.split(separator: "\r\n").first ?? ""
+                let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                let body = pages[path] ?? "<!doctype html><title>check</title>"
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
                     + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
@@ -860,9 +874,140 @@ func checkMenu() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The recovery check. Ends the process.
+func checkRecovery() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer(pages: [
+            "/silent": "<!doctype html><title>silent</title>",
+            "/ready": "<!doctype html><title>ready</title><script>window.backspace.rendererReady();</script>",
+        ])
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            recoveryTimings: RecoveryTimings(
+                bootTimeout: 1,
+                hangPollInterval: 0.3,
+                hangGrace: 1.5,
+                crashLoopWindow: 60,
+                watchesHangsOnlyWhenVisible: false
+            )
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin() else { fail("the local page server did not start") }
+
+    func address(_ text: String) -> URL {
+        guard let url = URL(string: text) else { fail("bad address \(text)") }
+        return url
+    }
+    func isShowing(_ file: URL) -> Bool {
+        shell.webView.url?.path == file.path && !shell.webView.isLoading
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func expectRecovery(_ code: RecoveryReason.Code, within seconds: TimeInterval, _ what: String) {
+        guard wait(seconds, until: { isShowing(recoveryURL) }) else {
+            problems.append("\(what): the recovery page did not open (the window shows \(shell.webView.url?.absoluteString ?? "nothing"))")
+            return
+        }
+        if shell.recoveryState.reason?.code != code {
+            problems.append("\(what): the reason is \(shell.recoveryState.reason?.code.rawValue ?? "none"), expected \(code.rawValue)")
+        }
+    }
+
+    // 1. An address that cannot be loaded ends on the recovery page, which
+    //    reads the reason over the bridge.
+    shell.load(address("https://chat.example.test/"))
+    expectRecovery(.loadFailed, within: 60, "an address that cannot be loaded")
+    if shell.webView.url?.query != "lang=en" { problems.append("the recovery page was not given the shell's language") }
+    let seen = page("return await window.backspace.getRecoveryState();") as? [String: Any]
+    if seen?["mode"] as? String != "recovery" || (seen?["reason"] as? [String: String])?["code"] != "load-failed" {
+        problems.append("the recovery page read the state \(String(describing: seen))")
+    }
+
+    // 2. A second failure while in recovery changes what the page says and
+    //    does not load it again.
+    _ = page("window.__details = []; window.backspace.onRecoveryStateChanged((state) => window.__details.push(state.reason.detail)); return true;")
+    shell.load(address("https://other.example.test/"))
+    let heard = wait(60, until: { ((page("return window.__details;") as? [String])?.count ?? 0) > 0 })
+    let details = page("return window.__details;") as? [String] ?? []
+    if !heard || details.count != 1 || !details[0].contains("other.example.test") {
+        problems.append("a second failure should reach the same recovery page once, it heard \(details)")
+    }
+
+    // 3. Reload leaves recovery; with no instance saved it opens the picker.
+    _ = page("window.backspace.recoveryAction('reload'); return true;")
+    if !wait(until: { isShowing(pickerURL) }) { problems.append("Reload did not open the picker") }
+    if shell.recoveryState.isRecovery { problems.append("Reload left the shell in recovery") }
+
+    // 4. A page that loads and never reports that it started.
+    shell.load(address(origin + "/silent"))
+    expectRecovery(.rendererStalled, within: 10, "a web client that never reports")
+    if shell.recoveryState.reason?.detail != "no rendererReady within 1000ms" {
+        problems.append("the stall is described as '\(shell.recoveryState.reason?.detail ?? "")'")
+    }
+
+    // 5. Change Instance leaves recovery and opens the picker.
+    _ = page("window.backspace.recoveryAction('change-instance'); return true;")
+    if !wait(until: { isShowing(pickerURL) }) { problems.append("Change Instance did not open the picker") }
+    if shell.recoveryState.isRecovery { problems.append("Change Instance left the shell in recovery") }
+
+    // 6. A page that reports is left alone, well past the time allowed.
+    let ready = address(origin + "/ready")
+    shell.load(ready)
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    if shell.webView.url != ready || shell.recoveryState.isRecovery {
+        problems.append("a web client that reported was taken for a stalled one (\(shell.recoveryState.reason?.detail ?? "no reason"))")
+    }
+
+    // 7. The same page with its thread stuck stops answering.
+    shell.webView.evaluateJavaScript("setTimeout(() => { for (;;) {} }, 50); 1", completionHandler: nil)
+    expectRecovery(.unresponsive, within: 30, "a page whose thread is stuck")
+
+    // 8. What the page can ask for, and what it cannot.
+    var quitRequests = 0
+    var opened: [String] = []
+    shell.onQuitRequested = { quitRequests += 1 }
+    shell.openInBrowser = { opened.append($0) }
+    _ = page("window.backspace.recoveryAction('format-disk'); window.backspace.recoveryAction(); window.backspace.recoveryAction('install-update'); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    if quitRequests != 0 || !opened.isEmpty || !isShowing(recoveryURL) || !shell.recoveryState.isRecovery {
+        problems.append("an action that is not one, or an install with nothing downloaded, changed something")
+    }
+    _ = page("window.backspace.recoveryAction('check-update'); window.backspace.recoveryAction('open-releases'); return true;")
+    if !wait(5, until: { opened.count == 2 }) || opened != [RecoveryAction.releasesAddress, RecoveryAction.releasesAddress] {
+        problems.append("checking for updates and opening the releases should each open the releases page, opened \(opened)")
+    }
+    _ = page("window.backspace.recoveryAction('quit'); return true;")
+    if !wait(5, until: { quitRequests == 1 }) { problems.append("Quit did not reach the app (\(quitRequests) requests)") }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "recovery: failed load, stalled start and stuck page end on the recovery page; reload, change instance and quit work"
+        : "recovery: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "recovery":
+    checkRecovery()
 case "menu":
     checkMenu()
 case "notifications":
@@ -874,7 +1019,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery or electron-profile")
 }
 
 let contract: BridgeContract

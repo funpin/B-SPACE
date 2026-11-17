@@ -81,7 +81,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "bundle.sh: could not read a plain version from the root package.json (got \"$VERSION\")" >&2
   exit 1
 fi
-for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/src/desktopStrings.json" "$DESKTOP/build/icon.icns"; do
+for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/resources/recovery.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/src/desktopStrings.json" "$DESKTOP/build/icon.icns"; do
   [[ -f "$resource" ]] || { echo "bundle.sh: $resource is missing" >&2; exit 1; }
 done
 
@@ -93,6 +93,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/BSpaceApp "$APP/Contents/MacOS/$EXECUTABLE"
 cp "$DESKTOP/resources/instance-picker.html" "$APP/Contents/Resources/instance-picker.html"
+cp "$DESKTOP/resources/recovery.html" "$APP/Contents/Resources/recovery.html"
 cp "$DESKTOP/src/bridgeContract.json" "$APP/Contents/Resources/bridgeContract.json"
 cp "$DESKTOP/build/icon.icns" "$APP/Contents/Resources/icon.icns"
 # What the shell says on its own (menus), in every language of the web client.

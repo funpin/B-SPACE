@@ -195,8 +195,8 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   Hide, Hide Others, Show All, Quit), Edit and Window. It is rebuilt when the
   language changes. "Source code" asks the instance for the address of its
   own source (`GET /api/instance/info`, `sourceCodeUrl`) and opens that, or
-  the project's repository. "Change Instance" forgets the saved instance and
-  opens the picker. Two differences from Electron: no "Toggle Developer
+  the project's repository. "Change Instance" opens the picker and keeps the
+  saved instance until another is chosen. Two differences from Electron: no "Toggle Developer
   Tools" (a `WKWebView`'s inspector cannot be opened from code; attach from
   Safari's Develop menu), and Window has Close (Command-W).
 - **Permission prompts.** The texts the system shows when the app first asks
@@ -204,6 +204,48 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   catalog (`mac.permission.<Info.plist key>`). `scripts/permission-texts.swift`
   writes them into the bundle, one `<language>.lproj/InfoPlist.strings` per
   language; the system picks by its own language, not the web client's.
+
+### Recovery mode
+
+When the web client cannot be shown, the window shows `recovery.html` (the
+page of the Electron build, from `packages/desktop/resources`), which says
+what happened and offers to reload, to change the instance or to quit. The
+decisions are in `BSpaceCore/Recovery.swift`, a port of
+`packages/desktop/src/recovery.ts`; the window's side is in
+`MainWindowController`.
+
+| Reason | When |
+|--------|------|
+| `load-failed` | A load the shell asked for failed, or a page broke off half shown. A navigation that became a download or was cancelled is not a failure (`WebKitErrorDomain` 102). |
+| `renderer-stalled` | A page of an instance finished loading and the web client did not call `rendererReady()` within 20 s (`BootWatch`). |
+| `unresponsive` | The page did not answer the shell for 25 s (`HangWatch`). |
+| `render-gone` | The web content process ended twice within a minute (`CrashLoopGuard`). |
+
+- **A page that hangs.** A `WKWebView` does not say when its page hangs, so
+  the shell asks the page a trivial question every 5 s, while the window is on
+  screen, and takes a question unanswered for 25 s as a hang. A tick that
+  comes much later than it should (the machine slept) starts the count again.
+  A stuck page cannot be navigated away from: every load is first put to the
+  process of the page on screen. So for this reason the shell puts a new web
+  view in the window (`replaceWebView`), and WebKit ends the stuck process.
+- **A process that ends.** WebKit ends the web content process for its own
+  reasons too (the system is short of memory), so the first time the page is
+  loaded again; only a second ending within a minute goes to recovery.
+- **A navigation of the page's own that fails before anything of it is
+  shown** leaves the page it came from on screen and working, and is not
+  recovered from. Chromium replaces the page with an error page there, so
+  the Electron build recovers.
+- **No loop.** Going into recovery while already there changes what the page
+  says and loads nothing: if `recovery.html` itself cannot load, the window
+  stays as it is.
+- **Always visible.** Recovery brings the window forward even after a hidden
+  start.
+- **Actions** (`recovery-action`): `reload` leaves recovery and loads the
+  saved instance, or the picker when there is none; `change-instance` leaves
+  recovery and opens the picker; `quit` quits; `open-releases` opens the
+  latest release in the browser. The updater is stage 5: until then
+  `check-update` opens the latest release too, and `install-update` does
+  nothing.
 
 ### Notifications and the badge
 
@@ -271,7 +313,12 @@ the page asks for reaches a presenter that only records, a click hands the
 payload back, a click on a notification from another origin does not, the
 badge is set and cleared), and the menu bar (`--check menu`: built in every
 language of the catalog with no item left untitled, the shortcuts in place,
-and the shell's language following `set-language`). Then it loads
+and the shell's language following `set-language`), and recovery mode
+(`--check recovery`, with its clocks shortened: an address that cannot be
+loaded, a page that never reports that it started and a page whose thread is
+stuck each end on the recovery page with the right reason; a second failure
+changes what that page says without loading it again; a page that reports is
+left alone; Reload, Change Instance, Quit and the releases page work). Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
@@ -295,6 +342,7 @@ body of an async function whose return value is printed:
 .build/release/ContractCheck --contract ../desktop/src/bridgeContract.json \
   --picker ../desktop/resources/instance-picker.html \
   --strings ../desktop/src/desktopStrings.json \
+  --recovery ../desktop/resources/recovery.html \
   --visit https://your.instance.example --settle 6
 ```
 

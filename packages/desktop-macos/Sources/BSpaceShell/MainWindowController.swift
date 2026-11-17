@@ -23,7 +23,13 @@ public final class MainWindowController: NSObject {
     static let revealTimeout: TimeInterval = 3
 
     public let window: NSWindow
-    public let webView: WKWebView
+    /// The web view the window shows. It is replaced by a new one when its
+    /// page stops answering (`replaceWebView`), so nothing should hold on to
+    /// it across a turn of the run loop.
+    public private(set) var webView: WKWebView
+    /// What every web view of this window is made from: the bridge, the data
+    /// store and the User-Agent are in it.
+    private let webViewConfiguration: WKWebViewConfiguration
     public let bridge: BridgeHost
 
     /// Called each time a main-frame load ends, with the error when it failed.
@@ -35,6 +41,13 @@ public final class MainWindowController: NSObject {
     public private(set) var language: DesktopLanguage
     /// Called when the web client reports another language.
     public var onLanguageChanged: ((DesktopLanguage) -> Void)?
+    /// Called when the recovery page asks to quit.
+    public var onQuitRequested: (() -> Void)?
+    /// Opens an address in the user's browser. A test run replaces it.
+    public var openInBrowser: (String) -> Void = { address in
+        guard let url = URL(string: address) else { return }
+        NSWorkspace.shared.open(url)
+    }
 
     private let environment: ShellEnvironment
     private let instanceStore: InstanceURLStore
@@ -48,6 +61,14 @@ public final class MainWindowController: NSObject {
     private let localStorageImporter: LocalStorageImporter
     private let autoLaunch: AutoLaunch
     private let notifications: NotificationPresenter?
+
+    private let timings: RecoveryTimings
+    private var recovery = RecoveryMode()
+    private var bootWatch = BootWatch()
+    private var hangWatch = HangWatch()
+    private var crashGuard = CrashLoopGuard()
+    private var bootTimer: DispatchWorkItem?
+    private var hangTimer: Timer?
     private var deepLinks = DeepLinkInbox()
     /// The app was started hidden: the window waits to be asked for.
     private var staysHidden = false
@@ -75,16 +96,20 @@ public final class MainWindowController: NSObject {
     ///     passes one that registers nothing.
     ///   - notifications: what shows notifications; nil shows none. A test
     ///     run passes one that only records them.
+    ///   - recoveryTimings: the clocks of recovery mode. A test run shortens
+    ///     them.
     public init(
         environment: ShellEnvironment,
         showsWindow: Bool = true,
         websiteDataStore: WKWebsiteDataStore = .default(),
         loginItem: LoginItem = SystemLoginItem(),
-        notifications: NotificationPresenter? = SystemNotificationPresenter()
+        notifications: NotificationPresenter? = SystemNotificationPresenter(),
+        recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
+        timings = recoveryTimings
         language = environment.language
         autoLaunch = AutoLaunch(
             store: AutoLaunchStore(directory: environment.userDataDirectory),
@@ -119,14 +144,8 @@ public final class MainWindowController: NSObject {
         )
 
         let contentRect = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        webView = ShellWebView(frame: contentRect, configuration: configuration)
-        webView.autoresizingMask = [.width, .height]
-        webView.underPageBackgroundColor = Self.backgroundColor
-        webView.allowsBackForwardNavigationGestures = false
-        webView.allowsMagnification = false
-        // There is no public way to open the inspector from a menu; this lets
-        // Safari's Develop menu attach to the page (deviation 4).
-        webView.isInspectable = true
+        webViewConfiguration = configuration
+        webView = Self.makeWebView(frame: contentRect, configuration: configuration)
 
         window = NSWindow(
             contentRect: contentRect,
@@ -160,6 +179,14 @@ public final class MainWindowController: NSObject {
         notifications?.onClick = { [weak self] userInfo in
             self?.notificationClicked(userInfo)
         }
+        hangTimer = Timer.scheduledTimer(withTimeInterval: timings.hangPollInterval, repeats: true) { [weak self] _ in
+            self?.askWhetherThePageAnswers()
+        }
+    }
+
+    deinit {
+        hangTimer?.invalidate()
+        bootTimer?.cancel()
     }
 
     // MARK: Loading
@@ -222,10 +249,6 @@ public final class MainWindowController: NSObject {
         load(components?.url ?? environment.resources.pickerURL)
     }
 
-    private var isShowingPicker: Bool {
-        webView.url?.isFileURL == true && webView.url?.path == environment.resources.pickerURL.path
-    }
-
     // MARK: Window
 
     public func showWindow() {
@@ -250,12 +273,157 @@ public final class MainWindowController: NSObject {
 
     // MARK: Menu actions
 
-    /// Forgets the saved instance and opens the picker, with the window in
-    /// front: "Change Instance" in the application menu.
+    /// Opens the picker, with the window in front: "Change Instance" in the
+    /// application menu. The saved instance is kept: the picker shows it and
+    /// offers to cancel, and it is replaced only when another is chosen.
     public func changeInstance() {
-        instanceStore.clear()
-        loadPicker()
+        perform(.changeInstance)
+    }
+
+    // MARK: Web view
+
+    private static func makeWebView(frame: NSRect, configuration: WKWebViewConfiguration) -> WKWebView {
+        let view = ShellWebView(frame: frame, configuration: configuration)
+        view.autoresizingMask = [.width, .height]
+        view.underPageBackgroundColor = backgroundColor
+        view.allowsBackForwardNavigationGestures = false
+        view.allowsMagnification = false
+        // There is no public way to open the inspector from a menu; this lets
+        // Safari's Develop menu attach to the page (deviation 4).
+        view.isInspectable = true
+        return view
+    }
+
+    /// Puts a new web view in the window in place of the current one, whose
+    /// process is then ended by WebKit. For a page that has stopped answering:
+    /// every load, even of another page, is first put to the process of the
+    /// page on screen, so a stuck page cannot be navigated away from. There
+    /// is no public call that ends the process; letting go of its view does.
+    private func replaceWebView() {
+        let stuck = webView
+        stuck.navigationDelegate = nil
+        stuck.uiDelegate = nil
+
+        let fresh = Self.makeWebView(frame: stuck.frame, configuration: webViewConfiguration)
+        webView = fresh
+        bridge.attach(to: fresh)
+        fresh.navigationDelegate = self
+        fresh.uiDelegate = self
+        window.contentView = fresh
+
+        // The new view has no page: nothing listens, nothing is loading.
+        shellLoad = nil
+        deepLinks.pageChanged()
+        apply(bootWatch.pageCommitted())
+        hangWatch.reset()
+    }
+
+    // MARK: Recovery
+
+    /// What the recovery page and the web client read: whether the shell is
+    /// in recovery, and why.
+    public var recoveryState: RecoveryState { recovery.state }
+
+    /// Shows the recovery page with the reason, in a window brought forward
+    /// even if the app was started hidden: there is something the user has to
+    /// decide. Already in recovery, only what the page says changes.
+    private func enterRecovery(_ reason: RecoveryReason) {
+        NSLog("[recovery] entered: %@, %@", reason.code.rawValue, reason.detail)
+        if reason.code == .unresponsive {
+            replaceWebView()
+        }
+        let mustLoadThePage = recovery.enter(reason)
+        recoveryStateChanged()
+        guard mustLoadThePage else { return }
+
+        let page = environment.resources.recoveryURL
+        var components = URLComponents(url: page, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "lang", value: language.code)]
+        load(components?.url ?? page)
+        staysHidden = false
         showWindow()
+        if showsWindow {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func exitRecovery(by action: RecoveryAction) {
+        guard recovery.state.isRecovery else { return }
+        recovery.exit()
+        NSLog("[recovery] exited (%@)", action.rawValue)
+        recoveryStateChanged()
+    }
+
+    private func recoveryStateChanged() {
+        bridge.emit("recovery-state-changed", payload: recovery.state.bridgeValue)
+    }
+
+    /// Carries out what the recovery page, or the menu, asked for.
+    public func perform(_ action: RecoveryAction) {
+        switch action {
+        case .reload:
+            // Out of recovery before the load: if it fails or stalls again,
+            // recovery is entered afresh.
+            exitRecovery(by: action)
+            loadInitialPage()
+        case .changeInstance:
+            exitRecovery(by: action)
+            loadPicker()
+            showWindow()
+        case .openReleases, .checkUpdate:
+            // The updater is stage 5 of the port. Until then "check for
+            // updates" does what a person would: opens the latest release.
+            openInBrowser(RecoveryAction.releasesAddress)
+        case .quit:
+            onQuitRequested?()
+        case .installUpdate:
+            // Nothing is ever downloaded for it to install before stage 5.
+            break
+        }
+    }
+
+    private func apply(_ command: BootWatch.Command?) {
+        guard let command else { return }
+        bootTimer?.cancel()
+        bootTimer = nil
+        guard command == .arm else { return }
+        let timer = DispatchWorkItem { [weak self] in
+            guard let self, self.bootWatch.timedOut() else { return }
+            self.bootTimer = nil
+            self.enterRecovery(RecoveryReason(
+                code: .rendererStalled,
+                detail: "no rendererReady within \(Int(self.timings.bootTimeout * 1000))ms"
+            ))
+        }
+        bootTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + timings.bootTimeout, execute: timer)
+    }
+
+    /// One poll of the hang watch: only a page of an instance is watched, and
+    /// by default only while its window is on screen.
+    private func askWhetherThePageAnswers() {
+        let isWebPage = webView.url.flatMap { WebOrigin.of($0) } != nil
+        let isWatched = isWebPage
+            && !recovery.state.isRecovery
+            && (window.isVisible || !timings.watchesHangsOnlyWhenVisible)
+        guard isWatched else {
+            hangWatch.reset()
+            return
+        }
+        switch hangWatch.tick(at: Date(), pollInterval: timings.hangPollInterval, grace: timings.hangGrace) {
+        case .ask:
+            webView.evaluateJavaScript("1") { [weak self] _, _ in
+                self?.hangWatch.answered()
+            }
+        case .wait:
+            break
+        case .hung:
+            hangWatch.reset()
+            enterRecovery(RecoveryReason(
+                code: .unresponsive,
+                detail: "main thread blocked >\(Int(timings.hangGrace * 1000))ms"
+            ))
+        }
     }
 
     /// Opens the source code of the instance in the user's browser: the
@@ -264,7 +432,7 @@ public final class MainWindowController: NSObject {
         let page = webView.url.flatMap { WebOrigin.of($0) }
         let instance = environment.overrideURL ?? instanceStore.load() ?? page
         guard let infoURL = SourceCode.instanceInfoURL(instanceAddress: instance) else {
-            Self.openInBrowser(SourceCode.projectAddress)
+            openInBrowser(SourceCode.projectAddress)
             return
         }
         var request = URLRequest(url: infoURL)
@@ -272,15 +440,10 @@ public final class MainWindowController: NSObject {
         URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, _ in
             let answered = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
             let address = SourceCode.address(fromInstanceInfo: answered ? data : nil)
-            DispatchQueue.main.async {
-                Self.openInBrowser(address)
+            DispatchQueue.main.async { [weak self] in
+                self?.openInBrowser(address)
             }
         }.resume()
-    }
-
-    private static func openInBrowser(_ address: String) {
-        guard let url = URL(string: address) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     // MARK: Notifications
@@ -436,6 +599,18 @@ public final class MainWindowController: NSObject {
             NSApp.dockTile.badgeLabel = BadgeCount.label(for: arguments.number(at: 0))
         }
 
+        router.onFire("renderer-ready") { [weak self] _ in
+            guard let self else { return }
+            self.apply(self.bootWatch.rendererReady())
+        }
+        router.onFire("recovery-action") { [weak self] arguments in
+            guard let action = arguments.string(at: 0).flatMap(RecoveryAction.init(rawValue:)) else { return }
+            self?.perform(action)
+        }
+        router.onInvoke("get-recovery-state", answering: { [weak self] _ in
+            .value((self?.recovery.state ?? RecoveryState()).bridgeValue)
+        })
+
         router.onSubscribe("deep-link") { [weak self] in
             guard let self, let waiting = self.deepLinks.listenerAppeared() else { return }
             self.bridge.emit("deep-link", payload: waiting)
@@ -543,16 +718,20 @@ extension MainWindowController: WKNavigationDelegate {
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        // A new document: whatever listened for links in the old one is gone.
+        // A new document: whatever listened for links in the old one is gone,
+        // and the web client in it has yet to say it started.
         deepLinks.pageChanged()
+        apply(bootWatch.pageCommitted())
+        hangWatch.reset()
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        apply(bootWatch.loadFinished(url: webView.url))
         mainFrameLoadEnded(error: nil)
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        mainFrameLoadFailed(error)
+        mainFrameLoadFailed(error, beforeCommit: false)
     }
 
     public func webView(
@@ -560,11 +739,23 @@ extension MainWindowController: WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        mainFrameLoadFailed(error)
+        mainFrameLoadFailed(error, beforeCommit: true)
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         deepLinks.pageChanged()
+        apply(bootWatch.pageCommitted())
+        hangWatch.reset()
+        // WebKit ends this process for its own reasons too (the system is
+        // short of memory), so once is a reload. Twice in a row is a page
+        // that keeps crashing.
+        if crashGuard.processEnded(at: Date(), window: timings.crashLoopWindow) {
+            enterRecovery(RecoveryReason(
+                code: .renderGone,
+                detail: "the web content process ended twice within \(Int(timings.crashLoopWindow))s"
+            ))
+            return
+        }
         NSLog("[navigation] the web content process ended; reloading")
         if let url = webView.url {
             load(url)
@@ -582,18 +773,34 @@ extension MainWindowController: WKNavigationDelegate {
         return error.domain == "WebKitErrorDomain" && error.code == 102
     }
 
-    private func mainFrameLoadFailed(_ error: Error) {
+    /// - Parameter beforeCommit: the navigation failed before any of the new
+    ///   page was shown.
+    private func mainFrameLoadFailed(_ error: Error, beforeCommit: Bool) {
         guard !Self.isInterruption(error) else { return }
         NSLog("[navigation] load failed: %@", error.localizedDescription)
         let failedShellLoad = shellLoad
+        let wasShellLoad = failedShellLoad != nil
         mainFrameLoadEnded(error: error)
-        // An instance that cannot be reached must not leave an empty window
-        // with no way out: the picker opens with the saved address filled in,
-        // to retry or to choose another. The recovery screen of stage 2 takes
-        // this over.
-        if let failedShellLoad, !failedShellLoad.isFileURL, !isShowingPicker {
-            loadPicker()
-        }
+        // A navigation the page itself started, and that failed before
+        // anything of it was shown, leaves the page it came from on screen
+        // and working: there is nothing to recover from. (Chromium replaces
+        // the page with an error page, so the Electron build recovers there
+        // too.) A load the shell asked for, or one with no page behind it,
+        // or one that broke off half shown, leaves the window with nothing
+        // usable in it.
+        guard !beforeCommit || wasShellLoad || webView.url == nil else { return }
+        // The error does not always say which address failed; for the
+        // shell's own load the shell knows.
+        let failure = error as NSError
+        let address = failure.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+            ?? (failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+            ?? failedShellLoad?.absoluteString
+            ?? webView.url?.absoluteString
+            ?? "an unknown address"
+        enterRecovery(RecoveryReason(
+            code: .loadFailed,
+            detail: "\(failure.code) \(failure.localizedDescription) @ \(address)"
+        ))
     }
 
     private func mainFrameLoadEnded(error: Error?) {

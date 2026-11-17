@@ -6,7 +6,8 @@
 # shell's window state on this machine's displays (--check window-state), the
 # import of the Electron build's localStorage (--check local-storage-import),
 # links and auto-launch settings (--check launch), notifications and the
-# badge (--check notifications) and the menu bar (--check menu).
+# badge (--check notifications), the menu bar (--check menu) and recovery
+# mode (--check recovery).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -50,6 +51,7 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --check window-state >&2
 
 # The import of the Electron build's localStorage, from the fixture profile the
@@ -58,6 +60,7 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --check local-storage-import \
   --fixture "$PWD/Tests/BSpaceCoreTests/Fixtures/chromium-local-storage/leveldb" >&2
 
@@ -67,6 +70,7 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --check launch >&2
 
 # Notifications and the Dock badge, on a page served from the loopback
@@ -75,6 +79,7 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --check notifications >&2
 
 # The menu bar in every language, and the language following the web client.
@@ -82,11 +87,22 @@ swift build -c release --product ContractCheck >&2
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --check menu >&2
+
+# Recovery mode, with its clocks shortened: a failed load, a web client that
+# never starts and a page that stops answering all end on the recovery page.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check recovery >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
   --harness "$PWD/contract/harness.html" \
   ${OUT_ARGS[@]+"${OUT_ARGS[@]}"}

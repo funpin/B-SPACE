@@ -12,20 +12,24 @@ public struct ShellResources {
     /// `desktop-strings.json` (`desktopStrings.json` in `packages/desktop`):
     /// what the shells say on their own, in every language they have.
     public let stringsURL: URL
+    /// `recovery.html`, the page shown when the web client cannot be.
+    public let recoveryURL: URL
 
-    public init(pickerURL: URL, contractURL: URL, stringsURL: URL) {
+    public init(pickerURL: URL, contractURL: URL, stringsURL: URL, recoveryURL: URL) {
         self.pickerURL = pickerURL
         self.contractURL = contractURL
         self.stringsURL = stringsURL
+        self.recoveryURL = recoveryURL
     }
 
     public static func bundled(in bundle: Bundle = .main) -> ShellResources? {
         guard
             let picker = bundle.url(forResource: "instance-picker", withExtension: "html"),
             let contract = bundle.url(forResource: "bridgeContract", withExtension: "json"),
-            let strings = bundle.url(forResource: "desktop-strings", withExtension: "json")
+            let strings = bundle.url(forResource: "desktop-strings", withExtension: "json"),
+            let recovery = bundle.url(forResource: "recovery", withExtension: "html")
         else { return nil }
-        return ShellResources(pickerURL: picker, contractURL: contract, stringsURL: strings)
+        return ShellResources(pickerURL: picker, contractURL: contract, stringsURL: strings, recoveryURL: recovery)
     }
 }
 
@@ -73,7 +77,7 @@ public struct ShellEnvironment {
         public var description: String {
             switch self {
             case .resourcesMissing:
-                return "The application bundle is incomplete: instance-picker.html, bridgeContract.json or desktop-strings.json is missing from its resources."
+                return "The application bundle is incomplete: instance-picker.html, recovery.html, bridgeContract.json or desktop-strings.json is missing from its resources."
             case .noApplicationSupportDirectory:
                 return "The Application Support folder of this user could not be found."
             }

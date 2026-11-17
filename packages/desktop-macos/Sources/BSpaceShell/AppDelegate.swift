@@ -34,6 +34,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
             mainWindow = controller
             // The menu follows the language of the web client.
             NSApp.mainMenu = AppMenu.build(strings: strings, language: controller.language, actions: self)
+            controller.onQuitRequested = {
+                NSApp.terminate(nil)
+            }
             controller.onLanguageChanged = { [weak self] language in
                 guard let self else { return }
                 NSApp.mainMenu = AppMenu.build(strings: strings, language: language, actions: self)
