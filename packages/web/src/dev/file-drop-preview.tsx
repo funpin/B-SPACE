@@ -22,25 +22,25 @@ function AppFrame({ children }: { children?: ReactNode }) {
   return (
     <div className="relative flex h-[420px] w-[760px] overflow-hidden rounded-xl bg-surface-base" style={{ transform: 'translateZ(0)' }}>
       <div className="flex w-14 flex-col items-center gap-2 bg-surface-channel pt-3">
-        {[0, 1, 2, 3].map((i) => <div key={i} className="h-9 w-9 rounded-xl bg-surface-tile" />)}
+        {[0, 1, 2, 3].map((i) => <div key={i} className="h-9 w-9 rounded-xl bg-surface-elevated" />)}
       </div>
       <div className="flex w-44 flex-col gap-2 border-r border-border-hard bg-surface-channel px-3 pt-4">
-        {[60, 80, 50, 70, 65].map((w, i) => <div key={i} className="h-2.5 rounded bg-surface-tile" style={{ width: `${w}%` }} />)}
+        {[60, 80, 50, 70, 65].map((w, i) => <div key={i} className="h-2.5 rounded bg-surface-elevated" style={{ width: `${w}%` }} />)}
       </div>
       <div className="flex flex-1 flex-col bg-surface-chat">
         <div className="flex h-11 items-center border-b border-border-hard px-4 text-sm font-semibold text-txt-primary">{LABEL}</div>
         <div className="flex flex-1 flex-col justify-end gap-3 px-4 pb-3">
           {[70, 45, 60].map((w, i) => (
             <div key={i} className="flex gap-2">
-              <div className="h-7 w-7 rounded-full bg-surface-tile" />
-              <div className="h-2.5 rounded bg-surface-tile" style={{ width: `${w}%` }} />
+              <div className="h-7 w-7 rounded-full bg-surface-elevated" />
+              <div className="h-2.5 rounded bg-surface-elevated" style={{ width: `${w}%` }} />
             </div>
           ))}
           <div className="glass-bubble h-10 rounded-xl" />
         </div>
       </div>
       <div className="flex w-36 flex-col gap-2 bg-surface-channel px-3 pt-4">
-        {[70, 55, 80].map((w, i) => <div key={i} className="h-2.5 rounded bg-surface-tile" style={{ width: `${w}%` }} />)}
+        {[70, 55, 80].map((w, i) => <div key={i} className="h-2.5 rounded bg-surface-elevated" style={{ width: `${w}%` }} />)}
       </div>
       {children}
     </div>
