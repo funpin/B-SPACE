@@ -1087,11 +1087,23 @@ func checkDrag() -> Never {
             }
         }
     }
-    /// What the page saw since the last call.
-    func seen() -> [String] {
-        // Long enough for a press the page was sent to arrive.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        return page("const seen = window.__presses; window.__presses = []; return seen;") as? [String] ?? ["no answer"]
+    /// What the page saw since the last call. Waits until it has seen as
+    /// many events as are expected, for a few seconds at most: a page that is
+    /// laying itself out again after the window changed size answers a click
+    /// late, and a click cut in half would be taken for a failure here and
+    /// for a stray event by the next press. With nothing expected it waits
+    /// long enough for a press the page should not get to have arrived.
+    func seen(expecting count: Int = 0) -> [String] {
+        var all: [String] = []
+        let deadline = Date().addingTimeInterval(count == 0 ? 0.3 : 5)
+        repeat {
+            RunLoop.main.run(until: Date().addingTimeInterval(count == 0 ? 0.3 : 0.1))
+            guard let more = page("const seen = window.__presses; window.__presses = []; return seen;") as? [String] else {
+                return all + ["no answer"]
+            }
+            all += more
+        } while all.count < count && Date() < deadline
+        return all
     }
     /// Whether the system is told the window is dragged by this point: no
     /// view that keeps the page a page lies over it.
@@ -1102,7 +1114,8 @@ func checkDrag() -> Never {
     func expect(_ x: Double, _ y: Double, drags expected: Bool, _ what: String) {
         let moves = movesWindow(x, y)
         press(x, y)
-        let saw = seen()
+        // A whole click is three events: the press, the release, the click.
+        let saw = seen(expecting: expected ? 0 : 3)
         if expected {
             if !moves || !saw.isEmpty {
                 problems.append("\(what): expected a part that drags and nothing for the page, got \(moves ? "one that drags" : "one that stays a page") and \(saw)")
