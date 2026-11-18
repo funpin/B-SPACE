@@ -560,9 +560,9 @@ remembers the id shared last time.
 On this machine the real list (1 display, 5 windows) took 0.44 s and reached
 the page as 258 KB of JSON; with 15 windows, 0.88 s and 411 KB.
 
-The web client does not ask for the list yet: `get-screen-share-picker-mode`
-still answers `'system'` (`InterimReplies`), and stays so until the shell can
-capture what was picked.
+The web client does not ask for the list yet: it has to say that it can take
+a native capture before `get-screen-share-picker-mode` answers `'app'` (see
+"Capturing the screen").
 
 ### The local media channel
 
@@ -604,9 +604,8 @@ of 40 KB at 60 a second reach the page 0.2 ms after they leave at the median,
 1.8 ms at the 95th percentile, 4.8 ms at most. The same from a page with an
 `https` origin, on a bench: 0.5, 3.1 and 8.2 ms.
 
-Outside the checks nothing sends on the channel yet: the capture that will
-is the next part of stage 4, and the bridge member that gives the page the
-address and the token comes with it.
+The page gets the address and the token from `startNativeScreenCapture`
+(see "Capturing the screen").
 
 ### Video on the channel
 
@@ -687,8 +686,65 @@ happened (once in a run, 10 or 11 frames skipped of 300) the latest frame
 was 0.16 to 0.22 s late. The check's page does this; the web client's
 reader has to do the same.
 
-Not done yet: the capture itself (ScreenCaptureKit feeding this encoder), the
-bridge member that starts it, and the web client's side (changes 4 and 5).
+What feeds the encoder is in "Capturing the screen".
+
+### Capturing the screen
+
+A share starts when the page calls `startNativeScreenCapture({ sourceId,
+maxWidth, maxHeight, frameRate })` with an id from the list of sources. The
+shell opens a local media channel, starts the capture and the encoder, and
+answers with the channel's address, its token and the size and rate of the
+video that will come; the page connects and decodes. One share runs at a
+time: starting another ends the one before it. `stopNativeScreenCapture()`
+ends it, and so does the window showing another page.
+
+- **The capture** is ScreenCaptureKit's (`SystemScreenCapturer`): a display
+  by its id, or one window apart from the desktop. The video has the
+  source's own size in pixels, fitted into what was asked for with the
+  proportions kept and both sides even (`VideoShape.encodedSize`; a 3456 by
+  2234 display asked for at 1080p is 1670 by 1080), in the pixel format the
+  hardware encoder takes without a conversion, with the pointer in it. The
+  size is decided when the share starts: a window resized later is scaled
+  into it.
+- **A screen that stands still.** The system sends a frame only when
+  something changed. A page that connects a moment after the capture
+  started, or a decoder that asks for a key frame, would wait for the next
+  change with nothing to show, so the session (`CaptureSession`) keeps the
+  last frame and encodes it again as a key frame when the screen has not
+  changed within 50 ms of being asked.
+- **A frame that could not be sent** (the page reads too slowly, or has not
+  connected yet) breaks the chain the following frames depend on, so the
+  next one is made a key frame.
+- **The capture ending by itself** (the window was closed, the display
+  unplugged, the permission taken away) closes the share, and the page hears
+  `onNativeScreenCaptureEnded`.
+- **Refusals** say why: `bad-request` (no source named), `no-permission`
+  (no Screen Recording; the system has been asked), `no-source`,
+  `unsupported` (the channel needs macOS 15), `failed`.
+- **Who picks the source.** `getScreenSharePickerMode({ nativeCapture: true
+  })` answers `'app'`: a web client that says it can take a native capture
+  is shown the app's own list. Without the argument the answer is
+  `'system'`: a client from before native capture calls `getDisplayMedia`
+  and WebKit shows its own picker (plan, 5.5).
+
+Checked on the shell with a screen the check makes up (`--check capture`,
+part of `contract-check.sh`): the picker mode by what the client says; a
+request without a source, and for one that is gone; a share fitted into what
+was asked for and decoded in the page; a screen standing still giving a
+picture to a page that connects late and to a decoder that asks; the three
+ways a share ends.
+
+The real screen (`--check capture-system`, by hand, macOS 27.2.1): the main
+display, 3456 by 2234, asked for at 1080p and 60 frames a second, was
+captured at 1670 by 1080; in five seconds of ordinary work on screen the
+page decoded 249 frames, 51.5 a second while the screen changed, each 20 ms
+after it was captured at the median, 38 ms at the 95th percentile, 59 ms at
+most; no frame was skipped.
+
+Not done: the web client does not use any of this yet (change 4 of the
+plan), no sound is captured (change 5), the pointer overlay is not excluded
+because there is none, and processor load and the comparison with the
+Electron build are not measured.
 
 ### The bridge
 
@@ -701,8 +757,9 @@ to WebKit and sends the shell's events back.
 
 A member marked `nativeOnly` exists in this shell alone, for something this
 shell does differently from the Electron build: `setDragRegions` (see
-"Dragging the window") and `openKeybindPermissionSettings` (see "Global
-keybinds").
+"Dragging the window"), `openKeybindPermissionSettings` (see "Global
+keybinds"), and `startNativeScreenCapture`, `stopNativeScreenCapture` and
+`onNativeScreenCaptureEnded` (see "Capturing the screen").
 
 Every call channel of the contract has to be answered before the first page
 loads, or the app stops at launch. Channels whose feature is not ported yet
@@ -793,6 +850,9 @@ channel the shell did not open is not trusted by the page; the channel
 closes with its page. `--check video-pipe`, run by hand, sends frames the
 check draws through the encoder and the channel to a decoder in a worker
 of the page and prints how long they took (see "Video on the channel").
+A share (`--check capture`) is started through the bridge with a screen
+the check makes up, and `--check capture-system`, run by hand, captures
+the real main display for a few seconds (see "Capturing the screen").
 Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every

@@ -33,11 +33,13 @@ private let small = """
 @Suite struct BridgeContractTests {
     @Test func readsTheRepositoryContract() throws {
         let contract = try BridgeContract(data: repositoryContractData())
-        #expect(contract.members(of: .backspace).count == 61)
-        #expect(contract.members(of: .backspace).filter { $0.nativeOnly == true }.map(\.name)
-            == ["setDragRegions", "openKeybindPermissionSettings"])
+        #expect(contract.members(of: .backspace).count == 64)
+        #expect(contract.members(of: .backspace).filter { $0.nativeOnly == true }.map(\.name) == [
+            "setDragRegions", "openKeybindPermissionSettings",
+            "startNativeScreenCapture", "stopNativeScreenCapture", "onNativeScreenCaptureEnded",
+        ])
         #expect(contract.callChannels(of: .backspace)["set-drag-regions"] == .fire)
-        #expect(contract.eventChannels(of: .backspace).count == 17)
+        #expect(contract.eventChannels(of: .backspace).count == 18)
         #expect(contract.members(of: .bspaceUpdate).count == 6)
         #expect(contract.callChannels(of: .backspace)["get-app-version"] == .invoke)
         #expect(contract.callChannels(of: .backspace)["minimize-window"] == .fire)
@@ -209,7 +211,8 @@ private let small = """
         "renderer-ready", "recovery-action", "get-recovery-state",
         "set-drag-regions", "set-tray-state", "set-tray-context", "get-current-activity",
         "keybinds-sync", "check-accessibility", "keybind-portal-status", "keybind-portal-retry",
-        "open-keybind-permission-settings", "get-screen-sources",
+        "open-keybind-permission-settings", "get-screen-sources", "get-screen-share-picker-mode",
+        "native-screen-capture-start", "native-screen-capture-stop",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

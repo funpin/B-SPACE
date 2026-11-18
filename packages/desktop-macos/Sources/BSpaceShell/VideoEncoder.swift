@@ -107,10 +107,12 @@ public final class VideoEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
 
         var hardware: CFTypeRef?
-        VTSessionCopyProperty(
-            session, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder, allocator: nil,
-            valueOut: &hardware
-        )
+        withUnsafeMutablePointer(to: &hardware) { value in
+            _ = VTSessionCopyProperty(
+                made, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder, allocator: nil,
+                valueOut: value
+            )
+        }
         isHardware = (hardware as? Bool) ?? false
         NSLog(
             "[capture] encoding %dx%d at %d frames a second, %d bits a second, %@",

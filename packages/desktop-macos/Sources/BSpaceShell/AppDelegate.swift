@@ -42,7 +42,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
                         .captureScreen, in: self?.mainWindow?.language ?? environment.language,
                         ["number": String(number)]
                     )
-                })
+                }),
+                screenCapturer: { SystemScreenCapturer() }
             )
             mainWindow = controller
             // The menu follows the language of the web client.

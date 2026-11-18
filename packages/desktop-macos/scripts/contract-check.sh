@@ -9,8 +9,9 @@
 # badge (--check notifications), the menu bar (--check menu), recovery mode
 # (--check recovery), dragging the window (--check drag), the tray
 # (--check tray), game detection (--check activity), the global keybinds
-# (--check keybinds), the list of what can be shared (--check sources) and
-# the local media channel (--check media-channel).
+# (--check keybinds), the list of what can be shared (--check sources), the
+# local media channel (--check media-channel) and a share started through
+# the bridge (--check capture).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -154,6 +155,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check media-channel >&2
+
+# A share through the bridge, with a screen the check makes up: the real
+# screen is not captured.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check capture >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

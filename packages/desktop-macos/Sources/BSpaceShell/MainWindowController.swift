@@ -204,6 +204,14 @@ public final class MainWindowController: NSObject {
     private let screenSources: ScreenSourceService?
     /// The local channels open to the page the window shows.
     private var mediaChannels: [LocalMediaChannel] = []
+    /// Makes what captures the screen for a share; nil when the shell
+    /// cannot capture.
+    private let makeScreenCapturer: (() -> ScreenCapturer)?
+    /// The share that runs now, and the channel it sends on.
+    private var capture: (session: CaptureSession, channel: LocalMediaChannel)?
+    /// Counts the requests to start a share: an answer that comes after a
+    /// newer request, or after a stop, starts nothing.
+    private var captureRequests = 0
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -251,6 +259,9 @@ public final class MainWindowController: NSObject {
     ///   - screenSources: what lists the displays and windows that can be
     ///     shared; nil lists none. The app passes one that asks the system,
     ///     a test run one with a made-up list.
+    ///   - screenCapturer: makes what captures the screen for one share; nil
+    ///     captures nothing. The app passes one that captures through the
+    ///     system, a test run one that draws its own frames.
     ///   - activity: what notices a running game; nil detects none. The app
     ///     passes one that lists the real processes and fetches the
     ///     dictionary, a test run one that does neither.
@@ -266,11 +277,13 @@ public final class MainWindowController: NSObject {
         activity: ActivityDetector? = nil,
         keybinds: KeybindCoordinator? = nil,
         screenSources: ScreenSourceLister? = nil,
+        screenCapturer: (() -> ScreenCapturer)? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.activity = activity
         self.keybinds = keybinds
         self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
+        makeScreenCapturer = screenCapturer
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
@@ -765,9 +778,81 @@ public final class MainWindowController: NSObject {
     }
 
     private func closeMediaChannels() {
+        stopScreenCapture()
         let channels = mediaChannels
         mediaChannels = []
         channels.forEach { $0.stop() }
+    }
+
+    // MARK: Screen capture
+
+    /// Whether this shell can capture the screen for the page: something
+    /// makes capturers, and the system can keep the channel's key out of
+    /// the keychain.
+    private var canCaptureScreen: Bool {
+        guard makeScreenCapturer != nil else { return false }
+        if #available(macOS 15.0, *) { return true }
+        return false
+    }
+
+    /// Starts a share for the page: a channel, a capture, an encoder. One
+    /// share runs at a time; starting another ends the one before it.
+    private func startScreenCapture(_ request: ScreenCaptureRequest, reply: @escaping (ScreenCaptureReply) -> Void) {
+        stopScreenCapture()
+        guard canCaptureScreen, let makeScreenCapturer else {
+            reply(.refused(.unsupported))
+            return
+        }
+        captureRequests += 1
+        let asked = captureRequests
+        openMediaChannel { [weak self] result in
+            guard let self else { return }
+            let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
+            switch result {
+            case .success(let made):
+                opened = made
+            case .failure(let failure):
+                NSLog("[capture] no channel for the share: %@", String(describing: failure))
+                reply(.refused(failure == .unsupportedSystem ? .unsupported : .failed))
+                return
+            }
+            guard asked == self.captureRequests else {
+                self.closeMediaChannel(opened.channel)
+                reply(.refused(.failed))
+                return
+            }
+            let session = CaptureSession(capturer: makeScreenCapturer(), channel: opened.channel, request: request)
+            self.capture = (session, opened.channel)
+            session.onEnded = { [weak self, weak session] in
+                guard let self, let session, self.capture?.session === session else { return }
+                self.stopScreenCapture()
+                self.bridge.emit("native-screen-capture-ended", payload: NSNull())
+            }
+            session.start { [weak self, weak session] result in
+                guard let self, let session, self.capture?.session === session else {
+                    reply(.refused(.failed))
+                    return
+                }
+                switch result {
+                case .success(let size):
+                    reply(.started(
+                        url: opened.endpoint.url, token: opened.endpoint.token,
+                        width: size.width, height: size.height, framesPerSecond: request.framesPerSecond
+                    ))
+                case .failure(let failure):
+                    self.stopScreenCapture()
+                    reply(.refused(failure))
+                }
+            }
+        }
+    }
+
+    private func stopScreenCapture() {
+        captureRequests += 1
+        guard let capture else { return }
+        self.capture = nil
+        capture.session.stop()
+        closeMediaChannel(capture.channel)
     }
 
     // MARK: Notifications
@@ -1009,6 +1094,28 @@ public final class MainWindowController: NSObject {
             screenSources.sources(windowFocused: self.isWindowFocused()) { sources in
                 reply(.value(sources.map(\.bridgeValue)))
             }
+        }
+
+        // Who picks what to share. A web client that says it can take a
+        // native capture is shown the app's own list; one from before it
+        // gets WebKit's picker.
+        router.onInvoke("get-screen-share-picker-mode", answering: { [weak self] arguments in
+            .value(ScreenSharePickerMode.answer(
+                arguments: arguments, shellCanCapture: self?.canCaptureScreen ?? false
+            ).rawValue)
+        })
+        router.onInvoke("native-screen-capture-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = ScreenCaptureRequest(arguments: arguments) else {
+                reply(.value(ScreenCaptureReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.startScreenCapture(request) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-screen-capture-stop") { [weak self] _ in
+            self?.stopScreenCapture()
         }
 
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in

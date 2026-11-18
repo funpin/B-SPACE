@@ -136,6 +136,21 @@ import WebKit
 // Nothing of the screen is captured. It measures the machine's hardware
 // encoder and is not part of contract-check.sh.
 //
+// With --check capture it starts shares through the bridge, as the web client
+// will, with a screen the check makes up: who picks the source is answered
+// by what the client says it can do; a request without a source or for one
+// that is gone starts nothing; a share is fitted into what was asked for and
+// decoded in the page; a screen standing still gives a picture to a page that
+// connects late and to a decoder that asks; a share ends when the page stops
+// it, when the capture ends by itself (the page is told) and with its page.
+// The real screen is not captured.
+//
+// With --check capture-system [--size 1920x1080] [--frame-rate 60]
+// [--seconds 5] it captures the main display for a few seconds through the
+// whole path and prints the size, how many frames the page decoded and how
+// long they took. The pictures go no further than the page of the check. It
+// needs the Screen Recording permission and is not part of contract-check.sh.
+//
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
 // how many items there are and how large they are; --keys yes adds the item
@@ -1720,6 +1735,295 @@ func checkVideoPipe(size: String, sink: String, noiseEvery: Int) -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// A screen the check makes up: 1920 by 1200, showing frames the check draws.
+/// It changes for `movingFrames` frames and then stands still.
+final class CheckScreenCapturer: ScreenCapturer {
+    var onEnded: (() -> Void)?
+    private(set) var request: ScreenCaptureRequest?
+    private(set) var isStopped = false
+    private let movingFrames: Int
+    private var source: CheckFrameSource?
+    private var timer: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "check-screen")
+
+    init(movingFrames: Int) {
+        self.movingFrames = movingFrames
+    }
+
+    func prepare(
+        _ request: ScreenCaptureRequest,
+        completion: @escaping (Result<(width: Int, height: Int), ScreenCaptureFailure>) -> Void
+    ) {
+        self.request = request
+        guard case .display(1) = request.source else {
+            DispatchQueue.main.async { completion(.failure(.noSource)) }
+            return
+        }
+        let size = VideoShape.encodedSize(width: 1920, height: 1200, maxWidth: request.maxWidth, maxHeight: request.maxHeight)
+        source = CheckFrameSource(width: size.width, height: size.height, noiseEvery: 32)
+        DispatchQueue.main.async { completion(.success(size)) }
+    }
+
+    func begin(frame: @escaping (CVPixelBuffer, CMTime, Double) -> Void, completion: @escaping (Bool) -> Void) {
+        guard let request, let source else {
+            completion(false)
+            return
+        }
+        var sent = 0
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 1.0 / Double(request.framesPerSecond), leeway: .milliseconds(1))
+        timer.setEventHandler { [movingFrames] in
+            guard sent < movingFrames, let picture = source.frame(sent) else {
+                timer.cancel()
+                return
+            }
+            frame(picture, CMClockGetTime(CMClockGetHostTimeClock()), Date().timeIntervalSince1970 * 1000)
+            sent += 1
+        }
+        self.timer = timer
+        timer.resume()
+        DispatchQueue.main.async { completion(true) }
+    }
+
+    func stop() {
+        isStopped = true
+        timer?.cancel()
+    }
+
+    func endByItself() {
+        timer?.cancel()
+        onEnded?()
+    }
+}
+
+/// A share through the bridge, as the web client will start one, with a
+/// screen the check makes up.
+func checkCapture() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var movingFrames = 90
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: movingFrames)
+                capturers.append(capturer)
+                return capturer
+            }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start(_ options: String) -> [String: Any] {
+        page("window.share = await window.backspace.startNativeScreenCapture(\(options)); return window.share;") as? [String: Any] ?? [:]
+    }
+    func stats() -> [String: Any] {
+        page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    }
+    func decoded() -> Int {
+        stats()["decoded"] as? Int ?? 0
+    }
+    let connect = "return await window.startPipe(window.share.url, window.share.token, 'track');"
+
+    load(address)
+    _ = page(videoPipePage)
+    _ = page("""
+        window.ended = 0;
+        window.backspace.onNativeScreenCaptureEnded(() => { window.ended += 1; });
+        return true;
+        """)
+
+    // 1. Who picks the source: the app, for a client that says it takes a
+    //    native capture; WebKit, for one that does not.
+    let modes = page("""
+        return [
+          await window.backspace.getScreenSharePickerMode({ nativeCapture: true }),
+          await window.backspace.getScreenSharePickerMode(),
+        ];
+        """) as? [String]
+    if modes != ["app", "system"] {
+        problems.append("the picker modes were \(String(describing: modes)), expected app for a client that takes native capture and system otherwise")
+    }
+
+    // 2. A request that names no source, or one that is gone, starts nothing.
+    let bad = start("{ maxWidth: 1280 }")
+    let gone = start("{ sourceId: 'screen:77:0' }")
+    if bad["ok"] as? Bool != false || bad["reason"] as? String != "bad-request"
+        || gone["ok"] as? Bool != false || gone["reason"] as? String != "no-source" {
+        problems.append("a request without a source was answered \(bad), one for a source that is gone \(gone)")
+    }
+    if capturers.last?.isStopped != true {
+        problems.append("the capture that could not start was left running")
+    }
+
+    // 3. A screen that changes: three seconds at thirty frames a second,
+    //    fitted into what was asked for.
+    let moving = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    if moving["ok"] as? Bool != true || moving["width"] as? Int != 1152 || moving["height"] as? Int != 720
+        || moving["frameRate"] as? Int != 30 || (moving["url"] as? String)?.hasPrefix("wss://127.0.0.1:") != true {
+        problems.append("the share was answered \(moving.filter { $0.key != "token" }), expected 1152 by 720 at 30")
+    }
+    if page(connect) as? String != "video" {
+        problems.append("the page got no video track")
+    }
+    _ = wait(8, until: { capturers.last.map { _ in decoded() >= 60 } ?? false })
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let first = stats()
+    let firstDecoded = first["decoded"] as? Int ?? 0
+    let format = (first["formats"] as? [[String: Any]])?.first
+    if firstDecoded < 60 || format?["width"] as? Int != 1152 || format?["height"] as? Int != 720
+        || first["videoWidth"] as? Int != 1152 || !(first["errors"] as? [String] ?? ["?"]).isEmpty {
+        problems.append("of a screen that changed for 90 frames the page decoded \(firstDecoded), in \(String(describing: format)), with errors \(String(describing: first["errors"]))")
+    }
+    let movingCapturer = capturers.last
+
+    // 4. A screen that stands still. The one frame it gives is long gone when
+    //    the page connects, and the page still gets a picture; and another
+    //    when its decoder asks for one.
+    movingFrames = 1
+    let still = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    if movingCapturer?.isStopped != true {
+        problems.append("starting a share left the one before it running")
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+    _ = page(connect)
+    if still["ok"] as? Bool != true || !wait(5, until: { decoded() >= 1 }) {
+        problems.append("a page that connected to a screen standing still got no picture")
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    let before = decoded()
+    _ = page("window.pipeWorker.postMessage({ ask: 'keyframe' }); return true;")
+    if !wait(5, until: { decoded() > before }) {
+        problems.append("the page asked for a key frame of a screen standing still and got none")
+    }
+    let afterKeyFrame = stats()
+    if afterKeyFrame["deltaFrames"] as? Int != 0 {
+        problems.append("a screen standing still sent \(String(describing: afterKeyFrame["deltaFrames"])) frames that need others, expected key frames only")
+    }
+
+    // 5. The capture ends by itself: the page is told, and the share is over.
+    let endedBefore = page("return window.ended;") as? Int ?? -1
+    capturers.last?.endByItself()
+    if !wait(5, until: { page("return window.ended;") as? Int == endedBefore + 1 }) {
+        problems.append("the page was not told that the capture ended")
+    }
+
+    // 6. The page stops a share.
+    movingFrames = 900
+    _ = start("{ sourceId: 'screen:1:0', frameRate: 30 }")
+    let running = capturers.last
+    _ = page("window.backspace.stopNativeScreenCapture(); return true;")
+    if !wait(5, until: { running?.isStopped == true }) {
+        problems.append("stopNativeScreenCapture left the capture running")
+    }
+    if page("return window.ended;") as? Int != endedBefore + 1 {
+        problems.append("the page was told that a share it stopped itself had ended")
+    }
+
+    // 7. Another page: the share of the one before it stops.
+    _ = start("{ sourceId: 'screen:1:0', frameRate: 30 }")
+    let leftBehind = capturers.last
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { leftBehind?.isStopped == true }) {
+        problems.append("a share outlived its page")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture: started through the bridge and fitted to what was asked; a screen standing still still gives a picture; stopped by the page, by itself and with its page"
+        : "capture: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real screen, for a few seconds, through the whole path to a decoder in
+/// the page. Prints sizes, counts and times; the pictures stay in the page.
+func checkCaptureSystem(size: String, framesPerSecond: Int, seconds: Double) -> Never {
+    let parts = size.split(separator: "x").compactMap { Int($0) }
+    guard parts.count == 2 else { fail("--size takes a width and a height, as in 1920x1080") }
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: { SystemScreenCapturer() }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    _ = page(videoPipePage)
+    let display = CGMainDisplayID()
+    let reply = page("""
+        window.share = await window.backspace.startNativeScreenCapture({
+          sourceId: 'screen:\(display):0', maxWidth: \(parts[0]), maxHeight: \(parts[1]), frameRate: \(framesPerSecond),
+        });
+        return window.share;
+        """) as? [String: Any] ?? [:]
+    guard reply["ok"] as? Bool == true else {
+        fail("the capture did not start: \(reply["reason"] ?? "no answer")")
+    }
+    _ = page("return await window.startPipe(window.share.url, window.share.token, 'track');")
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    let stats = page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    _ = page("window.backspace.stopNativeScreenCapture(); return true;")
+
+    let format = (stats["formats"] as? [[String: Any]])?.first
+    print("captured the main display at \(reply["width"] ?? "?")x\(reply["height"] ?? "?"), asked for \(framesPerSecond) frames a second, for \(seconds) s")
+    print("format in the page: \(format?["codec"] ?? "none") \(format?["width"] ?? "?")x\(format?["height"] ?? "?"); video element \(stats["videoWidth"] ?? "?")x\(stats["videoHeight"] ?? "?")")
+    print(String(
+        format: "decoded %d frames (%d key), %.1f a second while the screen changed; captured-to-decoded %.0f ms at the median, %.0f at the 95th percentile, %.0f at most",
+        stats["decoded"] as? Int ?? 0, stats["keyFrames"] as? Int ?? 0, stats["framesPerSecond"] as? Double ?? 0,
+        stats["p50"] as? Double ?? -1, stats["p95"] as? Double ?? -1, stats["max"] as? Double ?? -1
+    ))
+    print("the page fell behind \(stats["fellBehind"] ?? "?") time(s), skipped \(stats["skipped"] ?? "?"); decoder errors: \(stats["errors"] ?? "?")")
+    exit((stats["decoded"] as? Int ?? 0) >= 1 && (stats["errors"] as? [String] ?? ["?"]).isEmpty ? 0 : 1)
+}
+
 /// Asks the system once for what can be shared and prints how many displays
 /// and windows it gave and how large their pictures are. No name or title is
 /// printed, and no picture leaves the process.
@@ -2731,6 +3035,14 @@ case "sources":
     checkSources()
 case "media-channel":
     checkMediaChannel()
+case "capture":
+    checkCapture()
+case "capture-system":
+    checkCaptureSystem(
+        size: arguments["size"] ?? "1920x1080",
+        framesPerSecond: arguments["frame-rate"].flatMap { Int($0) } ?? 60,
+        seconds: arguments["seconds"].flatMap { Double($0) } ?? 5
+    )
 case "video-pipe":
     checkVideoPipe(
         size: arguments["size"] ?? "1920x1080", sink: arguments["sink"] ?? "track",
@@ -2745,7 +3057,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-system or electron-profile")
 }
 
 let contract: BridgeContract

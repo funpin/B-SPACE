@@ -60,7 +60,10 @@
     { "name": "onRecoveryStateChanged", "kind": "subscribe", "channel": "recovery-state-changed", "unsubscribe": true },
     { "name": "recoveryAction", "kind": "fire", "channel": "recovery-action" },
     { "name": "setDragRegions", "kind": "fire", "channel": "set-drag-regions", "nativeOnly": true },
-    { "name": "openKeybindPermissionSettings", "kind": "fire", "channel": "open-keybind-permission-settings", "nativeOnly": true }
+    { "name": "openKeybindPermissionSettings", "kind": "fire", "channel": "open-keybind-permission-settings", "nativeOnly": true },
+    { "name": "startNativeScreenCapture", "kind": "invoke", "channel": "native-screen-capture-start", "nativeOnly": true },
+    { "name": "stopNativeScreenCapture", "kind": "fire", "channel": "native-screen-capture-stop", "nativeOnly": true },
+    { "name": "onNativeScreenCaptureEnded", "kind": "subscribe", "channel": "native-screen-capture-ended", "unsubscribe": true, "nativeOnly": true }
   ],
   "bspaceUpdate": [
     { "name": "getState", "kind": "invoke", "channel": "update-window:get" },

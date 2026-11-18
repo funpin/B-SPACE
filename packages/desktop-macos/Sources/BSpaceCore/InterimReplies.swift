@@ -26,9 +26,7 @@ public enum InterimReplies {
     public static func invokeReplies() -> [String: BridgeReply] {
         return [
 
-            // Stage 4. WebKit's own picker chooses the source, as for a server
-            // whose client knows nothing of the native shell (plan, 5.5).
-            "get-screen-share-picker-mode": .value("system"),
+            // Stage 4: what is left of screen sharing.
             "screen-share-preselect": .undefined,
             "get-system-audio-capability": .value("unavailable"),
             "get-audio-routers": .value([Any]()),

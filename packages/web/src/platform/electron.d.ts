@@ -165,7 +165,10 @@ interface BackspaceElectronAPI {
    * renderer shows a "choose" card that triggers the portal on click instead
    * of listing sources, which would prompt on every open. 'app' elsewhere.
    */
-  getScreenSharePickerMode?: () => Promise<'app' | 'system'>;
+  // The argument is for the native macOS shell: a client that can take a
+  // native capture says so and is shown the app's own list of sources; one
+  // that says nothing is told 'system'. Electron ignores it.
+  getScreenSharePickerMode?: (client?: { nativeCapture?: boolean }) => Promise<'app' | 'system'>;
   /** System-picker captures carry no preselection; this tells main whether to add loopback audio. */
   setScreenShareAudioPreference?: (shareAudio: boolean) => void;
   /**
@@ -242,7 +245,32 @@ interface BackspaceElectronAPI {
   // Settings. `checkAccessibility` and `onAccessibilityStatus` report that
   // permission there.
   openKeybindPermissionSettings?: () => void;
+  // Native macOS shell only. WebKit's own screen capture gives 30 frames a
+  // second at point resolution and no system audio, and cannot be told
+  // which source to take. The shell captures the source itself and hands
+  // the frames to the page over a local WebSocket: the answer says where to
+  // connect and which token to say first. See "The local media channel" and
+  // "Video on the channel" in packages/desktop-macos/README.md.
+  startNativeScreenCapture?: (options: NativeScreenCaptureOptions) => Promise<NativeScreenCaptureResult>;
+  stopNativeScreenCapture?: () => void;
+  // The capture ended by itself: the window was closed, the display
+  // unplugged, the permission taken away.
+  onNativeScreenCaptureEnded?: (cb: () => void) => () => void;
 }
+
+interface NativeScreenCaptureOptions {
+  /** An id from `getScreenSources`. */
+  sourceId: string;
+  /** The most the video may measure; the source's own size when smaller. */
+  maxWidth?: number;
+  maxHeight?: number;
+  /** 1 to 60; 30 when left out. */
+  frameRate?: number;
+}
+
+type NativeScreenCaptureResult =
+  | { ok: true; url: string; token: string; width: number; height: number; frameRate: number }
+  | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'failed' };
 
 interface Window {
   backspace?: BackspaceElectronAPI;
