@@ -209,7 +209,7 @@ private let small = """
         "renderer-ready", "recovery-action", "get-recovery-state",
         "set-drag-regions", "set-tray-state", "set-tray-context", "get-current-activity",
         "keybinds-sync", "check-accessibility", "keybind-portal-status", "keybind-portal-retry",
-        "open-keybind-permission-settings",
+        "open-keybind-permission-settings", "get-screen-sources",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

@@ -495,6 +495,75 @@ begins and ends: push-to-talk with the window hidden. The logic is in
   `keybind-portal-status` answers null and `keybind-portal-retry` does
   nothing.
 
+### The microphone and the camera
+
+A web view asks the shell before it asks the system
+(`requestMediaCapturePermissionFor`). Left unanswered, WebKit shows its own
+question on top of the system's, again on every page load. The shell answers
+by `MediaCapturePolicy`:
+
+- the page of the window, asking for itself, is granted; the only question
+  the user then sees is the system's, once, with the text from the string
+  catalog (`mac.permission.*`, written into the bundle);
+- a frame inside the page is denied, whatever its origin: an embedded player
+  has no business with the microphone. The Electron build grants every
+  request (it sets no permission handler);
+- the shell's own pages (the instance picker, recovery) are denied.
+
+Each answer goes to the log (`[media] the page asked for the microphone:
+granted`). Not seen on the built app yet: the system's question and a working
+microphone and camera in a call.
+
+Choosing the output device is the web client's part: WebKit has no
+`AudioContext.setSinkId`, so the client plays its mix through a media element
+pointed at the device (`OutputRouter`; "Output routing" in
+[voice.md](../../docs/systems/voice.md)).
+
+### What can be shared
+
+`get-screen-sources` answers with every display and every ordinary window,
+each with a picture, in the shape the web client's stream setup screen reads
+(`ScreenSource.bridgeValue`). Ids are spelled as the Electron build spells
+them, `screen:<display id>:0` and `window:<window id>:0`: the client
+remembers the id shared last time.
+
+- **The list** comes from ScreenCaptureKit (`SystemScreenSourceLister`).
+  Displays first, then windows in the system's order. A window is listed
+  when `ScreenSourceRules.isListed` says so: an application's, on the
+  ordinary level, on screen, titled, at least 48 points on each side, and
+  not the system's furniture. The last rule is there for Stage Manager,
+  which keeps a small titled copy of every window in its strip on the
+  ordinary level: without it each of those windows is listed twice (seen on
+  a machine with Stage Manager on: 15 windows, 5 after the rule).
+- **Pictures** are taken at once for all of them (`SCScreenshotManager`),
+  fitted into 320 by 180 pixels with the proportions kept, never enlarged,
+  as PNG. A window's application icon is drawn at 32 pixels. A source the
+  system would not photograph is left out.
+- **Names.** A window is called by its title. A display is called by its
+  own name ("Built-in Retina Display"), where the Electron build says
+  "Screen 1"; `mac.capture.screen` is for a display the system has no name
+  for.
+- **Who may ask, and how often** (`ScreenSourceGate`, the rule of the
+  Electron build's `screenSharePolicy.ts`): the pictures are of the user's
+  screen and the page is a server's code. New pictures are taken only while
+  the app's window is the one the user works in, and no more often than once
+  a second; otherwise the page gets the list it had. Requests that arrive
+  while a list is being made share it. A list is not carried to another
+  page.
+- **Permission.** Without Screen Recording the list is empty and the system
+  is asked once (`CGRequestScreenCaptureAccess`).
+- **A window in the Stage Manager strip** is listed at the size it has
+  there, and the system reports that size for its content too. What a
+  capture of such a window carries has to be looked at when the capture
+  exists.
+
+On this machine the real list (1 display, 5 windows) took 0.44 s and reached
+the page as 258 KB of JSON; with 15 windows, 0.88 s and 411 KB.
+
+The web client does not ask for the list yet: `get-screen-share-picker-mode`
+still answers `'system'` (`InterimReplies`), and stays so until the shell can
+capture what was picked.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -581,7 +650,14 @@ the same; a combination with a modifier and a mouse button work; an
 empty list stops the listening; a list that cannot be read changes nothing;
 the page's request opens the permission's settings; a listener the system
 will not start is reported; another page starts with no keybinds. No real
-key is listened to there. Then it loads
+key is listened to there. The list of what can be shared (`--check
+sources`) is checked with a list the check makes up: a focused window gets
+it in the shape the web client reads; a second request within a second and
+a window that is not focused get the list they had; two requests at once
+share one listing; another page starts with nothing. The screen is not
+looked at there: `--check sources-system`, run by hand, asks the system
+once and prints how many displays and windows it gave and how large their
+pictures are, never a name, a title or a picture. Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

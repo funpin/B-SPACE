@@ -104,6 +104,17 @@ import WebKit
 // settings; a listener the system will not start is reported; another page
 // starts with no keybinds. No real key is listened to.
 //
+// With --check sources it checks the list of what can be shared on the real
+// shell, with a list the check makes up: a focused window gets it in the
+// shape the web client reads, a second request within a second and a window
+// that is not focused get the list they had, two requests at once share one
+// listing, and another page starts with nothing. The screen is not looked at.
+//
+// With --check sources-system it asks the system once for the real list and
+// prints how many displays and windows there are and how large their
+// pictures are; no name, title or picture is printed. It needs the Screen
+// Recording permission and is not part of contract-check.sh.
+//
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
 // how many items there are and how large they are; --keys yes adds the item
@@ -942,6 +953,195 @@ func checkNotifications() -> Never {
         ? "notifications: asked for with the page's origin, clicks back to the same origin only, badge set and cleared"
         : "notifications: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A list of sources the check makes up; counts how often it is asked.
+final class CheckScreenSourceLister: ScreenSourceLister {
+    var sources: [ScreenSource] = []
+    private(set) var asked = 0
+    /// Holds the answers back until `answer()` is called.
+    var holdsAnswers = false
+    private var held: [() -> Void] = []
+
+    func listSources(completion: @escaping ([ScreenSource]) -> Void) {
+        asked += 1
+        let sources = self.sources
+        if holdsAnswers {
+            held.append { completion(sources) }
+        } else {
+            DispatchQueue.main.async { completion(sources) }
+        }
+    }
+
+    func answer() {
+        let answers = held
+        held = []
+        answers.forEach { $0() }
+    }
+}
+
+func checkSources() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let lister = CheckScreenSourceLister()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            screenSources: lister
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var focused = true
+    shell.isWindowFocused = { focused }
+
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(until: { hasEnded }), loadError == nil else {
+            fail("the local page did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func listed() -> [[String: Any]]? {
+        page("return await window.backspace.getScreenSources();") as? [[String: Any]]
+    }
+    func ids(_ list: [[String: Any]]?) -> [String]? {
+        list?.compactMap { $0["id"] as? String }
+    }
+
+    let picture = Data([0x89, 0x50, 0x4e, 0x47])
+    let display = ScreenSource(kind: .display(1), name: "Built-in Display", thumbnailPNG: picture)
+    let window = ScreenSource(kind: .window(4821), name: "Notes", thumbnailPNG: picture, appIconPNG: Data([1, 2, 3]))
+    lister.sources = [display, window]
+    load(address)
+
+    // 1. A focused window gets the list, in the shape the web client reads.
+    let first = listed()
+    if lister.asked != 1 || ids(first) != ["screen:1:0", "window:4821:0"] {
+        problems.append("the first request listed \(String(describing: ids(first))) after \(lister.asked) listing(s)")
+    }
+    if let source = first?.last {
+        if source["name"] as? String != "Notes" || source["isScreen"] as? Bool != false
+            || source["thumbnailDataUrl"] as? String != "data:image/png;base64,iVBORw=="
+            || source["appIconDataUrl"] as? String != "data:image/png;base64,AQID" {
+            problems.append("a window reached the page as \(source)")
+        }
+    }
+    if let source = first?.first, source["isScreen"] as? Bool != true || !(source["appIconDataUrl"] is NSNull) {
+        problems.append("a display reached the page as \(source)")
+    }
+
+    // 2. Asked again at once, the page gets the list it had: no new pictures.
+    lister.sources = [display]
+    if ids(listed()) != ["screen:1:0", "window:4821:0"] || lister.asked != 1 {
+        problems.append("a second request within a second took new pictures (\(lister.asked) listings)")
+    }
+
+    // 3. After a second it gets a new one.
+    RunLoop.main.run(until: Date().addingTimeInterval(ScreenSourceGate.cacheInterval + 0.1))
+    if ids(listed()) != ["screen:1:0"] || lister.asked != 2 {
+        problems.append("a request a second later did not take new pictures (\(lister.asked) listings)")
+    }
+
+    // 4. A window that is not focused gets the list it had, however long ago.
+    focused = false
+    lister.sources = [display, window]
+    RunLoop.main.run(until: Date().addingTimeInterval(ScreenSourceGate.cacheInterval + 0.1))
+    if ids(listed()) != ["screen:1:0"] || lister.asked != 2 {
+        problems.append("a window that is not focused took new pictures (\(lister.asked) listings)")
+    }
+
+    // 5. Two requests while one list is being made share it.
+    focused = true
+    lister.holdsAnswers = true
+    _ = page("""
+        window.__lists = [];
+        window.backspace.getScreenSources().then((list) => window.__lists.push(list.length));
+        window.backspace.getScreenSources().then((list) => window.__lists.push(list.length));
+        return true;
+        """)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    lister.answer()
+    lister.holdsAnswers = false
+    if !wait(5, until: { (page("return window.__lists;") as? [Int])?.count == 2 })
+        || page("return window.__lists;") as? [Int] != [2, 2] || lister.asked != 3 {
+        problems.append("two requests at once were answered \(String(describing: page("return window.__lists;"))) after \(lister.asked) listings, expected one listing for both")
+    }
+
+    // 6. Another page starts with nothing: unfocused, it gets no list at all.
+    focused = false
+    load(URL(string: origin + "/next")!)
+    if ids(listed()) != [] || lister.asked != 3 {
+        problems.append("another page was given the list made for the one before it")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "sources: listed for a focused window, at most once a second, shared by requests made at once, not carried to another page"
+        : "sources: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// Asks the system once for what can be shared and prints how many displays
+/// and windows it gave and how large their pictures are. No name or title is
+/// printed, and no picture leaves the process.
+func checkSourcesSystem() -> Never {
+    let lister = SystemScreenSourceLister(unnamedScreen: { "Screen \($0)" })
+    var answer: [ScreenSource]?
+    let started = Date()
+    lister.listSources { answer = $0 }
+    guard wait(30, until: { answer != nil }), let sources = answer else {
+        fail("the system did not answer in 30 s")
+    }
+    let took = Date().timeIntervalSince(started)
+    let displays = sources.filter(\.isScreen)
+    let windows = sources.filter { !$0.isScreen }
+    func sizes(_ list: [ScreenSource]) -> String {
+        let bytes = list.map(\.thumbnailPNG.count)
+        guard let smallest = bytes.min(), let largest = bytes.max() else { return "none" }
+        return "\(smallest)...\(largest) bytes"
+    }
+    func dimensions(_ list: [ScreenSource]) -> String {
+        Set(list.compactMap { source -> String? in
+            guard let image = NSBitmapImageRep(data: source.thumbnailPNG) else { return nil }
+            return "\(image.pixelsWide)x\(image.pixelsHigh)"
+        }).sorted().prefix(6).joined(separator: ", ")
+    }
+    let bridged = sources.map(\.bridgeValue)
+    let json = (try? JSONSerialization.data(withJSONObject: bridged))?.count ?? -1
+    print("screen recording allowed: \(CGPreflightScreenCaptureAccess())")
+    print("listed in \(String(format: "%.2f", took)) s: \(displays.count) display(s), \(windows.count) window(s)")
+    print("display pictures: \(sizes(displays)); \(dimensions(displays))")
+    print("window pictures: \(sizes(windows)); \(dimensions(windows))")
+    print("windows with an application icon: \(windows.filter { $0.appIconPNG != nil }.count) of \(windows.count)")
+    print("displays with a name of their own: \(displays.filter { !$0.name.hasPrefix("Screen ") }.count) of \(displays.count)")
+    print("the whole list as the page gets it: \(json) bytes of JSON")
+    let unique = Set(sources.map(\.id)).count == sources.count
+    exit(unique && !displays.isEmpty ? 0 : 1)
 }
 
 /// The actions of the menu in a check run: they do nothing.
@@ -1913,6 +2113,10 @@ case "menu":
     checkMenu()
 case "notifications":
     checkNotifications()
+case "sources":
+    checkSources()
+case "sources-system":
+    checkSourcesSystem()
 case "launch":
     checkLaunch()
 case "window-state":
@@ -1920,7 +2124,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system or electron-profile")
 }
 
 let contract: BridgeContract

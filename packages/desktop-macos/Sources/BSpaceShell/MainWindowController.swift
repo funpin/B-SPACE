@@ -177,6 +177,9 @@ public final class MainWindowController: NSObject {
     public var webViewMovesWindow: Bool {
         webView.mouseDownCanMoveWindow && window.isMovableByWindowBackground && webView.superview === contentView
     }
+    /// Whether the window is the one the user is working in. Pictures of the
+    /// screen are taken for the page only while it is. A test run replaces it.
+    public var isWindowFocused: () -> Bool = { false }
     /// Opens an address in the user's browser. A test run replaces it.
     public var openInBrowser: (String) -> Void = { address in
         guard let url = URL(string: address) else { return }
@@ -198,6 +201,7 @@ public final class MainWindowController: NSObject {
     private let tray: TrayCoordinator?
     private let activity: ActivityDetector?
     private let keybinds: KeybindCoordinator?
+    private let screenSources: ScreenSourceService?
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -242,6 +246,9 @@ public final class MainWindowController: NSObject {
     ///   - keybinds: what listens for the global keybinds; nil listens for
     ///     none. The app passes one that listens to the real keyboard, a test
     ///     run one that is fed made-up keys.
+    ///   - screenSources: what lists the displays and windows that can be
+    ///     shared; nil lists none. The app passes one that asks the system,
+    ///     a test run one with a made-up list.
     ///   - activity: what notices a running game; nil detects none. The app
     ///     passes one that lists the real processes and fetches the
     ///     dictionary, a test run one that does neither.
@@ -256,10 +263,12 @@ public final class MainWindowController: NSObject {
         tray: TrayPresenter? = SystemTrayPresenter(),
         activity: ActivityDetector? = nil,
         keybinds: KeybindCoordinator? = nil,
+        screenSources: ScreenSourceLister? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.activity = activity
         self.keybinds = keybinds
+        self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
@@ -343,6 +352,9 @@ public final class MainWindowController: NSObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         window.delegate = self
+        isWindowFocused = { [weak self] in
+            NSApp.isActive && self?.window.isKeyWindow == true
+        }
         registerBridgeHandlers()
         self.tray?.onCommand = { [weak self] command in
             self?.trayItemChosen(command)
@@ -505,6 +517,7 @@ public final class MainWindowController: NSObject {
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -932,6 +945,18 @@ public final class MainWindowController: NSObject {
         router.onInvoke("get-current-activity", answering: { [weak self] _ in
             self?.activity?.current.map { .value($0.bridgeValue) } ?? .null
         })
+        // What can be shared, with a picture of each. The pictures are of the
+        // user's screen and the page is a server's code: see `ScreenSourceGate`.
+        router.onInvoke("get-screen-sources") { [weak self] _, reply in
+            guard let self, let screenSources = self.screenSources else {
+                reply(.value([Any]()))
+                return
+            }
+            screenSources.sources(windowFocused: self.isWindowFocused()) { sources in
+                reply(.value(sources.map(\.bridgeValue)))
+            }
+        }
+
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in
             instanceStore.load().map { .value($0) } ?? .null
         })
@@ -1017,11 +1042,13 @@ extension MainWindowController: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // A new document: whatever listened for links in the old one is gone,
         // what it said of its title bar, of the tray and of its keybinds is
-        // gone, and the web client in it has yet to say it started.
+        // gone, the pictures of the screen made for it are not the next
+        // page's, and the web client in it has yet to say it started.
         deepLinks.pageChanged()
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -1048,6 +1075,7 @@ extension MainWindowController: WKNavigationDelegate {
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
         // WebKit ends this process for its own reasons too (the system is
@@ -1169,6 +1197,35 @@ extension MainWindowController: WKUIDelegate {
             break
         }
         return nil
+    }
+
+    /// The microphone and the camera. WebKit asks the shell before it asks
+    /// the system; a granted request leaves the system's own question as the
+    /// only one the user sees.
+    public func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let decision = MediaCapturePolicy.decision(
+            isMainFrame: frame.isMainFrame,
+            requestOrigin: WebOrigin.of(scheme: origin.protocol, host: origin.host, port: origin.port),
+            pageURL: webView.url
+        )
+        let devices: String
+        switch type {
+        case .camera: devices = "the camera"
+        case .microphone: devices = "the microphone"
+        case .cameraAndMicrophone: devices = "the camera and the microphone"
+        @unknown default: devices = "a capture device"
+        }
+        NSLog(
+            "[media] %@ asked for %@: %@", frame.isMainFrame ? "the page" : "a frame of \(origin.host)",
+            devices, decision == .grant ? "granted" : "denied"
+        )
+        decisionHandler(decision == .grant ? .grant : .deny)
     }
 
     public func webView(

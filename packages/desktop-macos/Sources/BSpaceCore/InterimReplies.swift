@@ -7,7 +7,7 @@ import Foundation
 /// channel with no handler would reject its Promise, and a rejected call
 /// inside an effect takes the whole client down. So until a feature is ported,
 /// its channels answer what Electron answers where that feature is absent:
-/// no update mechanism, no sources to list, no global shortcuts running.
+/// no update mechanism, the system's own picker of what to share.
 ///
 /// The number after each group is the stage that replaces it with a real
 /// handler; the entry is deleted from here in the same change. `BridgeRouter`
@@ -29,7 +29,6 @@ public enum InterimReplies {
             // Stage 4. WebKit's own picker chooses the source, as for a server
             // whose client knows nothing of the native shell (plan, 5.5).
             "get-screen-share-picker-mode": .value("system"),
-            "get-screen-sources": .value([Any]()),
             "screen-share-preselect": .undefined,
             "get-system-audio-capability": .value("unavailable"),
             "get-audio-routers": .value([Any]()),

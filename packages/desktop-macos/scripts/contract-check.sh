@@ -8,8 +8,8 @@
 # links and auto-launch settings (--check launch), notifications and the
 # badge (--check notifications), the menu bar (--check menu), recovery mode
 # (--check recovery), dragging the window (--check drag), the tray
-# (--check tray), game detection (--check activity) and the global keybinds
-# (--check keybinds).
+# (--check tray), game detection (--check activity), the global keybinds
+# (--check keybinds) and the list of what can be shared (--check sources).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -136,6 +136,14 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check keybinds >&2
+
+# What can be shared, with a made-up list: the screen is not looked at.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check sources >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

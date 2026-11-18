@@ -72,6 +72,7 @@ public struct DesktopStrings {
         case trayPointersOff = "mac.tray.pointersOff"
         case trayStopCamera = "mac.tray.stopCamera"
         case trayStopScreenShare = "mac.tray.stopScreenShare"
+        case captureScreen = "mac.capture.screen"
         case editMenu = "menu.edit"
         case windowMenu = "menu.window"
 
