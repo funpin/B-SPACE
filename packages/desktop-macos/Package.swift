@@ -12,7 +12,13 @@ import PackageDescription
 //                  excludes the application leave out what its web view plays
 let package = Package(
     name: "BSpaceMac",
-    platforms: [.macOS(.v14)],
+    // The app is released for macOS 26 and newer: the bundle's
+    // LSMinimumSystemVersion (scripts/bundle.sh) is what says so to the
+    // system. The package is built for 15, the newest this file can name
+    // with the toolchains it is built by (Swift 6.0 tools, an SDK of 15.5
+    // on the development machine), and old enough for a CI runner on 15 to
+    // run the tests.
+    platforms: [.macOS(.v15)],
     targets: [
         .target(
             name: "BSpaceCore",

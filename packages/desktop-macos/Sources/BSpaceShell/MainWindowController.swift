@@ -796,12 +796,9 @@ public final class MainWindowController: NSObject {
     // MARK: Screen capture
 
     /// Whether this shell can capture the screen for the page: something
-    /// makes capturers, and the system can keep the channel's key out of
-    /// the keychain.
+    /// makes capturers.
     private var canCaptureScreen: Bool {
-        guard makeScreenCapturer != nil else { return false }
-        if #available(macOS 15.0, *) { return true }
-        return false
+        makeScreenCapturer != nil
     }
 
     /// Starts a capture for the page: a channel, a capturer, an encoder. A
@@ -824,7 +821,7 @@ public final class MainWindowController: NSObject {
                 opened = made
             case .failure(let failure):
                 NSLog("[capture] no channel for the capture: %@", String(describing: failure))
-                reply(.refused(failure == .unsupportedSystem ? .unsupported : .failed))
+                reply(.refused(.failed))
                 return
             }
             let id = UUID().uuidString.lowercased()
@@ -870,11 +867,9 @@ public final class MainWindowController: NSObject {
     // MARK: System audio
 
     /// Whether this shell can capture the system's sound for the page:
-    /// something makes capturers, and there is a channel to send it on.
+    /// something makes capturers.
     private var canCaptureSystemAudio: Bool {
-        guard makeSystemAudioCapturer != nil else { return false }
-        if #available(macOS 15.0, *) { return true }
-        return false
+        makeSystemAudioCapturer != nil
     }
 
     /// Starts a capture of the system's sound for the page: a channel and
@@ -897,7 +892,7 @@ public final class MainWindowController: NSObject {
                 opened = made
             case .failure(let failure):
                 NSLog("[system-audio] no channel for the capture: %@", String(describing: failure))
-                reply(.refused(failure == .unsupportedSystem ? .unsupported : .failed))
+                reply(.refused(.failed))
                 return
             }
             let id = UUID().uuidString.lowercased()

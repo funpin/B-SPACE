@@ -19,10 +19,12 @@ and the measuring harness of stage 0.
 
 ## Requirements
 
-To build: macOS 14 or newer and a Swift 6 toolchain. The app itself is
-released for macOS 26 and newer (decided on 2026-11-18; measured on 27.2
-only). The package's deployment target and the bundle's
-`LSMinimumSystemVersion` still say 14 and are to be raised. Command Line Tools are enough:
+To build and to run the tests: macOS 15 or newer and a Swift 6 toolchain.
+The app itself is released for macOS 26 and newer (decided on 2026-11-18;
+measured on 27.2 only): the bundle's `LSMinimumSystemVersion` says 26.0,
+and the system refuses to start it on anything older. The package is built
+for 15 because that is the newest `Package.swift` can name with the
+toolchain and SDK it is built by. Command Line Tools are enough:
 `swift build` and `swift test` work without Xcode. This is a SwiftPM package,
 not a pnpm workspace package, so `pnpm install` and the TypeScript checks do
 not touch it.
@@ -582,7 +584,7 @@ already allows it (`connect-src wss:`).
   certificate into a TLS server's identity only through a PKCS#12 file, so
   one is written in memory (triple DES and HMAC-SHA1 with the key derivation
   of RFC 7292: the form everything reads) and imported with
-  `kSecImportToMemoryOnly` (macOS 15). No keychain is touched and nothing is
+  `kSecImportToMemoryOnly`. No keychain is touched and nothing is
   written to disk.
 - **Trust.** Nothing trusts that certificate except the shell's own web view:
   when a TLS server shows its certificate, the navigation delegate vouches
@@ -725,7 +727,7 @@ a change of size starts the new capture before it stops the old one.
   `onNativeScreenCaptureEnded` with its id.
 - **Refusals** say why: `bad-request` (no source named), `no-permission`
   (no Screen Recording; the system has been asked), `no-source`,
-  `unsupported` (the channel needs macOS 15), `too-many`, `failed`.
+  `unsupported` (a shell that does not capture), `too-many`, `failed`.
 - **Who picks the source.** `getScreenSharePickerMode({ nativeCapture: true
   })` answers `'app'`: a web client that says it can take a native capture
   is shown the app's own list. Without the argument the answer is

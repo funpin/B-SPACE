@@ -58,9 +58,6 @@ private func hex(_ data: Data) -> String {
 }
 
 @Suite struct LocalIdentityTests {
-    // Keeping an imported identity out of the keychain is macOS 15's; the
-    // package still builds for 14.
-    @available(macOS 15.0, *)
     private func imported(_ identity: LocalIdentity) -> SecIdentity? {
         var items: CFArray?
         let status = SecPKCS12Import(identity.pkcs12 as CFData, [
@@ -73,7 +70,6 @@ private func hex(_ data: Data) -> String {
         return (value as! SecIdentity)
     }
 
-    @available(macOS 15.0, *)
     @Test func theSystemTakesTheFileAndGivesBackTheSameCertificate() throws {
         let identity = try LocalIdentity()
         let system = try #require(imported(identity))
@@ -85,7 +81,6 @@ private func hex(_ data: Data) -> String {
         #expect(key != nil)
     }
 
-    @available(macOS 15.0, *)
     @Test func aWrongPasswordIsRefused() throws {
         let identity = try LocalIdentity()
         var items: CFArray?

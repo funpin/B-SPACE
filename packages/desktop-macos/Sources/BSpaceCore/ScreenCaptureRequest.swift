@@ -59,7 +59,7 @@ public enum ScreenCaptureFailure: String, Error, Equatable {
     case noPermission = "no-permission"
     /// The display or window is gone.
     case noSource = "no-source"
-    /// This system cannot do it (the local channel needs macOS 15).
+    /// This shell does not capture: nothing makes capturers for it.
     case unsupported
     /// The page already has as many captures as it may.
     case tooMany = "too-many"

@@ -11,8 +11,6 @@ import Security
 /// messages and knows nothing of what is in them.
 public final class LocalMediaChannel {
     public enum Failure: Error, Equatable {
-        /// Keeping the channel's key out of the keychain needs macOS 15.
-        case unsupportedSystem
         /// The system did not take the channel's key and certificate.
         case identityRefused(OSStatus)
         /// The window shows no page of a server: there is nobody to open a
@@ -56,7 +54,6 @@ public final class LocalMediaChannel {
     /// - Parameter pageOrigin: the origin of the page the channel is for.
     ///   A handshake from any other is refused before it can say a token.
     public init(pageOrigin: String?) throws {
-        guard #available(macOS 15.0, *) else { throw Failure.unsupportedSystem }
         self.pageOrigin = pageOrigin
         identity = try LocalIdentity()
 
