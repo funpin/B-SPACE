@@ -14,6 +14,8 @@ const voiceActions = vi.hoisted(() => ({
   toggleMuteFromControl: vi.fn(),
   toggleDeafenFromControl: vi.fn(),
   handleDisconnectAction: vi.fn(),
+  handleCameraAction: vi.fn(),
+  handleScreenShareAction: vi.fn(),
 }));
 vi.mock('../utils/voiceActions', () => voiceActions);
 vi.mock('../audio/AudioManager', () => ({ AudioManager: { getInstance: () => ({}) } }));
@@ -42,6 +44,8 @@ beforeEach(() => {
     isMuted: false,
     isDeafened: false,
     isScreenSharing: false,
+    isCameraOn: false,
+    showStreamPointers: true,
     participants: [],
     speakingParticipantIds: new Set(),
     voiceConnectionStatus: 'disconnected',
@@ -75,6 +79,29 @@ describe('runTrayAction', () => {
     expect(voiceActions.handleDisconnectAction).toHaveBeenCalledOnce();
   });
 
+  it('turns the viewers\' pointers on and off, like the stream tile\'s menu', () => {
+    runTrayAction({ type: 'toggleShowPointers' });
+    expect(useVoiceStore.getState().showStreamPointers).toBe(false);
+    runTrayAction({ type: 'toggleShowPointers' });
+    expect(useVoiceStore.getState().showStreamPointers).toBe(true);
+  });
+
+  it('turns the camera off and stops the screen share through the voice controls', () => {
+    useVoiceStore.setState({ isCameraOn: true, isScreenSharing: true });
+    runTrayAction({ type: 'stopCamera' });
+    runTrayAction({ type: 'stopScreenShare' });
+    expect(voiceActions.handleCameraAction).toHaveBeenCalledTimes(1);
+    expect(voiceActions.handleScreenShareAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for a stop action when there is nothing to stop', () => {
+    // The same controls would turn the camera on and open the share setup.
+    runTrayAction({ type: 'stopCamera' });
+    runTrayAction({ type: 'stopScreenShare' });
+    expect(voiceActions.handleCameraAction).not.toHaveBeenCalled();
+    expect(voiceActions.handleScreenShareAction).not.toHaveBeenCalled();
+  });
+
   it('changes the status through the profile, like the status picker', () => {
     const updateProfile = vi.fn().mockResolvedValue(undefined);
     useAuthStore.setState({ updateProfile });
@@ -93,7 +120,10 @@ describe('useTrayBridge', () => {
     const { api } = bridge();
     renderHook(() => useTrayBridge());
     expect(api.setTrayState).toHaveBeenLastCalledWith('idle');
-    expect(api.setTrayContext).toHaveBeenLastCalledWith({ signedIn: true, voice: null, muted: false, deafened: false, status: 'online' });
+    expect(api.setTrayContext).toHaveBeenLastCalledWith({
+      signedIn: true, voice: null, muted: false, deafened: false, status: 'online',
+      cameraOn: false, screenSharing: false, showPointers: true,
+    });
 
     act(() => useChatStore.setState({ typingUsers: new Map([['dm', [{ userId: 'ada', username: 'ada', timestamp: 0 }]]]) }));
     expect(api.setTrayState).toHaveBeenLastCalledWith('typing');
@@ -102,7 +132,19 @@ describe('useTrayBridge', () => {
     act(() => useVoiceStore.setState({ currentVoiceChannelId: 'v1', isMuted: true }));
     useSpaceStore.setState({ channels: [{ id: 'v1', name: 'Lounge' }] as never });
     act(() => useVoiceStore.setState({ isDeafened: true }));
-    expect(api.setTrayContext).toHaveBeenLastCalledWith({ signedIn: true, voice: { channelName: 'Lounge' }, muted: true, deafened: true, status: 'online' });
+    expect(api.setTrayContext).toHaveBeenLastCalledWith({
+      signedIn: true, voice: { channelName: 'Lounge' }, muted: true, deafened: true, status: 'online',
+      cameraOn: false, screenSharing: false, showPointers: true,
+    });
+  });
+
+  it('reports the camera, the screen share and the viewers\' pointers setting', () => {
+    const { api } = bridge();
+    renderHook(() => useTrayBridge());
+    act(() => useVoiceStore.setState({ isCameraOn: true }));
+    expect(api.setTrayContext).toHaveBeenLastCalledWith(expect.objectContaining({ cameraOn: true, screenSharing: false, showPointers: true }));
+    act(() => useVoiceStore.setState({ isScreenSharing: true, showStreamPointers: false }));
+    expect(api.setTrayContext).toHaveBeenLastCalledWith(expect.objectContaining({ cameraOn: true, screenSharing: true, showPointers: false }));
   });
 
   it('shows the user speaking, but not while muted', () => {

@@ -352,6 +352,11 @@
       "description": "B:SPACE needs Accessibility permission for global shortcuts to work outside the app.",
       "grant": "Grant Permission"
     },
+    "inputMonitoring": {
+      "title": "Input Monitoring Permission Required",
+      "description": "B:SPACE needs Input Monitoring permission for global shortcuts to work outside the app. Turn it on in System Settings, then reopen B:SPACE.",
+      "grant": "Open System Settings"
+    },
     "hookError": {
       "title": "Global Shortcuts Unavailable",
       "description": "Failed to start input listener. On Linux, your user may need to be in the <code>input</code> group."

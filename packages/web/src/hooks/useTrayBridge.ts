@@ -15,7 +15,13 @@ import {
   type TrayContext,
   type TrayState,
 } from '../utils/trayState';
-import { handleDisconnectAction, toggleDeafenFromControl, toggleMuteFromControl } from '../utils/voiceActions';
+import {
+  handleCameraAction,
+  handleDisconnectAction,
+  handleScreenShareAction,
+  toggleDeafenFromControl,
+  toggleMuteFromControl,
+} from '../utils/voiceActions';
 import i18n from '../i18n';
 
 /** Whether anyone but the user is typing in a DM or in the channel open on screen. */
@@ -52,6 +58,9 @@ function readTrayContext(): TrayContext {
     muted: voice.isMuted,
     deafened: voice.isDeafened,
     status: selectMyChosenStatus(auth),
+    cameraOn: voice.isCameraOn,
+    screenSharing: voice.isScreenSharing,
+    showPointers: voice.showStreamPointers,
   };
 }
 
@@ -96,6 +105,19 @@ export function runTrayAction(action: TrayAction): void {
       useAuthStore.getState().updateProfile({ status: action.status }).catch((err: unknown) => {
         console.warn('[tray] could not change the status:', err);
       });
+      return;
+    case 'toggleShowPointers': {
+      const voice = useVoiceStore.getState();
+      voice.setShowStreamPointers(!voice.showStreamPointers);
+      return;
+    }
+    // The voice bar's own controls are toggles: they would turn the camera on
+    // and open the share setup. From the tray they only ever stop.
+    case 'stopCamera':
+      if (useVoiceStore.getState().isCameraOn) void handleCameraAction();
+      return;
+    case 'stopScreenShare':
+      if (useVoiceStore.getState().isScreenSharing) void handleScreenShareAction();
       return;
   }
 }

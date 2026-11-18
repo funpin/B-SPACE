@@ -20,6 +20,10 @@ const inVoice: TrayContext = {
 };
 
 describe('parseTrayContext', () => {
+  it('passes over what only the native macOS shell reads', () => {
+    expect(parseTrayContext({ ...inVoice, cameraOn: true, screenSharing: false, showPointers: true })).toEqual(inVoice);
+  });
+
   it('accepts a well-formed context', () => {
     expect(parseTrayContext(inVoice)).toEqual(inVoice);
     expect(parseTrayContext({ ...inVoice, voice: null, status: null })).toEqual({ ...inVoice, voice: null, status: null });

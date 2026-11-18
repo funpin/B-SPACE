@@ -50,8 +50,12 @@ export function pickTrayState(inputs: TrayInputs): TrayState {
 }
 
 /**
- * The tray menu's quick controls. Must match TrayContext in
- * packages/desktop/src/trayContext.ts, which validates it.
+ * The tray menu's quick controls. The first five fields must match
+ * TrayContext in packages/desktop/src/trayContext.ts, which validates them.
+ *
+ * The last three are read by the native macOS shell alone, whose menu has a
+ * row of round buttons (packages/desktop-macos, BSpaceCore/Tray.swift); the
+ * Electron build passes over them.
  */
 export interface TrayContext {
   signedIn: boolean;
@@ -59,19 +63,36 @@ export interface TrayContext {
   muted: boolean;
   deafened: boolean;
   status: ChosenUserStatus | null;
+  /** The user's camera is on in the call. */
+  cameraOn: boolean;
+  /** The user is sharing their screen. */
+  screenSharing: boolean;
+  /** "Show viewers' pointers" of the stream tile's menu. */
+  showPointers: boolean;
 }
 
-/** A quick control clicked in the tray menu. Must match TrayAction in trayContext.ts. */
+/**
+ * A quick control clicked in the tray menu. The first four must match
+ * TrayAction in trayContext.ts; the last three come from the native macOS
+ * shell alone. The tray can turn the camera off and stop a screen share, and
+ * cannot start either: that is done in the window, in plain sight.
+ */
 export type TrayAction =
   | { type: 'toggleMute' }
   | { type: 'toggleDeafen' }
   | { type: 'disconnect' }
-  | { type: 'setStatus'; status: ChosenUserStatus };
+  | { type: 'setStatus'; status: ChosenUserStatus }
+  | { type: 'toggleShowPointers' }
+  | { type: 'stopCamera' }
+  | { type: 'stopScreenShare' };
 
 export function sameTrayContext(a: TrayContext, b: TrayContext): boolean {
   return a.signedIn === b.signedIn
     && a.muted === b.muted
     && a.deafened === b.deafened
     && a.status === b.status
+    && a.cameraOn === b.cameraOn
+    && a.screenSharing === b.screenSharing
+    && a.showPointers === b.showPointers
     && (a.voice?.channelName ?? null) === (b.voice?.channelName ?? null);
 }

@@ -55,12 +55,21 @@ describe('pickTrayState', () => {
 });
 
 describe('sameTrayContext', () => {
-  const context: TrayContext = { signedIn: true, voice: { channelName: 'General' }, muted: false, deafened: false, status: 'online' };
+  const context: TrayContext = {
+    signedIn: true, voice: { channelName: 'General' }, muted: false, deafened: false, status: 'online',
+    cameraOn: false, screenSharing: false, showPointers: true,
+  };
 
   it('compares by value', () => {
     expect(sameTrayContext(context, { ...context, voice: { channelName: 'General' } })).toBe(true);
     expect(sameTrayContext(context, { ...context, muted: true })).toBe(false);
     expect(sameTrayContext(context, { ...context, voice: null })).toBe(false);
     expect(sameTrayContext(context, { ...context, status: 'dnd' })).toBe(false);
+  });
+
+  it('tells apart what only the native macOS menu shows', () => {
+    expect(sameTrayContext(context, { ...context, cameraOn: true })).toBe(false);
+    expect(sameTrayContext(context, { ...context, screenSharing: true })).toBe(false);
+    expect(sameTrayContext(context, { ...context, showPointers: false })).toBe(false);
   });
 });
