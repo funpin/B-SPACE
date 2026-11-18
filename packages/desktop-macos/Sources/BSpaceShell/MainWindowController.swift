@@ -78,8 +78,10 @@ final class ShellWebView: WKWebView {
     /// `StayView`s over it take back everything but the page's title bar. The
     /// system reads the answer when it lays the window out, not at each
     /// press, so it cannot depend on where the mouse is. Asking for the drag
-    /// at the press instead (`performDrag(with:)`) is what Chromium does, and
-    /// on macOS 27 it starts the drag only now and then.
+    /// at the press instead (`performDrag(with:)`) is what Chromium does. It
+    /// needs the app to answer the press in time, and on a machine in a bad
+    /// state it was seen to start the drag only now and then, where this
+    /// held (README, "Dragging the window").
     override var mouseDownCanMoveWindow: Bool { true }
 
     /// The system moves the window by the page's title bar without asking,

@@ -286,11 +286,18 @@ the system to drag the window by those parts.
   window that grew stays a page beside what was last reported until the page
   has measured itself again.
 - **Why not `performDrag(with:)`.** Asking for the drag at the press is what
-  the first version did, and what Chromium does. On macOS 27 the system
-  honours it only now and then, in an ordinary window with a plain view too,
-  and the Electron build drags as badly there. Measured with a bench of
-  windows dragged by hand: 2 of 18 presses moved the window that asked, 12
-  of 12 the one built as above. Two things that look simpler do not work:
+  the first version did, and what Chromium does. On the machine this was
+  written on, that call started the drag only now and then: on a bench of
+  windows dragged by hand 2 of 18 presses moved the window that asked,
+  against 12 of 12 for the one built as above; an ordinary window with a
+  plain view failed the same way, and the Electron build dragged as badly.
+  The machine turned out to be in a bad state then (a system gesture had
+  stopped working too). After a reboot the Electron build drags reliably, so
+  the call itself is sound and the cause was that state, not the system's
+  version; the bench was not run again. The layout above was kept all the
+  same: it is the system's own way of moving a window, it needs no answer
+  from the app at the press, and it held where the call did not. Two things
+  that look simpler do not work:
   answering `mouseDownCanMoveWindow` by where the mouse is (the answer is
   kept from the last layout), and views that move the window laid over a web
   view that does not (a view that does not takes its whole rectangle out).
