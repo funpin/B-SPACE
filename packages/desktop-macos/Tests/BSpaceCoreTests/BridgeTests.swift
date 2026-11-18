@@ -215,6 +215,7 @@ private let small = """
         "open-keybind-permission-settings", "get-screen-sources", "get-screen-share-picker-mode",
         "native-screen-capture-start", "native-screen-capture-stop",
         "get-system-audio-capability", "native-system-audio-start", "native-system-audio-stop",
+        "stream-pointer-overlay", "stream-pointer-overlay-end",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

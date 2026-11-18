@@ -69,7 +69,7 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
                     completion(.failure(.noSource))
                     return
                 }
-                filter = SCContentFilter(display: display, excludingWindows: [])
+                filter = SCContentFilter(display: display, excludingWindows: await Self.windows(request.excludedWindows))
             case .window(let id):
                 guard let window = content.windows.first(where: { $0.windowID == id }) else {
                     completion(.failure(.noSource))
@@ -99,6 +99,19 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
             self.configuration = configuration
             completion(.success(size))
         }
+    }
+
+    /// The windows with these numbers, as a content filter takes them.
+    /// They are looked for among all windows, shown or not: the window
+    /// that draws viewers' pointers is hidden until someone points.
+    private static func windows(_ numbers: [UInt32]) async -> [SCWindow] {
+        guard !numbers.isEmpty else { return [] }
+        let all = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let found = all?.windows.filter { numbers.contains($0.windowID) } ?? []
+        if found.count != numbers.count {
+            NSLog("[capture] %d of %d window(s) to leave out are not among those the system lists", numbers.count - found.count, numbers.count)
+        }
+        return found
     }
 
     public func begin(

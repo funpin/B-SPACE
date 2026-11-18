@@ -771,10 +771,9 @@ in a video element at 1152 by 720, goes on playing, follows other limits to
 the capture ends, stops the capture when stopped, and reports a source that
 is gone.
 
-Not done: the pointer overlay is not excluded because there is none; a
-share in a real call (through LiveKit, watched from another client),
-processor load and the comparison with the Electron build are not
-measured.
+Not done: a share in a real call (through LiveKit, watched from another
+client), processor load and the comparison with the Electron build are
+not measured.
 
 ### The system's sound
 
@@ -860,6 +859,62 @@ Not done: a share with sound in a real call; the app's own sound left out
 of a capture the app itself runs (the experiment used a capture by another
 process); whether a running audio router (SoundSource) doubles the sound,
 which `getAudioRouters` would warn about and still answers with nothing.
+
+### Viewers' pointers
+
+Viewers of a share can point at it. In the app their pointers are drawn on
+the stream tile; the sharer is looking at the real desktop, so the shell
+draws them there, over the display being shared. The page owns the state
+and sends the whole list on every change (`setStreamPointerOverlay`,
+`endStreamPointerOverlay`: members the Electron build already had, and the
+web client needed no change).
+
+- **The list** is checked as the Electron build checks it
+  (`OverlayPointers.sanitized`): at most 32 pointers, each with an id and a
+  place inside the picture; a name is cut to 64 UTF-16 units; a colour that
+  is not a plain `rgb(…)` is replaced.
+- **The display** is the one the share shows (`PointerOverlayTarget`). The
+  shell knows which captures run, not which is published, so the pointers
+  go on the display of the newest capture of a whole display that still
+  runs. A share of a window has none, as in the Electron build. While the
+  stream setup screen previews another display the pointers are on that
+  one, and come back when the preview is dropped.
+- **The window** (`SystemPointerOverlay`) is a borderless, non-activating
+  panel the size of the display: transparent, above everything
+  (`.screenSaver`), on every Space and over full-screen applications, out
+  of Mission Control, never key, and it ignores the mouse. It is shown
+  while there are pointers and ordered out when there are none. The arrow,
+  the name's tag and the ring of a click have the Electron overlay's shapes,
+  sizes and timings; the name is set in the system font.
+- **Out of the share.** A capture of a display names the panel in its
+  content filter (`ScreenCaptureRequest.excludedWindows`, filled in by the
+  shell, never by the page), so viewers do not see each pointer twice. The
+  panel is made, not shown, when such a capture starts, and kept for as
+  long as the shell runs: the captures know it by its window number. It
+  also has the sharing type that asks the system to keep it out of captures
+  the shell does not run (the system's picker).
+- **`onStreamPointerOverlayCaptured`** is never sent: it is the Electron
+  build's report that Windows put the overlay into the picture after all.
+
+Checked on the shell with a screen and an overlay the check makes up
+(`--check pointer-overlay`, in `contract-check.sh`): what the page sends is
+checked on the way, the pointers go on the display a share shows and
+nowhere without one, the capture is asked to leave the overlay's window
+out, and the pointers go when pointing ends, with the share and with the
+page.
+
+The real overlay over the real main display (`--check
+pointer-overlay-system`, by hand, macOS 27.2.1), in three captures of that
+display. An overlay made not to hide itself is in a capture that leaves
+nothing out, and is not in one that names its window: the filter works by
+itself. The overlay as the app makes it is not in a capture that leaves
+nothing out either: on this system ScreenCaptureKit honours the window's
+sharing type too. The same check writes a picture of the pointers alone,
+drawn off screen, which is how their look was compared with the page's.
+
+Not looked at on the screen by a person: the panel over a full-screen
+application and across Spaces, with Stage Manager on, and that a click goes
+through it. Not tried in a real call, with real viewers pointing.
 
 ### The bridge
 
@@ -975,6 +1030,10 @@ bridge with a system the check makes up; `--check system-audio-system`,
 run by hand, captures the real system's sound for a few seconds, and
 `--check audio-clock`, run by hand, measures how an audio context's clock
 runs in the web view (see "The system's sound").
+Viewers' pointers (`--check pointer-overlay`) are sent through the bridge
+with a screen and an overlay the check makes up; `--check
+pointer-overlay-system`, run by hand, draws the real overlay on the main
+display for a few seconds and captures it (see "Viewers' pointers").
 Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every

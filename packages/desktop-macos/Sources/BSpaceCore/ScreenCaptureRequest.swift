@@ -11,6 +11,10 @@ public struct ScreenCaptureRequest: Equatable {
     public var maxWidth: Int
     public var maxHeight: Int
     public var framesPerSecond: Int
+    /// Windows a capture of a display leaves out, by their `CGWindowID`:
+    /// the shell's own window that draws viewers' pointers over that
+    /// display. The page cannot name any; the shell fills this in.
+    public var excludedWindows: [UInt32] = []
 
     /// The bounds of what can be asked for. Sixty frames a second is what
     /// the capture and the encoder were measured at.

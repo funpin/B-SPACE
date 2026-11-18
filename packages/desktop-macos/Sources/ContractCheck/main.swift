@@ -164,6 +164,25 @@ import WebKit
 // and shows the system's recording indicator; nothing captured is kept.
 // Run by hand; it is not part of contract-check.sh.
 //
+// With --check pointer-overlay it sends viewers' pointers through the bridge,
+// as the web client does, with a screen and an overlay the check makes up:
+// what the page sends is checked; the pointers are drawn over the display a
+// share shows and nowhere without one; the capture of that display is asked
+// to leave the overlay's window out; the pointers go when pointing ends,
+// with the share and with the page. Nothing is drawn on the real screen.
+//
+// With --check pointer-overlay-system [--out picture.png] it draws two
+// pointers with the real overlay IN THE MIDDLE OF THE MAIN DISPLAY for a few
+// seconds and captures that display three times: an overlay that does not
+// hide itself, without and with its window left out by the capture, and the
+// overlay as the app makes it in a capture that leaves nothing out. It says
+// whether each capture shows the pointer, and fails unless the first does
+// and the second does not. It needs the
+// permission to record the screen and shows the system's recording
+// indicator; nothing captured is kept. With --out it also writes a picture
+// of the pointers alone, drawn off screen. Run by hand; it is not part of
+// contract-check.sh.
+//
 // With --check audio-clock [--seconds 2] it measures how fast the clock of
 // an audio context runs in the shell's web view against the wall clock:
 // for one context and for two at once at the same and at different rates,
@@ -2510,6 +2529,293 @@ func checkAudioClock(seconds: Double) -> Never {
     exit(0)
 }
 
+/// Stands in for the window that draws viewers' pointers: it remembers what
+/// it was asked to draw and where, and gives display 1 a window number.
+final class CheckPointerOverlay: PointerOverlayPresenter {
+    static let windowNumber: UInt32 = 4242
+    private(set) var shown: [(pointers: [OverlayPointer], display: UInt32?)] = []
+
+    func windowNumber(forDisplay display: UInt32) -> UInt32? {
+        display == 1 ? Self.windowNumber : nil
+    }
+
+    func show(_ pointers: [OverlayPointer], onDisplay display: UInt32?) {
+        shown.append((pointers, display))
+    }
+}
+
+/// Viewers' pointers through the bridge, as the web client sends them, with
+/// a screen and an overlay the check makes up.
+func checkPointerOverlay() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    let overlay = CheckPointerOverlay()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 30)
+                capturers.append(capturer)
+                return capturer
+            },
+            pointerOverlay: overlay
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// What the overlay was asked to draw last, once it has been asked
+    /// `times` times.
+    func last(after times: Int) -> (pointers: [OverlayPointer], display: UInt32?)? {
+        guard wait(5, until: { overlay.shown.count >= times }) else { return nil }
+        return overlay.shown.last
+    }
+    let alice = OverlayPointer(
+        id: "alice", name: "Alice", color: OverlayColor(red: 110, green: 91, blue: 239),
+        x: 0.25, y: 0.75, isIdle: false, ping: 0
+    )
+
+    load(address)
+
+    // 1. Pointers with no share of a display: kept, and drawn nowhere. What
+    //    the page sends is checked on the way: an entry out of the picture
+    //    is left out, a colour that cannot be read is replaced.
+    _ = page("""
+        window.backspace.setStreamPointerOverlay([
+          { id: 'alice', name: 'Alice', color: 'rgb(110 91 239)', x: 0.25, y: 0.75, idle: false, ping: 0 },
+          { id: 'off', name: 'Off the picture', color: 'rgb(1 2 3)', x: 1.5, y: 0.5, idle: false, ping: 0 },
+          { id: 'bob', name: 'Bob', color: 'url(x)', x: 0.5, y: 0.5, idle: true, ping: 12 },
+        ]);
+        return true;
+        """)
+    let bob = OverlayPointer(id: "bob", name: "Bob", color: .fallback, x: 0.5, y: 0.5, isIdle: true, ping: 12)
+    if let first = last(after: 1) {
+        if first.pointers != [alice, bob] || first.display != nil {
+            problems.append("with no share the overlay was asked for \(first.pointers.map(\.id)) on display \(String(describing: first.display))")
+        }
+    } else {
+        problems.append("the pointers the page sent did not reach the overlay")
+    }
+
+    // 2. A share of a display: its capture leaves the overlay's window out,
+    //    and the pointers the page sent before go on that display.
+    var asked = overlay.shown.count
+    let share = page("window.share = await window.backspace.startNativeScreenCapture({ sourceId: 'screen:1:0', frameRate: 30 }); return window.share;") as? [String: Any] ?? [:]
+    if share["ok"] as? Bool != true || capturers.last?.request?.excludedWindows != [CheckPointerOverlay.windowNumber] {
+        problems.append("the capture of the display was asked to leave out \(String(describing: capturers.last?.request?.excludedWindows)), expected the overlay's window")
+    }
+    if let now = last(after: asked + 1), now.pointers == [alice, bob], now.display == 1 {
+    } else {
+        problems.append("the pointers did not go on the shared display when its share started")
+    }
+
+    // 3. Another list replaces the first; the end of pointing clears it and
+    //    keeps the display.
+    asked = overlay.shown.count
+    _ = page("""
+        window.backspace.setStreamPointerOverlay([{ id: 'alice', name: 'Alice', color: 'rgb(110, 91, 239)', x: 0.25, y: 0.75 }]);
+        return true;
+        """)
+    if let now = last(after: asked + 1), now.pointers == [alice], now.display == 1 {
+    } else {
+        problems.append("a new list of pointers was not drawn in place of the old")
+    }
+    asked = overlay.shown.count
+    _ = page("window.backspace.endStreamPointerOverlay(); return true;")
+    if let now = last(after: asked + 1), now.pointers.isEmpty, now.display == 1 {
+    } else {
+        problems.append("endStreamPointerOverlay left pointers drawn")
+    }
+
+    // 4. The share stops: nothing is drawn on its display any more.
+    _ = page("window.backspace.setStreamPointerOverlay([{ id: 'alice', name: 'Alice', color: 'rgb(110 91 239)', x: 0.25, y: 0.75 }]); return true;")
+    _ = wait(5, until: { overlay.shown.last?.pointers == [alice] })
+    asked = overlay.shown.count
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
+    if let now = last(after: asked + 1), now.display == nil {
+    } else {
+        problems.append("the pointers stayed on a display whose share stopped")
+    }
+
+    // 5. Another page: its pointers go with it.
+    _ = page("window.share = await window.backspace.startNativeScreenCapture({ sourceId: 'screen:1:0', frameRate: 30 }); return true;")
+    _ = wait(5, until: { overlay.shown.last?.display == 1 && overlay.shown.last?.pointers == [alice] })
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { overlay.shown.last?.pointers.isEmpty == true && overlay.shown.last?.display == nil }) {
+        problems.append("pointers outlived the page that sent them")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "pointer overlay: the page's pointers are checked and drawn over the display its share shows, whose capture leaves the overlay out; they go when pointing ends, with the share and with the page"
+        : "pointer overlay: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real overlay over the real main display, and whether a real capture
+/// of that display sees it. Two pointers are drawn in the middle of the
+/// screen for a few seconds, and the system shows that the screen is being
+/// recorded. Nothing captured is kept: one frame of each capture is read for
+/// the colour of one tag and dropped.
+///
+/// With `--out`, a picture of the pointers alone (drawn off screen, on a plain
+/// ground) is written there as a PNG.
+func checkPointerOverlaySystem(pictureAt: String?) -> Never {
+    _ = NSApplication.shared
+    let magenta = OverlayColor(red: 255, green: 0, blue: 255)
+    // A name of spaces: a tag of one colour all over, with nothing written on it.
+    let pointers = [
+        OverlayPointer(id: "probe", name: String(repeating: " ", count: 40), color: magenta, x: 0.5, y: 0.5, isIdle: false, ping: 1),
+        OverlayPointer(id: "other", name: "Viewer", color: OverlayColor(red: 110, green: 91, blue: 239), x: 0.45, y: 0.45, isIdle: false, ping: 0),
+    ]
+    if let pictureAt {
+        let sample = [
+            OverlayPointer(id: "a", name: "Алиса", color: OverlayColor(red: 110, green: 91, blue: 239), x: 0.2, y: 0.25, isIdle: false, ping: 1),
+            OverlayPointer(id: "b", name: "Bob the Viewer", color: OverlayColor(red: 232, green: 188, blue: 104), x: 0.55, y: 0.55, isIdle: false, ping: 0),
+            OverlayPointer(id: "c", name: "", color: OverlayColor(red: 94, green: 200, blue: 140), x: 0.8, y: 0.3, isIdle: false, ping: 0),
+        ]
+        guard let png = SystemPointerOverlay.picture(of: sample, size: CGSize(width: 420, height: 200), scale: 2) else {
+            fail("the pointers could not be drawn into a picture")
+        }
+        do {
+            try png.write(to: URL(fileURLWithPath: pictureAt))
+        } catch {
+            fail("the picture could not be written to \(pictureAt): \(error.localizedDescription)")
+        }
+        print("a picture of three pointers is at \(pictureAt)")
+    }
+
+    let display = CGMainDisplayID()
+    guard let screen = NSScreen.screens.first(where: {
+        ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display
+    }) else { fail("the main display has no screen") }
+    // An overlay that does not ask the system to keep it out of captures:
+    // whatever hides it from one is then the capture's own filter.
+    let overlay = SystemPointerOverlay(hidesFromCaptures: false)
+    guard let number = overlay.windowNumber(forDisplay: display) else { fail("the overlay made no window for the main display") }
+    overlay.show(pointers, onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+
+    // Where the probe's tag is in a frame: it starts 17 points right of and
+    // below the point, and is 20 points high.
+    func showsTheTag(_ frame: CVPixelBuffer) -> Bool {
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        guard CVPixelBufferGetPlaneCount(frame) == 2, let base = CVPixelBufferGetBaseAddressOfPlane(frame, 1) else { return false }
+        let width = CVPixelBufferGetWidthOfPlane(frame, 1)
+        let height = CVPixelBufferGetHeightOfPlane(frame, 1)
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(frame, 1)
+        let perPoint = Double(width) / Double(screen.frame.width)
+        let left = Int((Double(screen.frame.width) * 0.5 + 17 + 6) * perPoint)
+        let right = Int((Double(screen.frame.width) * 0.5 + 17 + 60) * perPoint)
+        let top = Int((Double(screen.frame.height) * 0.5 + 17 + 5) * perPoint)
+        let bottom = Int((Double(screen.frame.height) * 0.5 + 17 + 15) * perPoint)
+        guard left >= 0, top >= 0, right < width, bottom < height, right > left, bottom > top else { return false }
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var magentaPixels = 0
+        var counted = 0
+        for y in top..<bottom {
+            for x in left..<right {
+                // Blue and red both far above the middle: magenta, whatever the brightness.
+                if bytes[y * stride + x * 2] > 170, bytes[y * stride + x * 2 + 1] > 170 {
+                    magentaPixels += 1
+                }
+                counted += 1
+            }
+        }
+        return counted > 0 && Double(magentaPixels) / Double(counted) >= 0.5
+    }
+
+    /// One frame of a capture of the main display that leaves `excluded` out.
+    func capturedTag(excluding excluded: [UInt32]) -> Bool? {
+        let capturer = SystemScreenCapturer()
+        var request = ScreenCaptureRequest(source: .display(display), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30)
+        request.excludedWindows = excluded
+        var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+        capturer.prepare(request) { prepared = $0 }
+        guard wait(10, until: { prepared != nil }), case .success? = prepared else {
+            if case .failure(let failure)? = prepared {
+                fail("the capture did not start: \(failure.rawValue)")
+            }
+            return nil
+        }
+        let lock = NSLock()
+        var seen: Bool?
+        var started: Bool?
+        capturer.begin(frame: { frame, _, _ in
+            let shows = showsTheTag(frame)
+            lock.lock()
+            seen = shows
+            lock.unlock()
+        }, completion: { started = $0 })
+        guard wait(10, until: { started != nil }), started == true else { return nil }
+        _ = wait(5, until: {
+            lock.lock()
+            defer { lock.unlock() }
+            return seen != nil
+        })
+        // The ring of the click keeps the screen changing: take the last word.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        capturer.stop()
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+
+    let without = capturedTag(excluding: [])
+    let with = capturedTag(excluding: [number])
+    overlay.show([], onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    // The overlay as the app makes it, in a capture that leaves nothing
+    // out: what a capture the shell does not run (the system's picker)
+    // would carry.
+    let asShipped = SystemPointerOverlay()
+    asShipped.show(pointers, onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+    let bySharingType = capturedTag(excluding: [])
+    asShipped.show([], onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    func words(_ seen: Bool?) -> String {
+        switch seen {
+        case true?: return "shows the pointer"
+        case false?: return "does not show the pointer"
+        case nil: return "gave no frame"
+        }
+    }
+    print("an overlay that does not hide itself: a capture that leaves nothing out \(words(without)); a capture that leaves the overlay's window out \(words(with))")
+    print("the overlay as the app makes it, in a capture that leaves nothing out: the capture \(words(bySharingType))")
+    if with == false, without == true {
+        print("pointer overlay, the real screen: the overlay is drawn, and a capture that names its window leaves it out")
+        exit(0)
+    }
+    print("pointer overlay, the real screen: 1 problem(s)")
+    exit(1)
+}
+
 /// A share through the bridge, as the web client will start one, with a
 /// screen the check makes up.
 func checkCapture() -> Never {
@@ -3997,6 +4303,10 @@ case "system-audio-system":
     )
 case "audio-clock":
     checkAudioClock(seconds: arguments["seconds"].flatMap { Double($0) } ?? 2)
+case "pointer-overlay":
+    checkPointerOverlay()
+case "pointer-overlay-system":
+    checkPointerOverlaySystem(pictureAt: arguments["out"])
 case "capture-web":
     checkCaptureWeb(address: arguments["url"] ?? "http://localhost:5173/dev-native-capture.html")
 case "capture-system":
@@ -4019,7 +4329,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, system-audio, system-audio-system, audio-clock, capture-web, capture-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system or electron-profile")
 }
 
 let contract: BridgeContract

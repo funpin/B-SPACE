@@ -44,7 +44,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
                     )
                 }),
                 screenCapturer: { SystemScreenCapturer() },
-                systemAudioCapturer: { SystemSoundCapturer() }
+                systemAudioCapturer: { SystemSoundCapturer() },
+                pointerOverlay: SystemPointerOverlay()
             )
             mainWindow = controller
             // The menu follows the language of the web client.

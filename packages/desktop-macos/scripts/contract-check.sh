@@ -11,8 +11,9 @@
 # (--check tray), game detection (--check activity), the global keybinds
 # (--check keybinds), the list of what can be shared (--check sources), the
 # local media channel (--check media-channel), a share started through the
-# bridge (--check capture) and the system's sound for it
-# (--check system-audio).
+# bridge (--check capture), the system's sound for it
+# (--check system-audio) and viewers' pointers on it
+# (--check pointer-overlay).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -174,6 +175,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check system-audio >&2
+
+# Viewers' pointers through the bridge, with a screen and an overlay the
+# check makes up: nothing is drawn on the real screen.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check pointer-overlay >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

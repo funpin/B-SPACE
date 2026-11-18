@@ -215,6 +215,13 @@ public final class MainWindowController: NSObject {
     private let makeSystemAudioCapturer: (() -> SystemAudioCapturer)?
     /// The captures of the system's sound that run now, as `captures`.
     private var audioCaptures: [String: (session: SystemAudioSession, channel: LocalMediaChannel)] = [:]
+    /// Draws viewers' pointers over the display being shared; nil draws
+    /// none.
+    private let pointerOverlay: PointerOverlayPresenter?
+    /// Which display the pointers belong on, from the captures that run.
+    private var pointerTarget = PointerOverlayTarget()
+    /// The pointers the page sent last.
+    private var pointers: [OverlayPointer] = []
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -268,6 +275,10 @@ public final class MainWindowController: NSObject {
     ///   - systemAudioCapturer: makes what captures the system's sound for
     ///     one share; nil captures none. The app passes one that captures
     ///     through the system, a test run one that plays a tone of its own.
+    ///   - pointerOverlay: what draws viewers' pointers over the display
+    ///     being shared; nil draws none. The app passes one that puts a
+    ///     transparent panel over the display, a test run one that only
+    ///     remembers what it was asked to draw.
     ///   - activity: what notices a running game; nil detects none. The app
     ///     passes one that lists the real processes and fetches the
     ///     dictionary, a test run one that does neither.
@@ -285,6 +296,7 @@ public final class MainWindowController: NSObject {
         screenSources: ScreenSourceLister? = nil,
         screenCapturer: (() -> ScreenCapturer)? = nil,
         systemAudioCapturer: (() -> SystemAudioCapturer)? = nil,
+        pointerOverlay: PointerOverlayPresenter? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.activity = activity
@@ -292,6 +304,7 @@ public final class MainWindowController: NSObject {
         self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
         makeScreenCapturer = screenCapturer
         makeSystemAudioCapturer = systemAudioCapturer
+        self.pointerOverlay = pointerOverlay
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
@@ -788,6 +801,9 @@ public final class MainWindowController: NSObject {
     private func closeMediaChannels() {
         stopScreenCaptures()
         stopSystemAudioCaptures()
+        // The page that sent the pointers is gone.
+        pointers = []
+        drawPointers()
         let channels = mediaChannels
         mediaChannels = []
         channels.forEach { $0.stop() }
@@ -813,6 +829,16 @@ public final class MainWindowController: NSObject {
             reply(.refused(.tooMany))
             return
         }
+        // A capture of a display leaves out the window that draws
+        // viewers' pointers over it: they see their pointers on the
+        // stream tile already, and would see each one twice.
+        var request = request
+        var display: UInt32?
+        if case .display(let id) = request.source {
+            display = id
+            request.excludedWindows = pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+        }
+        let asked = request
         openMediaChannel { [weak self] result in
             guard let self else { return }
             let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
@@ -825,8 +851,10 @@ public final class MainWindowController: NSObject {
                 return
             }
             let id = UUID().uuidString.lowercased()
-            let session = CaptureSession(capturer: makeScreenCapturer(), channel: opened.channel, request: request)
+            let session = CaptureSession(capturer: makeScreenCapturer(), channel: opened.channel, request: asked)
             self.captures[id] = (session, opened.channel)
+            self.pointerTarget.started(id, display: display)
+            self.drawPointers()
             session.onEnded = { [weak self] in
                 guard let self, self.captures[id] != nil else { return }
                 self.stopScreenCapture(id)
@@ -842,7 +870,7 @@ public final class MainWindowController: NSObject {
                 case .success(let size):
                     reply(.started(
                         id: id, url: opened.endpoint.url, token: opened.endpoint.token,
-                        width: size.width, height: size.height, framesPerSecond: request.framesPerSecond
+                        width: size.width, height: size.height, framesPerSecond: asked.framesPerSecond
                     ))
                 case .failure(let failure):
                     self.stopScreenCapture(id)
@@ -856,6 +884,14 @@ public final class MainWindowController: NSObject {
         guard let capture = captures.removeValue(forKey: id) else { return }
         capture.session.stop()
         closeMediaChannel(capture.channel)
+        pointerTarget.stopped(id)
+        drawPointers()
+    }
+
+    /// Puts the pointers the page sent last over the display the share
+    /// shows, and nowhere when no whole display is shared.
+    private func drawPointers() {
+        pointerOverlay?.show(pointers, onDisplay: pointerTarget.display)
     }
 
     private func stopScreenCaptures() {
@@ -1194,6 +1230,20 @@ public final class MainWindowController: NSObject {
         router.onFire("native-screen-capture-stop") { [weak self] arguments in
             guard let id = arguments.string(at: 0) else { return }
             self?.stopScreenCapture(id)
+        }
+
+        // Viewers' pointers on this client's share, drawn over the shared
+        // display. The page sends the whole list on every change, and
+        // `end` when the share is over or pointers are switched off.
+        router.onFire("stream-pointer-overlay") { [weak self] arguments in
+            guard let self else { return }
+            self.pointers = OverlayPointers.sanitized(arguments.values.first)
+            self.drawPointers()
+        }
+        router.onFire("stream-pointer-overlay-end") { [weak self] _ in
+            guard let self else { return }
+            self.pointers = []
+            self.drawPointers()
         }
 
         // The system's sound for a share, and what it carries of the app's

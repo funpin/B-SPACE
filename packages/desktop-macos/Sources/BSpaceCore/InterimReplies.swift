@@ -15,9 +15,8 @@ import Foundation
 public enum InterimReplies {
     /// `fire` channels that are accepted and do nothing yet.
     public static let fireChannels: Set<String> = [
-        // Stage 4: screen sharing, viewers' pointers.
+        // Stage 4: what is left of screen sharing.
         "screen-share-selected", "screen-share-audio-preference",
-        "stream-pointer-overlay", "stream-pointer-overlay-end",
         // Stage 5: updates.
         "install-update", "check-for-updates", "dismiss-update", "open-release-page",
     ]
