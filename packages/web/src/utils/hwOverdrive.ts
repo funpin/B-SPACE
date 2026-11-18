@@ -11,13 +11,31 @@ function rewriteSdp(sdp: string): string {
 }
 
 /**
+ * Whether the override belongs on this engine: Chromium only.
+ *
+ * Chromium offers H.264 Constrained Baseline and picks its hardware encoder
+ * for the rewritten Main profile. WebKit (Safari, the native macOS client)
+ * encodes H.264 in hardware as it is and refuses the rewritten offer:
+ * `setLocalDescription` fails with "Failed to set local video description recv
+ * parameters", the negotiation is lost, and LiveKit drops the participant from
+ * the call the moment a share is published. Firefox has no hardware H.264 to
+ * select. An engine is Chromium when its user agent names a Chrome or Chromium
+ * version; Chrome on iOS is WebKit and names `CriOS` instead.
+ */
+export function appliesTo(userAgent: string | null | undefined): boolean {
+  return /\b(?:Chrome|Chromium)\/\d/.test(userAgent ?? '');
+}
+
+/**
  * Activate the SDP profile override.
  * Patches RTCPeerConnection.prototype.createOffer to rewrite
  * H.264 Constrained Baseline (42e01f/42c01f) → Main Profile (4d0032).
- * No-op if already active.
+ * No-op if already active, and on an engine it does not belong on
+ * (`appliesTo`).
  */
 export function activate(): void {
   if (_active) return;
+  if (!appliesTo(typeof navigator === 'undefined' ? null : navigator.userAgent)) return;
 
   _originalCreateOffer = RTCPeerConnection.prototype.createOffer;
   _active = true;

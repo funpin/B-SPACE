@@ -451,6 +451,21 @@ Persist migration v15: version 14 wrote `codec: 'vp9'` into every saved config, 
 - H.264 uses an SDP profile override only during its publish negotiation; the
   hook is removed in `finally` so later camera or microphone negotiations are
   unaffected.
+- The override is for Chromium only (`hwOverdrive.appliesTo`, by the user
+  agent naming a Chrome or Chromium version). It rewrites Constrained Baseline
+  to Main so that Chromium picks its hardware encoder. WebKit (Safari, the
+  native macOS client) encodes H.264 in hardware as it is and refuses the
+  rewritten offer: `setLocalDescription` fails with "Failed to set local
+  video description recv parameters", the negotiation is lost and LiveKit
+  drops the participant the moment a share is published (seen in a call on
+  2026-11-19).
+- `applyOverdrive` writes the ceiling (bitrate, frame rate) to the sender with
+  `priority`, `networkPriority` and the degradation preference. WebKit
+  implements the ceiling and not the rest, and rejects a call that carries
+  the rest whole ("Attempted to set an unimplemented parameter of
+  RtpParameters"), so nothing was applied there. The full set is tried once;
+  when the engine refuses it with an `OperationError` and then takes the
+  ceiling alone, only the ceiling is written for as long as the page lives.
 - Selecting H.264 does not guarantee hardware encoding. The negotiated codec
   and `encoderImplementation` reported by WebRTC stats are shown in the
   connection inspector. If Chromium reports the OpenH264 software fallback,

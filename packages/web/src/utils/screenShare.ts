@@ -257,6 +257,23 @@ export function resolveNativeOverdrive(
 // Overdrive — forces bitrate/resolution/framerate on RTCRtpSender
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether this engine takes only the ceiling (bitrate and frame rate) of the
+ * sender parameters. WebKit does: given the priorities and the degradation
+ * preference Chromium takes, `setParameters` rejects the whole call with
+ * "Attempted to set an unimplemented parameter of RtpParameters", and the
+ * ceiling is not applied either. The only way to learn what an engine
+ * implements is to ask, so the full set is tried once; when the engine
+ * refuses it and then takes the ceiling alone, only the ceiling is written
+ * for as long as the page lives.
+ */
+let _ceilingOnly = false;
+
+/** Test seam: forget what the engine was found to take. */
+export function resetOverdriveSupportForTests(): void {
+  _ceilingOnly = false;
+}
+
 export async function applyOverdrive(
   room: Room,
   source: Track.Source,
@@ -274,29 +291,46 @@ export async function applyOverdrive(
     const sender = senders.find(s => s.track?.id === pubMediaTrack?.id);
     if (!sender) return false;
 
-    const params = sender.getParameters();
-    if (!params.encodings?.length) return false;
-    // Before LiveKit finishes configuring the sender, Chromium can expose one
-    // empty placeholder encoding. Any values written there are replaced by
-    // LiveKit's sendEncodings, so report "not ready" and let the bounded
-    // scheduler retry after negotiation advances.
-    if (params.encodings.length === 1 && Object.keys(params.encodings[0]!).length === 0) {
-      return false;
+    /** Reads the parameters afresh (a write needs the latest read) and writes them back. */
+    const write = async (ceilingOnly: boolean): Promise<boolean> => {
+      const params = sender.getParameters();
+      if (!params.encodings?.length) return false;
+      // Before LiveKit finishes configuring the sender, Chromium can expose one
+      // empty placeholder encoding. Any values written there are replaced by
+      // LiveKit's sendEncodings, so report "not ready" and let the bounded
+      // scheduler retry after negotiation advances.
+      if (params.encodings.length === 1 && Object.keys(params.encodings[0]!).length === 0) {
+        return false;
+      }
+
+      // Target the highest-quality layer. With simulcast, encodings[0] is the
+      // lowest layer; our overdrive must hit the top layer so the custom bitrate
+      // slider controls the full-resolution stream, not the quarter-res one.
+      // For non-simulcast tracks (single encoding), length - 1 === 0.
+      const idx = params.encodings.length - 1;
+      params.encodings[idx]!.maxBitrate = options.maxBitrate;
+      params.encodings[idx]!.maxFramerate = options.maxFramerate;
+      if (!ceilingOnly) {
+        params.encodings[idx]!.priority = 'high';
+        params.encodings[idx]!.networkPriority = 'high';
+        (params as any).degradationPreference = options.degradationPreference;
+      }
+
+      await sender.setParameters(params);
+      return true;
+    };
+
+    if (_ceilingOnly) return await write(true);
+    try {
+      return await write(false);
+    } catch (err) {
+      // An engine that does not implement one of the parameters says so
+      // with an OperationError; anything else is a failure of this call.
+      if ((err as { name?: unknown } | null)?.name !== 'OperationError') throw err;
+      const applied = await write(true);
+      if (applied) _ceilingOnly = true;
+      return applied;
     }
-
-    // Target the highest-quality layer. With simulcast, encodings[0] is the
-    // lowest layer; our overdrive must hit the top layer so the custom bitrate
-    // slider controls the full-resolution stream, not the quarter-res one.
-    // For non-simulcast tracks (single encoding), length - 1 === 0.
-    const idx = params.encodings.length - 1;
-    params.encodings[idx]!.maxBitrate = options.maxBitrate;
-    params.encodings[idx]!.maxFramerate = options.maxFramerate;
-    params.encodings[idx]!.priority = 'high';
-    params.encodings[idx]!.networkPriority = 'high';
-    (params as any).degradationPreference = options.degradationPreference;
-
-    await sender.setParameters(params);
-    return true;
   } catch (err) {
     console.warn('[ScreenShare] Failed to apply overdrive:', err);
     return false;
