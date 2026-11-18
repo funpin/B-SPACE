@@ -155,3 +155,17 @@ reason = "glob 10.5.0 and 11.1.0, fixed in 14.0.2 only; @fastify/static 7 and wo
 id = "CVE-2026-93753"
 ignoreUntil = 2027-01-15
 reason = "deepmerge 4.3.1, no fixed release exists. Build-time only via workbox-build's @rollup/plugin-node-resolve. Does not ship to users."
+
+# picomatch 2.3.2 and 4.0.7, added on 2026-11-18. No fixed release exists: the
+# advisory (GHSA-fc5q-39xc-vjpf) covers every version through 4.0.7, which is
+# the latest. The flaw is a glob pattern an attacker controls that makes
+# matching take very long. picomatch is in no package's production
+# dependencies (`pnpm why -r --prod picomatch` finds nothing): it comes with
+# vite, vitest, @rollup/pluginutils and tinyglobby (4.x) and with anymatch,
+# micromatch and readdirp (2.x), build and test tooling whose patterns are
+# written in the project's own configuration. Not in the server image's
+# runtime dependencies or the packaged app.
+[[IgnoredVulns]]
+id = "CVE-2026-112366"
+ignoreUntil = 2027-01-15
+reason = "picomatch 2.3.2 and 4.0.7, no fixed release exists. Build and test tooling only (vite, vitest, chokidar's matchers); every pattern is project-authored. Does not ship to users."
