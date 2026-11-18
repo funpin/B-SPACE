@@ -43,7 +43,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
                         ["number": String(number)]
                     )
                 }),
-                screenCapturer: { SystemScreenCapturer() }
+                screenCapturer: { SystemScreenCapturer() },
+                systemAudioCapturer: { SystemSoundCapturer() }
             )
             mainWindow = controller
             // The menu follows the language of the web client.

@@ -210,6 +210,11 @@ public final class MainWindowController: NSObject {
     /// The captures that run now, by the id the page knows each by, with
     /// the channel each sends on.
     private var captures: [String: (session: CaptureSession, channel: LocalMediaChannel)] = [:]
+    /// Makes what captures the system's sound for a share; nil when the
+    /// shell cannot.
+    private let makeSystemAudioCapturer: (() -> SystemAudioCapturer)?
+    /// The captures of the system's sound that run now, as `captures`.
+    private var audioCaptures: [String: (session: SystemAudioSession, channel: LocalMediaChannel)] = [:]
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -260,6 +265,9 @@ public final class MainWindowController: NSObject {
     ///   - screenCapturer: makes what captures the screen for one share; nil
     ///     captures nothing. The app passes one that captures through the
     ///     system, a test run one that draws its own frames.
+    ///   - systemAudioCapturer: makes what captures the system's sound for
+    ///     one share; nil captures none. The app passes one that captures
+    ///     through the system, a test run one that plays a tone of its own.
     ///   - activity: what notices a running game; nil detects none. The app
     ///     passes one that lists the real processes and fetches the
     ///     dictionary, a test run one that does neither.
@@ -276,12 +284,14 @@ public final class MainWindowController: NSObject {
         keybinds: KeybindCoordinator? = nil,
         screenSources: ScreenSourceLister? = nil,
         screenCapturer: (() -> ScreenCapturer)? = nil,
+        systemAudioCapturer: (() -> SystemAudioCapturer)? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.activity = activity
         self.keybinds = keybinds
         self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
         makeScreenCapturer = screenCapturer
+        makeSystemAudioCapturer = systemAudioCapturer
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
@@ -777,6 +787,7 @@ public final class MainWindowController: NSObject {
 
     private func closeMediaChannels() {
         stopScreenCaptures()
+        stopSystemAudioCaptures()
         let channels = mediaChannels
         mediaChannels = []
         channels.forEach { $0.stop() }
@@ -853,6 +864,76 @@ public final class MainWindowController: NSObject {
     private func stopScreenCaptures() {
         for id in Array(captures.keys) {
             stopScreenCapture(id)
+        }
+    }
+
+    // MARK: System audio
+
+    /// Whether this shell can capture the system's sound for the page:
+    /// something makes capturers, and there is a channel to send it on.
+    private var canCaptureSystemAudio: Bool {
+        guard makeSystemAudioCapturer != nil else { return false }
+        if #available(macOS 15.0, *) { return true }
+        return false
+    }
+
+    /// Starts a capture of the system's sound for the page: a channel and
+    /// a capturer. It is apart from the captures of the picture: the
+    /// System Audio switch starts and stops it while a share runs.
+    private func startSystemAudio(reply: @escaping (SystemAudioReply) -> Void) {
+        guard canCaptureSystemAudio, let makeSystemAudioCapturer else {
+            reply(.refused(.unsupported))
+            return
+        }
+        guard audioCaptures.count < SystemAudio.mostAtOnce else {
+            reply(.refused(.tooMany))
+            return
+        }
+        openMediaChannel { [weak self] result in
+            guard let self else { return }
+            let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
+            switch result {
+            case .success(let made):
+                opened = made
+            case .failure(let failure):
+                NSLog("[system-audio] no channel for the capture: %@", String(describing: failure))
+                reply(.refused(failure == .unsupportedSystem ? .unsupported : .failed))
+                return
+            }
+            let id = UUID().uuidString.lowercased()
+            let format = SystemAudio.format
+            let session = SystemAudioSession(capturer: makeSystemAudioCapturer(), channel: opened.channel, format: format)
+            self.audioCaptures[id] = (session, opened.channel)
+            session.onEnded = { [weak self] in
+                guard let self, self.audioCaptures[id] != nil else { return }
+                self.stopSystemAudio(id)
+                self.bridge.emit("native-system-audio-ended", payload: ["id": id])
+            }
+            session.start { [weak self] failure in
+                // The page stopped it, or the window shows another page.
+                guard let self, self.audioCaptures[id] != nil else {
+                    reply(.refused(.failed))
+                    return
+                }
+                if let failure {
+                    self.stopSystemAudio(id)
+                    reply(.refused(failure))
+                } else {
+                    reply(.started(id: id, url: opened.endpoint.url, token: opened.endpoint.token, format: format))
+                }
+            }
+        }
+    }
+
+    private func stopSystemAudio(_ id: String) {
+        guard let capture = audioCaptures.removeValue(forKey: id) else { return }
+        capture.session.stop()
+        closeMediaChannel(capture.channel)
+    }
+
+    private func stopSystemAudioCaptures() {
+        for id in Array(audioCaptures.keys) {
+            stopSystemAudio(id)
         }
     }
 
@@ -1118,6 +1199,25 @@ public final class MainWindowController: NSObject {
         router.onFire("native-screen-capture-stop") { [weak self] arguments in
             guard let id = arguments.string(at: 0) else { return }
             self?.stopScreenCapture(id)
+        }
+
+        // The system's sound for a share, and what it carries of the app's
+        // own playback. A web client from before the native capture is told
+        // there is none: WebKit's capture gives a share no system audio.
+        router.onInvoke("get-system-audio-capability", answering: { [weak self] arguments in
+            .value(SystemAudio.capability(
+                arguments: arguments, shellCanCapture: self?.canCaptureSystemAudio ?? false
+            ))
+        })
+        router.onInvoke("native-system-audio-start") { [weak self] _, reply in
+            guard let self else { return }
+            self.startSystemAudio { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-system-audio-stop") { [weak self] arguments in
+            guard let id = arguments.string(at: 0) else { return }
+            self?.stopSystemAudio(id)
         }
 
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in

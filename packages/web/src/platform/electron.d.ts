@@ -175,7 +175,12 @@ interface BackspaceElectronAPI {
    * Optional: older desktop builds lack it, and the stream settings
    * then keep their generic per-platform System Audio note.
    */
-  getSystemAudioCapability?: (usesAppSource?: boolean) => Promise<OwnAudioInSystemAudio>;
+  // The argument says what this client does for itself. A boolean: whether
+  // it opens the Linux system-audio source. `{ nativeAudio: true }`: it
+  // takes the native macOS shell's capture (`startNativeSystemAudio`), which
+  // leaves the app's own playback out; a client that does not say so is
+  // told `unavailable` there, because WebKit's capture has no system audio.
+  getSystemAudioCapability?: (does?: boolean | { nativeAudio: true }) => Promise<OwnAudioInSystemAudio>;
   /**
    * Names of the audio routers running now that replay other applications'
    * sound, which a System Audio share then carries twice (macOS; empty
@@ -258,6 +263,16 @@ interface BackspaceElectronAPI {
   // A capture ended by itself: the window was closed, the display
   // unplugged, the permission taken away.
   onNativeScreenCaptureEnded?: (cb: (event: { id: string }) => void) => () => void;
+  // Native macOS shell only. The system's sound for a share: everything
+  // the Mac plays except the app itself. A capture of its own, apart from
+  // the picture's, read from a local WebSocket like it: 32-bit float
+  // samples at the rate and in the channels the answer names. See
+  // "The system's sound" in packages/desktop-macos/README.md.
+  startNativeSystemAudio?: () => Promise<NativeSystemAudioResult>;
+  stopNativeSystemAudio?: (id: string) => void;
+  // A capture ended by itself: the permission was taken away, the system
+  // stopped it.
+  onNativeSystemAudioEnded?: (cb: (event: { id: string }) => void) => () => void;
 }
 
 interface NativeScreenCaptureOptions {
@@ -273,6 +288,10 @@ interface NativeScreenCaptureOptions {
 type NativeScreenCaptureResult =
   | { ok: true; id: string; url: string; token: string; width: number; height: number; frameRate: number }
   | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'too-many' | 'failed' };
+
+type NativeSystemAudioResult =
+  | { ok: true; id: string; url: string; token: string; sampleRate: number; channels: number }
+  | { ok: false; reason: 'no-permission' | 'unsupported' | 'too-many' | 'failed' };
 
 interface Window {
   backspace?: BackspaceElectronAPI;

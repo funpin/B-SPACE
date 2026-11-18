@@ -3,8 +3,9 @@ import Foundation
 /// What travels on a local media channel, from the shell to the page.
 ///
 /// Text messages are JSON and say what is coming: the format of the video
-/// before its first frame and whenever it changes. Binary messages are the
-/// media itself, each with a nine-byte header:
+/// before its first frame and whenever it changes, the format of the sound
+/// when the page connects. Binary messages are the media itself, each with
+/// a nine-byte header:
 ///
 ///     byte 0      what it is (`Kind`)
 ///     bytes 1-8   when it was captured: milliseconds since 1970 as a
@@ -13,13 +14,16 @@ import Foundation
 ///
 /// A video payload is one H.264 access unit in the form VideoToolbox makes
 /// and WebCodecs reads when it is given a description: each NAL unit behind
-/// its length in four bytes.
+/// its length in four bytes. A sound payload is samples as 32-bit
+/// little-endian floats, frame after frame, each channel's sample in turn.
 public enum MediaWire {
     public enum Kind: UInt8 {
         /// A frame that can be decoded on its own.
         case videoKeyFrame = 1
         /// A frame that needs the ones before it.
         case videoDeltaFrame = 2
+        /// Samples of sound.
+        case audio = 3
     }
 
     public static let headerLength = 9
@@ -65,6 +69,23 @@ public enum MediaWire {
             // The object holds strings and whole numbers only.
             let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
             return String(decoding: data, as: UTF8.self)
+        }
+    }
+
+    /// The format of the sound that follows.
+    public struct AudioFormat: Equatable {
+        /// Frames a second.
+        public let sampleRate: Int
+        public let channels: Int
+
+        public init(sampleRate: Int, channels: Int) {
+            self.sampleRate = sampleRate
+            self.channels = channels
+        }
+
+        /// The text message that announces it.
+        public var message: String {
+            #"{"channels":\#(channels),"sampleRate":\#(sampleRate),"type":"audio"}"#
         }
     }
 

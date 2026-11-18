@@ -10,8 +10,9 @@
 # (--check recovery), dragging the window (--check drag), the tray
 # (--check tray), game detection (--check activity), the global keybinds
 # (--check keybinds), the list of what can be shared (--check sources), the
-# local media channel (--check media-channel) and a share started through
-# the bridge (--check capture).
+# local media channel (--check media-channel), a share started through the
+# bridge (--check capture) and the system's sound for it
+# (--check system-audio).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -164,6 +165,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check capture >&2
+
+# The system's sound through the bridge, with a system the check makes up:
+# nothing real is captured.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check system-audio >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

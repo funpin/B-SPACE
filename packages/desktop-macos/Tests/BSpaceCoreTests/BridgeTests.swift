@@ -33,13 +33,14 @@ private let small = """
 @Suite struct BridgeContractTests {
     @Test func readsTheRepositoryContract() throws {
         let contract = try BridgeContract(data: repositoryContractData())
-        #expect(contract.members(of: .backspace).count == 64)
+        #expect(contract.members(of: .backspace).count == 67)
         #expect(contract.members(of: .backspace).filter { $0.nativeOnly == true }.map(\.name) == [
             "setDragRegions", "openKeybindPermissionSettings",
             "startNativeScreenCapture", "stopNativeScreenCapture", "onNativeScreenCaptureEnded",
+            "startNativeSystemAudio", "stopNativeSystemAudio", "onNativeSystemAudioEnded",
         ])
         #expect(contract.callChannels(of: .backspace)["set-drag-regions"] == .fire)
-        #expect(contract.eventChannels(of: .backspace).count == 18)
+        #expect(contract.eventChannels(of: .backspace).count == 19)
         #expect(contract.members(of: .bspaceUpdate).count == 6)
         #expect(contract.callChannels(of: .backspace)["get-app-version"] == .invoke)
         #expect(contract.callChannels(of: .backspace)["minimize-window"] == .fire)
@@ -213,6 +214,7 @@ private let small = """
         "keybinds-sync", "check-accessibility", "keybind-portal-status", "keybind-portal-retry",
         "open-keybind-permission-settings", "get-screen-sources", "get-screen-share-picker-mode",
         "native-screen-capture-start", "native-screen-capture-stop",
+        "get-system-audio-capability", "native-system-audio-start", "native-system-audio-stop",
     ]
 
     @Test func coverExactlyTheChannelsThatAreNotPortedYet() throws {

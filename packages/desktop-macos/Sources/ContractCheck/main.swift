@@ -145,13 +145,45 @@ import WebKit
 // it, when the capture ends by itself (the page is told) and with its page.
 // The real screen is not captured.
 //
+// With --check system-audio it asks for the system's sound through the
+// bridge, as the web client will, with a system the check makes up (a tone
+// on each channel): what a share carries of the app's own playback is
+// answered by what the client says it takes; the samples reach the page in
+// the announced format with each channel's tone on its own side; the capture
+// ends when the page stops it, by itself (the page is told) and with its
+// page; no more than a few run at once. The real system is not captured.
+//
+// With --check system-audio-system [--seconds 4] [--url <the workbench page>]
+// [--tone 0.003] it captures the real system's sound for a few seconds and
+// reports how it arrives in a page: frames a second, the size of the pieces,
+// the longest wait between two, the level. With --url it then has the web
+// client's own code on the workbench page take the same capture and reports
+// how its audio thread kept up. With --tone the page plays a 440 Hz tone at
+// that level ON THE SPEAKERS while it captures, and the check fails if the
+// capture does not hear it. It needs the permission to record the screen
+// and shows the system's recording indicator; nothing captured is kept.
+// Run by hand; it is not part of contract-check.sh.
+//
+// With --check audio-clock [--seconds 2] it measures how fast the clock of
+// an audio context runs in the shell's web view against the wall clock:
+// for one context and for two at once at the same and at different rates,
+// and for a worklet that is fed sound a hundred times a second by the page
+// or by a worker while something listens to its stream or nothing does.
+// The window of a check is never shown, so the later rows also show what
+// WebKit does to a page nobody has seen for half a minute. Nothing is
+// played. Run by hand; it is not part of contract-check.sh.
+//
 // With --check capture-web [--url http://localhost:5173/dev-native-capture.html]
 // it loads the web package's workbench page from a running Vite server and
 // has the web client's own capture code (its worker included) take a capture
 // of a screen the check makes up: the track plays in a video element at the
 // size asked for, follows other limits behind the same track, says when the
 // capture ends, stops the capture when it is stopped, and reports a source
-// that is gone. It needs the dev server and is not part of contract-check.sh.
+// that is gone. Then the same for the system's sound (a tone on each
+// channel, made up by the check): the web client's worker and audio worklet
+// play it into a track, on which a meter in the page hears each tone on its
+// own side at the level it was made at. It needs the dev server and is not
+// part of contract-check.sh.
 //
 // With --check capture-system [--size 1920x1080] [--frame-rate 60]
 // [--seconds 5] it captures the main display for a few seconds through the
@@ -1804,6 +1836,680 @@ final class CheckScreenCapturer: ScreenCapturer {
     }
 }
 
+/// The sound of a system the check makes up: 440 Hz on the left, 880 Hz on
+/// the right, a hundredth of a second at a time.
+final class CheckSystemAudioCapturer: SystemAudioCapturer {
+    var onEnded: (() -> Void)?
+    private(set) var isStopped = false
+    private var timer: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "check-system-audio")
+
+    static let framesAtATime = 480
+    static let level = 0.25
+    static let tones = (left: 440.0, right: 880.0)
+
+    func start(
+        format: MediaWire.AudioFormat,
+        samples: @escaping (Data, Double) -> Void,
+        completion: @escaping (ScreenCaptureFailure?) -> Void
+    ) {
+        var sent = 0
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(1))
+        timer.setEventHandler {
+            var left = [Float32](repeating: 0, count: Self.framesAtATime)
+            var right = left
+            for index in 0..<Self.framesAtATime {
+                let time = Double(sent + index) / Double(format.sampleRate)
+                left[index] = Float32(Self.level * sin(2 * .pi * Self.tones.left * time))
+                right[index] = Float32(Self.level * sin(2 * .pi * Self.tones.right * time))
+            }
+            sent += Self.framesAtATime
+            let payload = left.withUnsafeBufferPointer { leftSamples in
+                right.withUnsafeBufferPointer { rightSamples in
+                    SystemAudio.interleaved([leftSamples, rightSamples], channels: format.channels)
+                }
+            }
+            if let payload {
+                samples(payload, Date().timeIntervalSince1970 * 1000)
+            }
+        }
+        self.timer = timer
+        timer.resume()
+        DispatchQueue.main.async { completion(nil) }
+    }
+
+    func stop() {
+        isStopped = true
+        timer?.cancel()
+    }
+
+    func endByItself() {
+        timer?.cancel()
+        onEnded?()
+    }
+}
+
+/// A page that reads a channel's sound and says what it heard: how many
+/// frames, how often each channel rose through zero, the loudest sample.
+let audioPipePage = """
+    window.audioPipe = (url, token) => new Promise((resolve) => {
+      const state = {
+        formats: [], messages: 0, kinds: [], frames: 0, left: 0, right: 0, peak: 0,
+        misshapen: 0, furthestFromNow: 0, closed: false,
+        smallest: 0, largest: 0, longestGap: 0, squares: 0,
+      };
+      let lastLeft = 0;
+      let lastRight = 0;
+      let lastAt = 0;
+      window.audioState = state;
+      const socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+      window.audioSocket = socket;
+      socket.onopen = () => socket.send(token);
+      socket.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          state.formats.push(JSON.parse(event.data));
+          resolve(true);
+          return;
+        }
+        const view = new DataView(event.data);
+        const kind = view.getUint8(0);
+        if (!state.kinds.includes(kind)) state.kinds.push(kind);
+        state.messages += 1;
+        state.furthestFromNow = Math.max(state.furthestFromNow, Math.abs(Date.now() - view.getFloat64(1, true)));
+        const body = event.data.slice(9);
+        if (body.byteLength === 0 || body.byteLength % 8 !== 0) {
+          state.misshapen += 1;
+          return;
+        }
+        const samples = new Float32Array(body);
+        for (let index = 0; index < samples.length; index += 2) {
+          const left = samples[index];
+          const right = samples[index + 1];
+          if (lastLeft <= 0 && left > 0) state.left += 1;
+          if (lastRight <= 0 && right > 0) state.right += 1;
+          lastLeft = left;
+          lastRight = right;
+          state.peak = Math.max(state.peak, Math.abs(left), Math.abs(right));
+          state.squares += left * left + right * right;
+        }
+        const count = samples.length / 2;
+        state.frames += count;
+        state.smallest = state.smallest === 0 ? count : Math.min(state.smallest, count);
+        state.largest = Math.max(state.largest, count);
+        const now = performance.now();
+        if (lastAt > 0) state.longestGap = Math.max(state.longestGap, now - lastAt);
+        lastAt = now;
+      };
+      socket.onclose = () => {
+        state.closed = true;
+        resolve(false);
+      };
+    });
+    return true;
+    """
+
+/// The system's sound through the bridge, as the web client will ask for
+/// it, with a system the check makes up.
+func checkSystemAudio() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckSystemAudioCapturer] = []
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                capturers.append(capturer)
+                return capturer
+            }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start() -> [String: Any] {
+        page("window.sound = await window.backspace.startNativeSystemAudio(); return window.sound;") as? [String: Any] ?? [:]
+    }
+    func heard() -> [String: Any] {
+        page("return window.audioState;") as? [String: Any] ?? [:]
+    }
+
+    load(address)
+    _ = page(audioPipePage)
+    _ = page("""
+        window.endedIDs = [];
+        window.backspace.onNativeSystemAudioEnded((event) => { window.endedIDs.push(event && event.id); });
+        return true;
+        """)
+
+    // 1. What a share's system audio carries of the app's own playback: left
+    //    out, for a client that takes the native capture; no system audio at
+    //    all for one that does not.
+    let capabilities = page("""
+        return [
+          await window.backspace.getSystemAudioCapability({ nativeAudio: true }),
+          await window.backspace.getSystemAudioCapability(true),
+          await window.backspace.getSystemAudioCapability(),
+        ];
+        """) as? [String]
+    if capabilities != ["excluded", "unavailable", "unavailable"] {
+        problems.append("the capabilities were \(String(describing: capabilities)), expected excluded for a client that takes the native capture and unavailable otherwise")
+    }
+
+    // 2. The sound, as it was made: both channels, each with its own tone.
+    let sound = start()
+    if sound["ok"] as? Bool != true || sound["sampleRate"] as? Int != 48_000 || sound["channels"] as? Int != 2
+        || (sound["url"] as? String)?.hasPrefix("wss://127.0.0.1:") != true || (sound["id"] as? String ?? "").isEmpty {
+        problems.append("the capture was answered \(sound.filter { $0.key != "token" }), expected 48000 Hz in 2 channels")
+    }
+    if page("return await window.audioPipe(window.sound.url, window.sound.token);") as? Bool != true {
+        problems.append("the page was not told the format of the sound")
+    }
+    _ = wait(8, until: { heard()["frames"] as? Int ?? 0 >= 48_000 })
+    let first = heard()
+    let frames = first["frames"] as? Int ?? 0
+    let seconds = Double(frames) / 48_000
+    let leftTone = seconds > 0 ? Double(first["left"] as? Int ?? 0) / seconds : 0
+    let rightTone = seconds > 0 ? Double(first["right"] as? Int ?? 0) / seconds : 0
+    let format = (first["formats"] as? [[String: Any]])?.first
+    if format?["type"] as? String != "audio" || format?["sampleRate"] as? Int != 48_000 || format?["channels"] as? Int != 2 {
+        problems.append("the format announced was \(String(describing: format))")
+    }
+    if frames < 48_000 || first["kinds"] as? [Int] != [3] || first["misshapen"] as? Int != 0
+        || first["messages"] as? Int != frames / CheckSystemAudioCapturer.framesAtATime {
+        problems.append("the page read \(frames) frames in \(first["messages"] ?? "?") messages of kinds \(first["kinds"] ?? "?"), \(first["misshapen"] ?? "?") of them misshapen")
+    }
+    if abs(leftTone - CheckSystemAudioCapturer.tones.left) > 3 || abs(rightTone - CheckSystemAudioCapturer.tones.right) > 6
+        || abs((first["peak"] as? Double ?? 0) - CheckSystemAudioCapturer.level) > 0.01 {
+        problems.append(String(
+            format: "the page heard %.0f Hz on the left and %.0f Hz on the right at %.3f, expected 440 and 880 at 0.25",
+            leftTone, rightTone, first["peak"] as? Double ?? 0
+        ))
+    }
+    if first["furthestFromNow"] as? Double ?? .infinity > 2_000 {
+        problems.append("the samples are stamped \(first["furthestFromNow"] ?? "?") ms away from the page's clock")
+    }
+
+    // 3. The page stops it, by its id, and is not told that it ended.
+    let running = capturers.last
+    _ = page("window.backspace.stopNativeSystemAudio(window.sound.id); return true;")
+    if !wait(5, until: { running?.isStopped == true }) || !wait(5, until: { heard()["closed"] as? Bool == true }) {
+        problems.append("stopNativeSystemAudio left the capture running or its channel open")
+    }
+    if page("return window.endedIDs;") as? [String] != [] {
+        problems.append("the page was told that a capture it stopped itself had ended")
+    }
+
+    // 4. The capture ends by itself: the page is told which.
+    let lost = start()
+    capturers.last?.endByItself()
+    if !wait(5, until: { page("return window.endedIDs;") as? [String] == [lost["id"] as? String ?? "?"] }) {
+        problems.append("the page was not told which capture ended")
+    }
+
+    // 5. A page may have a few at once, and no more.
+    let made = capturers.count
+    var answers: [[String: Any]] = []
+    for _ in 0...SystemAudio.mostAtOnce {
+        answers.append(start())
+    }
+    if answers.dropLast().contains(where: { $0["ok"] as? Bool != true })
+        || answers.last?["reason"] as? String != "too-many" {
+        problems.append("\(SystemAudio.mostAtOnce) captures at once should start and one more be refused; got \(answers.map { $0["ok"] ?? $0 })")
+    }
+
+    // 6. Another page: the captures of the one before it stop.
+    let leftBehind = Array(capturers[made...])
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { leftBehind.allSatisfy(\.isStopped) }) {
+        problems.append("a capture of the system's sound outlived its page")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "system audio: started through the bridge, both channels reach the page as they were made; stopped by its id, by itself or with its page; a client that does not take it is told there is none"
+        : "system audio: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real system's sound, for a few seconds, through the channel to a page;
+/// and, given the address of the web package's workbench page, through the
+/// web client's own worker and audio worklet as well. The system shows that
+/// the screen is being recorded while it runs. Nothing that was captured is
+/// kept or printed: only how much of it there was and how loud.
+func checkSystemAudioSystem(seconds: Double, workbench: String?, tone: Double?) -> Never {
+    var problems: [String] = []
+    // A tone for the capture to hear, played by the page itself. A check
+    // started from a terminal is not left out of its own capture (its web
+    // view's helpers count as the terminal's), which is what makes this work.
+    let playTone = tone.map { level in
+        """
+        window.toneContext = new AudioContext();
+        const oscillator = window.toneContext.createOscillator();
+        oscillator.frequency.value = 440;
+        const gain = window.toneContext.createGain();
+        gain.gain.value = \(level);
+        oscillator.connect(gain);
+        gain.connect(window.toneContext.destination);
+        oscillator.start();
+        await window.toneContext.resume();
+        return true;
+        """
+    }
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var timings = RecoveryTimings()
+    // Neither page is a web client that says it started.
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            systemAudioCapturer: { SystemSoundCapturer() },
+            recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(30, until: { hasEnded }), loadError == nil else {
+            fail("\(url.absoluteString) did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func number(_ state: [String: Any], _ key: String) -> Double {
+        state[key] as? Double ?? 0
+    }
+
+    // 1. What the shell sends, as it arrives in a page.
+    load(address)
+    _ = page(audioPipePage)
+    if let playTone { _ = page(playTone) }
+    let reply = page("window.sound = await window.backspace.startNativeSystemAudio(); return window.sound;") as? [String: Any] ?? [:]
+    guard reply["ok"] as? Bool == true else {
+        fail("the capture did not start: \(reply["reason"] ?? "no answer")")
+    }
+    guard page("return await window.audioPipe(window.sound.url, window.sound.token);") as? Bool == true else {
+        fail("the page was not told the format of the sound")
+    }
+    _ = wait(5, until: { number(page("return window.audioState;") as? [String: Any] ?? [:], "frames") > 0 })
+    let began = page("return window.audioState;") as? [String: Any] ?? [:]
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    let heard = page("return window.audioState;") as? [String: Any] ?? [:]
+    _ = page("window.backspace.stopNativeSystemAudio(window.sound.id); return true;")
+
+    let frames = number(heard, "frames") - number(began, "frames")
+    let level = number(heard, "frames") > 0 ? (number(heard, "squares") / (number(heard, "frames") * 2)).squareRoot() : 0
+    print(String(
+        format: "the channel: %.0f frames a second in %.0f messages of %.0f to %.0f frames, at most %.0f ms apart; the oldest sample was %.0f ms from the page's clock; level %.4f, peak %.4f; the left channel rose through zero %.0f times a second",
+        frames / seconds, number(heard, "messages"), number(heard, "smallest"), number(heard, "largest"),
+        number(heard, "longestGap"), number(heard, "furthestFromNow"), level, number(heard, "peak"),
+        number(heard, "frames") > 0 ? number(heard, "left") / (number(heard, "frames") / 48_000) : 0
+    ))
+    if let tone, level < tone / 4 {
+        problems.append(String(format: "a tone was played at %.4f and the capture heard %.4f", tone, level))
+    }
+    if heard["kinds"] as? [Int] != [3] || number(heard, "misshapen") != 0 {
+        problems.append("the messages were of kinds \(heard["kinds"] ?? "?"), \(heard["misshapen"] ?? "?") of them misshapen")
+    }
+    if frames < 48_000 * seconds * 0.9 || frames > 48_000 * seconds * 1.1 {
+        problems.append(String(format: "%.0f frames a second arrived, expected 48000", frames / seconds))
+    }
+
+    // 2. The same through the web client's own code.
+    if let workbench, let url = URL(string: workbench) {
+        load(url)
+        func sound(_ call: String) -> [String: Any] {
+            page("return await window.nativeCaptureWorkbench.\(call)();") as? [String: Any] ?? [:]
+        }
+        guard wait(30, until: { page("return !!window.nativeCaptureWorkbench;") as? Bool == true }) else {
+            fail("the workbench page did not start")
+        }
+        if let playTone { _ = page(playTone) }
+        let started = sound("startSound")
+        if started["phase"] as? String != "running" {
+            problems.append("the web client did not start the sound: \(started)")
+        }
+        _ = wait(5, until: { number(sound("soundState"), "received") > 0 })
+        let first = sound("soundState")
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        let last = sound("soundState")
+        _ = sound("stopSound")
+        let arrived = number(last, "received") - number(first, "received")
+        print(String(
+            format: "the web client: %.0f frames in %.1f s and the time two questions took, %.0f waiting (%.0f ms), %.0f skipped, ran dry %.0f time(s); the track's level %.4f left, %.4f right, at %.0f Hz",
+            arrived, seconds, number(last, "waiting"), number(last, "waiting") / 48, number(last, "skipped"),
+            number(last, "ranDry"), number(last, "levelLeft"), number(last, "levelRight"), number(last, "toneLeft")
+        ))
+        if let tone, number(last, "levelLeft") < tone / 4 {
+            problems.append(String(format: "a tone was played at %.4f and the web client's track carries %.4f", tone, number(last, "levelLeft")))
+        }
+        if arrived < 48_000 * seconds * 0.9 || last["trackState"] as? String != "live" {
+            problems.append("the web client's audio thread took in \(arrived) frames; the track was \(last["trackState"] ?? "?")")
+        }
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "system audio, the real system: the sound arrives at the rate and in the shape announced"
+        : "system audio, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// How fast the clock of an audio context runs in this web view, against
+/// the wall clock, for the ways a page can build one. Nothing is played: no
+/// context is given anything audible.
+func checkAudioClock(seconds: Double) -> Never {
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    var timings = RecoveryTimings()
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil, recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    var answer: Result<Any, Error>?
+    shell.webView.callAsyncJavaScript("""
+        const worklet = URL.createObjectURL(new Blob([`
+          registerProcessor('clock-probe', class extends AudioWorkletProcessor {
+            process() { return true; }
+          });
+        `], { type: 'text/javascript' }));
+        const withWorklet = async (options) => {
+          const context = new AudioContext(options);
+          await context.audioWorklet.addModule(worklet);
+          const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+          node.connect(context.createMediaStreamDestination());
+          return context;
+        };
+        const variants = {
+          'default rate, nothing connected': async () => new AudioContext(),
+          'two at once: default rate; 48 kHz with a worklet': async () => [new AudioContext(), await withWorklet({ sampleRate: 48000 })],
+          'two at once: default rate; default rate with a worklet': async () => [new AudioContext(), await withWorklet()],
+          'two at once: 48 kHz; 48 kHz with a worklet': async () => [new AudioContext({ sampleRate: 48000 }), await withWorklet({ sampleRate: 48000 })],
+          'two at once: 48 kHz with a worklet; default rate listening to its stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            const stream = context.createMediaStreamDestination();
+            node.connect(stream);
+            const listener = new AudioContext();
+            listener.createMediaStreamSource(stream.stream).connect(listener.createAnalyser());
+            return [context, listener];
+          },
+          '48 kHz, a source into a stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            const source = context.createConstantSource();
+            source.offset.value = 0;
+            source.connect(context.createMediaStreamDestination());
+            source.start();
+            return context;
+          },
+          '48 kHz, a worklet into a stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            return context;
+          },
+          '48 kHz, a worklet into a stream and, silenced, into the output': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            const silence = context.createGain();
+            silence.gain.value = 0;
+            node.connect(silence);
+            silence.connect(context.destination);
+            return context;
+          },
+          'default rate, a worklet into a stream': async () => {
+            const context = new AudioContext();
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            return context;
+          },
+        };
+        const results = [];
+        for (const [name, make] of Object.entries(variants)) {
+          try {
+            const contexts = [await make()].flat();
+            for (const context of contexts) await context.resume();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const clocksThen = contexts.map((context) => context.currentTime);
+            const wallThen = performance.now();
+            await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+            const wall = (performance.now() - wallThen) / 1000;
+            contexts.forEach((context, index) => {
+              results.push({
+                name: contexts.length > 1 ? name + ' [' + (index + 1) + ']' : name,
+                rate: context.sampleRate, state: context.state, clock: context.currentTime - clocksThen[index], wall,
+              });
+            });
+            for (const context of contexts) await context.close();
+          } catch (error) {
+            results.push({ name, error: String(error) });
+          }
+        }
+        return { results, visibility: document.visibilityState };
+        """, arguments: ["seconds": seconds], in: nil, in: .page) { answer = $0 }
+    guard wait(seconds * 12 + 30, until: { answer != nil }), case .success(let value)? = answer,
+          let report = value as? [String: Any], let results = report["results"] as? [[String: Any]] else {
+        fail("the page did not answer")
+    }
+    print("the page is \(report["visibility"] ?? "?")")
+    for result in results {
+        if let error = result["error"] as? String {
+            print("\(result["name"] ?? "?"): \(error)")
+        } else {
+            let clock = result["clock"] as? Double ?? 0
+            let wall = result["wall"] as? Double ?? 1
+            print(String(
+                format: "%@: %.0f Hz, %@, the clock moved %.2f s in %.2f s (%.0f%%)",
+                result["name"] as? String ?? "?", result["rate"] as? Double ?? 0, result["state"] as? String ?? "?",
+                clock, wall, clock / wall * 100
+            ))
+        }
+    }
+
+    // 2. A worklet that is fed sound the way a capture feeds it: a hundred
+    //    pieces a second, from the page or straight from a worker, with or
+    //    without another context listening to its stream. The clock is read
+    //    on the audio thread itself.
+    var fedAnswer: Result<Any, Error>?
+    shell.webView.callAsyncJavaScript("""
+        const blob = (source) => URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+        const worklet = blob(`
+          registerProcessor('fed-probe', class extends AudioWorkletProcessor {
+            constructor(options) {
+              super();
+              this.tone = options.processorOptions && options.processorOptions.tone;
+              this.phase = 0;
+              this.pieces = 0;
+              this.blocks = 0;
+              const take = () => { this.pieces += 1; };
+              this.port.onmessage = (event) => {
+                if (event.data.port) event.data.port.onmessage = take;
+                else if (event.data.ask) this.port.postMessage({ clock: currentTime, wall: Date.now(), blocks: this.blocks, pieces: this.pieces });
+                else take();
+              };
+            }
+            process(inputs, outputs) {
+              this.blocks += 1;
+              if (this.tone) {
+                const [left, right] = outputs[0];
+                for (let index = 0; index < left.length; index++) {
+                  left[index] = right[index] = 0.25 * Math.sin(this.phase);
+                  this.phase += 2 * Math.PI * 440 / sampleRate;
+                }
+              }
+              return true;
+            }
+          });
+        `);
+        const feeder = blob(`
+          let target = null;
+          onmessage = (event) => {
+            target = event.data.port || self;
+            setInterval(() => {
+              const piece = new Float32Array(960);
+              target.postMessage(piece.buffer, [piece.buffer]);
+            }, 10);
+          };
+        `);
+        const ask = (node) => new Promise((resolve) => {
+          node.port.onmessage = (event) => resolve(event.data);
+          node.port.postMessage({ ask: true });
+        });
+        const run = async (name, { from, listener, tone }) => {
+          const context = new AudioContext({ sampleRate: 48000 });
+          await context.audioWorklet.addModule(worklet);
+          const node = new AudioWorkletNode(context, 'fed-probe', {
+            numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { tone: !!tone },
+          });
+          const stream = context.createMediaStreamDestination();
+          node.connect(stream);
+          let worker = null;
+          if (from === 'worker') {
+            const pair = new MessageChannel();
+            node.port.postMessage({ port: pair.port2 }, [pair.port2]);
+            worker = new Worker(feeder);
+            worker.postMessage({ port: pair.port1 }, [pair.port1]);
+          } else if (from === 'page') {
+            worker = new Worker(feeder);
+            worker.onmessage = (event) => node.port.postMessage(event.data, [event.data]);
+            worker.postMessage({});
+          }
+          let listening = null;
+          let sending = [];
+          let element = null;
+          if (listener === 'context' || listener === 'context at 48 kHz') {
+            listening = new AudioContext(listener === 'context' ? undefined : { sampleRate: 48000 });
+            listening.createMediaStreamSource(stream.stream).connect(listening.createAnalyser());
+            await listening.resume();
+          } else if (listener === 'peer connection') {
+            const from = new RTCPeerConnection();
+            const to = new RTCPeerConnection();
+            sending = [from, to];
+            from.addTrack(stream.stream.getAudioTracks()[0], stream.stream);
+            await from.setLocalDescription(await from.createOffer());
+            await to.setRemoteDescription(from.localDescription);
+            await to.setLocalDescription(await to.createAnswer());
+            await from.setRemoteDescription(to.localDescription);
+          } else if (listener === 'element') {
+            element = new Audio();
+            element.muted = true;
+            element.srcObject = stream.stream;
+            await element.play().catch(() => {});
+          }
+          await context.resume();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const then = await ask(node);
+          await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+          const now = await ask(node);
+          // Both clocks read on the audio thread, at the same moment.
+          const wall = (now.wall - then.wall) / 1000;
+          if (worker) worker.terminate();
+          if (listening) await listening.close();
+          sending.forEach((connection) => connection.close());
+          if (element) element.srcObject = null;
+          await context.close();
+          return { name, wall, clock: now.clock - then.clock, blocks: now.blocks - then.blocks, pieces: now.pieces - then.pieces };
+        };
+        const results = [];
+        results.push(await run('fed nothing', {}));
+        results.push(await run('fed nothing, playing a tone into its stream', { tone: true }));
+        results.push(await run('fed by a worker, playing a tone into its stream', { from: 'worker', tone: true }));
+        results.push(await run('fed nothing, with another context listening', { listener: 'context' }));
+        results.push(await run('fed by the page', { from: 'page' }));
+        results.push(await run('fed by a worker', { from: 'worker' }));
+        results.push(await run('fed by a worker, with another context listening', { from: 'worker', listener: 'context' }));
+        results.push(await run('fed by a worker, with another context at 48 kHz listening', { from: 'worker', listener: 'context at 48 kHz' }));
+        results.push(await run('fed by the page, with another context listening', { from: 'page', listener: 'context' }));
+        results.push(await run('fed by a worker, its track given to a peer connection', { from: 'worker', listener: 'peer connection' }));
+        results.push(await run('fed by a worker, its stream in a muted audio element', { from: 'worker', listener: 'element' }));
+        results.push(await run('fed by a worker, again', { from: 'worker' }));
+        return results;
+        """, arguments: ["seconds": seconds], in: nil, in: .page) { fedAnswer = $0 }
+    guard wait(seconds * 16 + 60, until: { fedAnswer != nil }), case .success(let fedValue)? = fedAnswer,
+          let fed = fedValue as? [[String: Any]] else {
+        fail("the page did not answer about a worklet that is fed")
+    }
+    for result in fed {
+        let clock = result["clock"] as? Double ?? 0
+        let wall = result["wall"] as? Double ?? 1
+        print(String(
+            format: "a worklet %@: its clock moved %.3f s in %.3f s (%.1f%%), %.0f blocks, %.0f pieces taken in",
+            result["name"] as? String ?? "?", clock, wall, clock / wall * 100,
+            result["blocks"] as? Double ?? 0, result["pieces"] as? Double ?? 0
+        ))
+    }
+    exit(0)
+}
+
 /// A share through the bridge, as the web client will start one, with a
 /// screen the check makes up.
 func checkCapture() -> Never {
@@ -1999,6 +2705,7 @@ func checkCaptureWeb(address: String) -> Never {
     defer { try? FileManager.default.removeItem(at: temporary) }
 
     var capturers: [CheckScreenCapturer] = []
+    var soundCapturers: [CheckSystemAudioCapturer] = []
     var movingFrames = 3000
     var timings = RecoveryTimings()
     // The workbench page is not a web client and never says it started.
@@ -2011,6 +2718,11 @@ func checkCaptureWeb(address: String) -> Never {
             screenCapturer: {
                 let capturer = CheckScreenCapturer(movingFrames: movingFrames)
                 capturers.append(capturer)
+                return capturer
+            },
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                soundCapturers.append(capturer)
                 return capturer
             },
             recoveryTimings: timings
@@ -2049,6 +2761,29 @@ func checkCaptureWeb(address: String) -> Never {
     if state()["available"] as? Bool != true {
         problems.append("the web client does not see the shell's native capture")
     }
+
+    // 0. How the audio thread keeps time, measured before anything else
+    //    has run and again at the end. The window of a check is never
+    //    shown, and WebKit holds back a page nobody sees (see --check
+    //    audio-clock): the numbers are printed, not judged.
+    func soundClock(_ label: String) {
+        func state() -> [String: Any] {
+            page("return await window.nativeCaptureWorkbench.soundState();") as? [String: Any] ?? [:]
+        }
+        func value(_ state: [String: Any], _ key: String) -> Double { state[key] as? Double ?? 0 }
+        _ = page("return await window.nativeCaptureWorkbench.startSound(false);")
+        _ = wait(10, until: { value(state(), "received") >= 24_000 })
+        let then = state()
+        RunLoop.main.run(until: Date().addingTimeInterval(2))
+        let now = state()
+        _ = page("return await window.nativeCaptureWorkbench.stopSound();")
+        FileHandle.standardError.write(Data(String(
+            format: "ContractCheck: sound, nothing listening, %@: the audio thread's clock moved %.3f s in %.3f s; %.0f waiting, %.0f skipped, ran dry %.0f time(s)\n",
+            label, value(now, "clock") - value(then, "clock"), (value(now, "wall") - value(then, "wall")) / 1000,
+            value(now, "waiting"), value(now, "skipped"), value(now, "ranDry")
+        ).utf8))
+    }
+    soundClock("at the start")
 
     // 1. A capture started by the web client's code plays in a video element.
     let started = page("""
@@ -2104,11 +2839,78 @@ func checkCaptureWeb(address: String) -> Never {
         problems.append("a source that is gone was answered \(gone)")
     }
 
+    // 6. The system's sound, through the web client's own worker and audio
+    //    worklet: the track carries each channel's tone on its own side, at
+    //    the level it was made at, and keeps up with what arrives.
+    func sound(_ call: String) -> [String: Any] {
+        page("return await window.nativeCaptureWorkbench.\(call)();") as? [String: Any] ?? [:]
+    }
+    func number(_ state: [String: Any], _ key: String) -> Double {
+        state[key] as? Double ?? 0
+    }
+    soundClock("after the captures")
+    let soundStarted = sound("startSound")
+    if soundStarted["available"] as? Bool != true || soundStarted["phase"] as? String != "running" {
+        problems.append("the system's sound did not start: \(soundStarted)")
+    }
+    _ = wait(10, until: {
+        let state = sound("soundState")
+        return number(state, "received") >= 48_000 && number(state, "levelLeft") > 0.1
+    })
+    let heard = sound("soundState")
+    // A sine at a quarter of full scale has a root mean square of 0.177.
+    let expectedLevel = CheckSystemAudioCapturer.level / 2.0.squareRoot()
+    if abs(number(heard, "levelLeft") - expectedLevel) > 0.03 || abs(number(heard, "levelRight") - expectedLevel) > 0.03
+        || abs(number(heard, "toneLeft") - CheckSystemAudioCapturer.tones.left) > 12
+        || abs(number(heard, "toneRight") - CheckSystemAudioCapturer.tones.right) > 12
+        || heard["trackState"] as? String != "live" {
+        problems.append(String(
+            format: "the sound track carries %.0f Hz at %.3f on the left and %.0f Hz at %.3f on the right (track %@), expected 440 and 880 at %.3f",
+            number(heard, "toneLeft"), number(heard, "levelLeft"), number(heard, "toneRight"), number(heard, "levelRight"),
+            heard["trackState"] as? String ?? "?", expectedLevel
+        ))
+    }
+    let heardAt = Date()
+    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    let later = sound("soundState")
+    let between = Date().timeIntervalSince(heardAt)
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: sound, a meter listening: in %.2f s (%.3f s on the audio thread's wall clock) its clock moved %.3f s and it played %.0f frames\n",
+        between, (number(later, "wall") - number(heard, "wall")) / 1000,
+        number(later, "clock") - number(heard, "clock"), number(later, "played") - number(heard, "played")
+    ).utf8))
+    let arrived = number(later, "received") - number(heard, "received")
+    let ranDry = number(later, "ranDry") - number(heard, "ranDry")
+    // Two seconds and the time the two questions took: at least 80,000 frames.
+    if arrived < 80_000 || ranDry > 2 || number(later, "skipped") > 12_000 || number(later, "waiting") > 12_000 {
+        problems.append(String(
+            format: "in two seconds the audio thread took in %.0f frames, ran dry %.0f time(s), had skipped %.0f and held %.0f",
+            arrived, ranDry, number(later, "skipped"), number(later, "waiting")
+        ))
+    }
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: sound: %.0f frames in two seconds, %.0f waiting, %.0f skipped, ran dry %.0f time(s) in all\n",
+        arrived, number(later, "waiting"), number(later, "skipped"), number(later, "ranDry")
+    ).utf8))
+
+    // 7. The sound's capture ends by itself: the track says so. And stopping
+    //    the track stops the capture.
+    soundCapturers.last?.endByItself()
+    if !wait(5, until: { sound("soundState")["phase"] as? String == "ended" }) {
+        problems.append("the sound track did not say that its capture ended")
+    }
+    _ = sound("startSound")
+    let soundRunning = soundCapturers.last
+    let soundStopped = sound("stopSound")
+    if soundStopped["phase"] as? String != "stopped" || !wait(5, until: { soundRunning?.isStopped == true }) {
+        problems.append("stopping the sound track left its capture running (\(soundStopped))")
+    }
+
     for problem in problems {
         FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
     }
     print(problems.isEmpty
-        ? "capture, web client's side: its worker decodes the shell's capture into a track that plays, follows other limits behind the same track, says when the capture ends and stops it when stopped"
+        ? "capture, web client's side: its worker decodes the shell's capture into a track that plays, follows other limits behind the same track, says when the capture ends and stops it when stopped; its audio worklet plays the system's sound into a track with each channel on its own side"
         : "capture, web client's side: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
 }
@@ -3186,6 +3988,15 @@ case "media-channel":
     checkMediaChannel()
 case "capture":
     checkCapture()
+case "system-audio":
+    checkSystemAudio()
+case "system-audio-system":
+    checkSystemAudioSystem(
+        seconds: arguments["seconds"].flatMap { Double($0) } ?? 4, workbench: arguments["url"],
+        tone: arguments["tone"].flatMap { Double($0) }
+    )
+case "audio-clock":
+    checkAudioClock(seconds: arguments["seconds"].flatMap { Double($0) } ?? 2)
 case "capture-web":
     checkCaptureWeb(address: arguments["url"] ?? "http://localhost:5173/dev-native-capture.html")
 case "capture-system":
@@ -3208,7 +4019,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-web, capture-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, system-audio, system-audio-system, audio-clock, capture-web, capture-system or electron-profile")
 }
 
 let contract: BridgeContract

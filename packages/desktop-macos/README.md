@@ -19,7 +19,10 @@ and the measuring harness of stage 0.
 
 ## Requirements
 
-macOS 14 or newer and a Swift 6 toolchain. Command Line Tools are enough:
+To build: macOS 14 or newer and a Swift 6 toolchain. The app itself is
+released for macOS 26 and newer (decided on 2026-11-18; measured on 27.2
+only). The package's deployment target and the bundle's
+`LSMinimumSystemVersion` still say 14 and are to be raised. Command Line Tools are enough:
 `swift build` and `swift test` work without Xcode. This is a SwiftPM package,
 not a pnpm workspace package, so `pnpm install` and the TypeScript checks do
 not touch it.
@@ -766,11 +769,95 @@ in a video element at 1152 by 720, goes on playing, follows other limits to
 the capture ends, stops the capture when stopped, and reports a source that
 is gone.
 
-Not done: no sound is captured (change 5), so the System Audio switch does
-nothing in this client yet; the pointer overlay is not excluded because
-there is none; a share in a real call (through LiveKit, watched from
-another client), processor load and the comparison with the Electron build
-are not measured.
+Not done: the pointer overlay is not excluded because there is none; a
+share in a real call (through LiveKit, watched from another client),
+processor load and the comparison with the Electron build are not
+measured.
+
+### The system's sound
+
+A share can carry what the Mac plays: everything except this app, so that
+viewers do not hear themselves through the call. It is a capture of its own,
+apart from the picture's, for two reasons. The System Audio switch turns it
+on and off while a share runs, and the picture must not stop for that. And
+one ScreenCaptureKit filter cannot keep the app's window in the picture and
+the app's sound out of the audio: the sound follows the applications the
+filter names.
+
+`SystemSoundCapturer` (`SystemAudioCapture.swift`) is a ScreenCaptureKit
+stream of the main display with this app in the filter's excluded
+applications, `capturesAudio` on, 48 kHz in two channels. A stream cannot be
+of sound alone, so it also takes a picture two pixels wide once a second,
+which nobody reads. The app is found among the applications the system
+lists by its process id; the system counts the sound of the web view's
+helper processes as the app's (measured with CaptureProbe, below). That holds
+for an app started the usual way. One started from a terminal has its
+helpers counted as the terminal's and hears itself: a development build run
+that way sends the call back to its viewers.
+
+`SystemAudioSession` puts the samples on a local media channel of its own:
+the format as a text message when the page connects
+(`{"type":"audio","sampleRate":48000,"channels":2}`), then binary messages
+of kind 3 whose payload is 32-bit little-endian floats, frame after frame,
+each channel's sample in turn (`SystemAudio.interleaved` lays the system's
+one-array-a-channel samples out that way). Samples from before the page
+connected go nowhere, and samples the channel cannot take are dropped:
+sound that is late is worth less than a gap.
+
+The bridge has three members for it, all `nativeOnly`:
+
+| Member | What it does |
+|--------|--------------|
+| `startNativeSystemAudio()` | Starts a capture. Answers `{ ok: true, id, url, token, sampleRate, channels }` or `{ ok: false, reason }` with `no-permission`, `unsupported`, `too-many` or `failed`. Up to four at once |
+| `stopNativeSystemAudio(id)` | Ends that capture and closes its channel |
+| `onNativeSystemAudioEnded(cb)` | A capture ended by itself; the callback gets `{ id }` |
+
+`getSystemAudioCapability` is answered by what the client says it takes, as
+the picker mode is: `{ nativeAudio: true }` gives `excluded`, anything else
+`unavailable`. A web client from before this capture uses WebKit's
+`getDisplayMedia`, which gives a share no system audio, and its stream
+settings say so.
+
+The web client's side is in `packages/web/src/platform/nativeCapture/`
+(`nativeSystemAudio.ts`, a worker that reads the channel, an audio worklet
+that plays the samples into a track); see "Screen sharing in the native
+macOS client" in [voice.md](../../docs/systems/voice.md).
+
+Checked on the shell with a system the check makes up, a tone on each
+channel (`--check system-audio`, in `contract-check.sh`): the capability
+answers, the format, both tones on their own sides at the level they were
+made at, the three ways a capture ends, the limit of four. The web client's
+own code was run on it (`--check capture-web`): a meter in the page hears
+440 Hz on the left and 880 Hz on the right of the track at the level they
+were made at.
+
+The real system (`--check system-audio-system`, by hand, macOS 27.2.1):
+48,000 frames a second in pieces of 960 frames (a fiftieth of a second),
+sent whether anything plays or not, at most 32 ms apart, the oldest sample
+50 ms old when the page read it. With a 440 Hz tone played at 0.003 by the
+check's own page, the channel carried 440 Hz at a level of 0.0021 (the tone's
+root mean square) and so did the track the web client's code made of it,
+with 27 ms waiting in its buffer, nothing skipped, and no gap in three
+seconds.
+
+**A page nobody sees.** The window of a check is never shown, and WebKit
+holds back a page that has been hidden for about half a minute: timers in
+its workers drop to ten a second, and the clock of an audio worklet loses
+between 3 and 19 percent against the wall clock (`--check audio-clock`, by
+hand; for the first half minute every arrangement tried keeps exact time:
+one context or two at once, at the same rate or at different ones, a worklet
+fed by the page or by a worker, with or without something listening to its
+stream). Sound then piles up in the web client's buffer and is skipped a
+fifth of a second at a time. A page that plays something audible is not held
+back: the run with the tone above kept time. In a call the page captures a
+microphone and plays the other side, which should keep it awake when the
+window is hidden or behind the game being shared; that is not measured, and
+it is the first thing to look at when a share is tried in a real call.
+
+Not done: a share with sound in a real call; the app's own sound left out
+of a capture the app itself runs (the experiment used a capture by another
+process); whether a running audio router (SoundSource) doubles the sound,
+which `getAudioRouters` would warn about and still answers with nothing.
 
 ### The bridge
 
@@ -881,6 +968,11 @@ the check makes up; `--check capture-system`, run by hand, captures
 the real main display for a few seconds; `--check capture-web`, run by
 hand against the web package's dev server, runs the web client's own
 capture code in the shell (see "Capturing the screen").
+The system's sound (`--check system-audio`) is asked for through the
+bridge with a system the check makes up; `--check system-audio-system`,
+run by hand, captures the real system's sound for a few seconds, and
+`--check audio-clock`, run by hand, measures how an audio context's clock
+runs in the web view (see "The system's sound").
 Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every

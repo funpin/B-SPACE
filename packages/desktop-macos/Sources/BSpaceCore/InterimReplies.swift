@@ -28,7 +28,6 @@ public enum InterimReplies {
 
             // Stage 4: what is left of screen sharing.
             "screen-share-preselect": .undefined,
-            "get-system-audio-capability": .value("unavailable"),
             "get-audio-routers": .value([Any]()),
             "system-audio-exclusion-failed": .value(false),
             "system-audio-start": .value(["ok": false, "reason": "unsupported-platform"] as [String: Any]),
