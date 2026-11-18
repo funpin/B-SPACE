@@ -9,7 +9,8 @@
 # badge (--check notifications), the menu bar (--check menu), recovery mode
 # (--check recovery), dragging the window (--check drag), the tray
 # (--check tray), game detection (--check activity), the global keybinds
-# (--check keybinds) and the list of what can be shared (--check sources).
+# (--check keybinds), the list of what can be shared (--check sources) and
+# the local media channel (--check media-channel).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -144,6 +145,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check sources >&2
+
+# The local channel captured media reach the page on: a WebSocket over TLS
+# on the loopback address, with a key that never reaches a keychain.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check media-channel >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

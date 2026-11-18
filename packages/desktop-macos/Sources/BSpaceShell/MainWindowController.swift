@@ -202,6 +202,8 @@ public final class MainWindowController: NSObject {
     private let activity: ActivityDetector?
     private let keybinds: KeybindCoordinator?
     private let screenSources: ScreenSourceService?
+    /// The local channels open to the page the window shows.
+    private var mediaChannels: [LocalMediaChannel] = []
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -518,6 +520,7 @@ public final class MainWindowController: NSObject {
         tray?.pageChanged()
         keybinds?.pageChanged()
         screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -714,6 +717,57 @@ public final class MainWindowController: NSObject {
                 self?.openInBrowser(address)
             }
         }.resume()
+    }
+
+    // MARK: Media channels
+
+    /// Opens a local channel to the page the window shows: what captured
+    /// video and sound reach it on. The completion gets the channel and
+    /// what the page needs to connect. The channel is closed when the
+    /// window shows another page.
+    public func openMediaChannel(
+        _ completion: @escaping (Result<(channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint), LocalMediaChannel.Failure>) -> Void
+    ) {
+        guard let origin = webView.url.flatMap(WebOrigin.of) else {
+            completion(.failure(.noPage))
+            return
+        }
+        let channel: LocalMediaChannel
+        do {
+            channel = try LocalMediaChannel(pageOrigin: origin)
+        } catch let failure as LocalMediaChannel.Failure {
+            completion(.failure(failure))
+            return
+        } catch {
+            completion(.failure(.notListening(error.localizedDescription)))
+            return
+        }
+        mediaChannels.append(channel)
+        channel.start { [weak self, weak channel] result in
+            guard let self, let channel, self.mediaChannels.contains(where: { $0 === channel }) else {
+                // The page changed while the channel was starting.
+                completion(.failure(.noPage))
+                return
+            }
+            switch result {
+            case .success(let endpoint):
+                completion(.success((channel, endpoint)))
+            case .failure(let failure):
+                self.closeMediaChannel(channel)
+                completion(.failure(failure))
+            }
+        }
+    }
+
+    public func closeMediaChannel(_ channel: LocalMediaChannel) {
+        mediaChannels.removeAll { $0 === channel }
+        channel.stop()
+    }
+
+    private func closeMediaChannels() {
+        let channels = mediaChannels
+        mediaChannels = []
+        channels.forEach { $0.stop() }
     }
 
     // MARK: Notifications
@@ -1039,6 +1093,36 @@ extension MainWindowController: WKNavigationDelegate {
         download.delegate = self
     }
 
+    /// A TLS server shows its certificate. The one certificate the shell
+    /// vouches for is that of a local media channel it has open, on that
+    /// channel's own address and port; for everything else the system
+    /// decides as it would have.
+    public func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = space.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        let chain = ((SecTrustCopyCertificateChain(trust) as? [SecCertificate]) ?? []).map {
+            SecCertificateCopyData($0) as Data
+        }
+        let isChannel = mediaChannels.contains { channel in
+            guard let port = channel.port else { return false }
+            return channel.identity.isChannel(
+                host: space.host, port: space.port, certificateChain: chain, channelPort: port
+            )
+        }
+        if isChannel {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // A new document: whatever listened for links in the old one is gone,
         // what it said of its title bar, of the tray and of its keybinds is
@@ -1049,6 +1133,7 @@ extension MainWindowController: WKNavigationDelegate {
         tray?.pageChanged()
         keybinds?.pageChanged()
         screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -1076,6 +1161,7 @@ extension MainWindowController: WKNavigationDelegate {
         tray?.pageChanged()
         keybinds?.pageChanged()
         screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
         // WebKit ends this process for its own reasons too (the system is

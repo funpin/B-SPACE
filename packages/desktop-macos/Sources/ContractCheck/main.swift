@@ -1,6 +1,8 @@
 import AppKit
 import BSpaceCore
 import BSpaceShell
+import CoreMedia
+import CoreVideo
 import Network
 import WebKit
 
@@ -114,6 +116,25 @@ import WebKit
 // prints how many displays and windows there are and how large their
 // pictures are; no name, title or picture is printed. It needs the Screen
 // Recording permission and is not part of contract-check.sh.
+//
+// With --check media-channel it checks the local channel captured media
+// reach the page on, on the real shell and a page served from the loopback
+// address: a window with no page gets none; a connection that says a wrong
+// token is closed and hears nothing; the one that says the token gets 240
+// messages of 40 KB at 60 a second, and how long they took is printed; what
+// the page says back reaches the shell; the token works once; a channel the
+// shell did not open is not trusted; the channel closes with its page.
+//
+// With --check video-pipe [--size 1920x1080] it sends 300 frames the check
+// draws itself, at 60 a second, through the encoder and the local channel
+// to a worker of the page that decodes them into a track, the way the web
+// client will: every frame has to be decoded, in the announced format, with
+// no decoder error; the page's request for a key frame has to be honoured;
+// a page that falls behind throws away what waits and starts again from a
+// frame it asks for, and the check says how often that happened;
+// how long a frame takes from being made to being decoded is printed.
+// Nothing of the screen is captured. It measures the machine's hardware
+// encoder and is not part of contract-check.sh.
 //
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
@@ -1103,6 +1124,599 @@ func checkSources() -> Never {
     print(problems.isEmpty
         ? "sources: listed for a focused window, at most once a second, shared by requests made at once, not carried to another page"
         : "sources: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+func checkMediaChannel() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(until: { hasEnded }), loadError == nil else {
+            fail("the local page did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// The page's side: connects, says `token` first, counts what arrives
+    /// until `expected` messages have or the connection closes.
+    let pageScript = """
+        window.channel = (url, token, expected) => new Promise((resolve) => {
+          const out = { opened: false, messages: 0, bytes: 0, delays: [] };
+          let socket;
+          try { socket = new WebSocket(url); } catch (error) { out.error = error.name; resolve(out); return; }
+          socket.binaryType = 'arraybuffer';
+          window.socket = socket;
+          const finish = () => {
+            const d = out.delays.sort((a, b) => a - b);
+            delete out.delays;
+            if (d.length) { out.p50 = d[Math.floor(d.length / 2)]; out.p95 = d[Math.floor(d.length * 0.95)]; out.max = d[d.length - 1]; }
+            resolve(out);
+          };
+          socket.onopen = () => { out.opened = true; if (token !== null) socket.send(token); if (expected === 0) setTimeout(finish, 600); };
+          socket.onmessage = (event) => {
+            out.messages += 1;
+            out.bytes += event.data.byteLength;
+            out.delays.push(Date.now() - new DataView(event.data).getFloat64(0, true));
+            if (out.messages === expected) finish();
+          };
+          socket.onclose = () => { out.closed = true; finish(); };
+          setTimeout(finish, 12000);
+        });
+        return true;
+        """
+    func open() -> (LocalMediaChannel, LocalMediaChannel.Endpoint) {
+        var opened: (LocalMediaChannel, LocalMediaChannel.Endpoint)?
+        var failure: LocalMediaChannel.Failure?
+        shell.openMediaChannel { result in
+            switch result {
+            case .success(let made): opened = (made.channel, made.endpoint)
+            case .failure(let reason): failure = reason
+            }
+        }
+        guard wait(10, until: { opened != nil || failure != nil }), let opened else {
+            fail("the media channel did not open: \(String(describing: failure))")
+        }
+        return opened
+    }
+    func connect(_ endpoint: LocalMediaChannel.Endpoint, token: String?, expected: Int) -> [String: Any] {
+        let said = token.map { "'\($0)'" } ?? "null"
+        return page("return await window.channel('\(endpoint.url)', \(said), \(expected));") as? [String: Any] ?? [:]
+    }
+
+    // 0. A window that shows no page of a server gets no channel.
+    var refusal: LocalMediaChannel.Failure?
+    shell.openMediaChannel { result in
+        if case .failure(let reason) = result { refusal = reason }
+    }
+    if !wait(5, until: { refusal != nil }) || refusal != .noPage {
+        problems.append("a window with no page was given a media channel (\(String(describing: refusal)))")
+    }
+
+    load(address)
+    _ = page(pageScript)
+    let (channel, endpoint) = open()
+    var connected = 0
+    var disconnected = 0
+    var heard: [Data] = []
+    channel.onClientConnected = { connected += 1 }
+    channel.onClientDisconnected = { disconnected += 1 }
+    channel.onMessage = { heard.append($0) }
+
+    if !endpoint.url.hasPrefix("wss://127.0.0.1:") || endpoint.token.count != 64 {
+        problems.append("the page would be told to connect to \(endpoint.url) with a token of \(endpoint.token.count) characters")
+    }
+    if channel.send(Data([1, 2, 3])) {
+        problems.append("a message was sent with nobody connected")
+    }
+
+    // 1. A connection that says the wrong thing, or nothing it should, is closed
+    //    and hears nothing; neither spends the token.
+    let wrong = connect(endpoint, token: String(repeating: "0", count: 64), expected: 0)
+    if wrong["opened"] as? Bool != true || wrong["closed"] as? Bool != true || wrong["messages"] as? Int != 0 || connected != 0 {
+        problems.append("a connection with a wrong token ended as \(wrong)")
+    }
+
+    // 2. The one that says the token gets the channel: 240 messages of 40 KB,
+    //    60 a second, each stamped with the moment it left.
+    var report: [String: Any]?
+    shell.webView.callAsyncJavaScript(
+        "return await window.channel('\(endpoint.url)', '\(endpoint.token)', 240);", arguments: [:], in: nil, in: .page
+    ) { result in
+        if case .success(let value) = result { report = value as? [String: Any] }
+    }
+    guard wait(10, until: { connected == 1 }) else {
+        fail("the page said the token and was not let in")
+    }
+    var sent = 0
+    var dropped = 0
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
+        var message = Data(count: 40_000)
+        var stamp = Date().timeIntervalSince1970 * 1000
+        withUnsafeBytes(of: &stamp) { message.replaceSubrange(0..<8, with: $0) }
+        if !channel.send(message) { dropped += 1 }
+        sent += 1
+        if sent == 240 { timer.invalidate() }
+    }
+    _ = wait(20, until: { report != nil })
+    timer.invalidate()
+    let messages = report?["messages"] as? Int ?? 0
+    let p95 = report?["p95"] as? Double ?? -1
+    if messages != 240 || report?["bytes"] as? Int != 240 * 40_000 || dropped != 0 {
+        problems.append("the page got \(messages) of 240 messages (\(dropped) dropped): \(String(describing: report))")
+    }
+    // A loose bound: the number itself is printed, and a busy machine
+    // must not fail the check.
+    if p95 < 0 || p95 > 250 {
+        problems.append("95 of 100 messages should arrive within 250 ms, took \(p95)")
+    }
+
+    // 3. What the page says after the token reaches the shell.
+    _ = page("window.socket.send(new Uint8Array([7, 8, 9])); return true;")
+    if !wait(5, until: { !heard.isEmpty }) || heard != [Data([7, 8, 9])] {
+        problems.append("the shell heard \(heard.map { [UInt8]($0) }) from the page, expected one message")
+    }
+
+    // 4. The token works once: a second connection that says it is closed.
+    let second = connect(endpoint, token: endpoint.token, expected: 0)
+    if second["closed"] as? Bool != true || connected != 1 {
+        problems.append("a second connection with the same token ended as \(second)")
+    }
+
+    // 5. A channel the shell did not open is not trusted: the page cannot
+    //    reach it at all.
+    var stranger: LocalMediaChannel?
+    var strangerEndpoint: LocalMediaChannel.Endpoint?
+    do {
+        let made = try LocalMediaChannel(pageOrigin: origin)
+        stranger = made
+        made.start { result in
+            if case .success(let endpoint) = result { strangerEndpoint = endpoint }
+        }
+    } catch {
+        problems.append("another channel could not be made: \(error)")
+    }
+    if wait(5, until: { strangerEndpoint != nil }), let strangerEndpoint {
+        let untrusted = connect(strangerEndpoint, token: strangerEndpoint.token, expected: 0)
+        if untrusted["opened"] as? Bool != false {
+            problems.append("the page reached a channel whose certificate the shell does not vouch for: \(untrusted)")
+        }
+    } else {
+        problems.append("another channel did not start")
+    }
+    stranger?.stop()
+
+    // 6. Another page: the channel closes, and nothing can connect to it.
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { disconnected == 1 }) {
+        problems.append("the channel outlived its page")
+    }
+    _ = page(pageScript)
+    let after = connect(endpoint, token: endpoint.token, expected: 0)
+    if after["opened"] as? Bool != false {
+        problems.append("the next page reached the channel of the page before it: \(after)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    let p50 = report?["p50"] as? Double ?? -1
+    let longest = report?["max"] as? Double ?? -1
+    print(problems.isEmpty
+        ? "media channel: only the token opens it, once; 240 messages of 40 KB at 60 a second took \(String(format: "%.1f", p50)) ms at the median, \(String(format: "%.1f", p95)) at the 95th percentile, \(String(format: "%.1f", longest)) at most; closed with its page"
+        : "media channel: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// Frames the check draws itself: squares that slide a little every frame,
+/// with a line of noise every `noiseEvery` rows, so that every frame differs
+/// from the last and the encoder has something to do. Nothing of the screen
+/// is in them.
+final class CheckFrameSource {
+    let width: Int
+    let height: Int
+    /// One row in this many is noise that changes with every frame: 32 is a
+    /// busy picture, 4 one that no bitrate carries well.
+    private let noiseEvery: Int
+    private var pool: CVPixelBufferPool?
+    private let noise: [UInt8]
+    /// One row of stripes, long enough to be read from any offset.
+    private let stripes: [UInt8]
+    /// How far along `stripes` the pattern repeats.
+    private static let stripePeriod = 64 * 256
+
+    init(width: Int, height: Int, noiseEvery: Int) {
+        self.width = width
+        self.height = height
+        self.noiseEvery = max(1, noiseEvery)
+        var state: UInt64 = 0x9e37_79b9_7f4a_7c15
+        stripes = (0..<(width + Self.stripePeriod)).map { UInt8(truncatingIfNeeded: ($0 / 64) * 37) }
+        noise = (0..<((1 << 16) + width)).map { _ in
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return UInt8(truncatingIfNeeded: state >> 56)
+        }
+        CVPixelBufferPoolCreate(nil, nil, [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+        ] as CFDictionary, &pool)
+    }
+
+    func frame(_ index: Int) -> CVPixelBuffer? {
+        guard let pool else { return nil }
+        var made: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        guard let buffer = made else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        if let luma = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)?.assumingMemoryBound(to: UInt8.self) {
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+            // Rows are copied, not computed: the check has to keep up with
+            // sixty frames a second at any size.
+            noise.withUnsafeBufferPointer { noise in
+                stripes.withUnsafeBufferPointer { stripes in
+                    for y in 0..<height {
+                        let row = luma + y * stride
+                        if y % noiseEvery == 0 {
+                            memcpy(row, noise.baseAddress! + ((y * 131 + index * 7919) & 0xffff), width)
+                        } else {
+                            // Squares that slide eight pixels a frame.
+                            memcpy(row, stripes.baseAddress! + (index * 8 + 64 * (y / 64)) % Self.stripePeriod, width)
+                        }
+                    }
+                }
+            }
+        }
+        if let chroma = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
+            memset(chroma, 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * CVPixelBufferGetHeightOfPlane(buffer, 1))
+        }
+        return buffer
+    }
+}
+
+/// The page's side of native capture, as the web client will have it: a
+/// worker reads the channel, decodes, and writes the frames into a track it
+/// hands to the page.
+let videoPipePage = """
+    const workerSource = `
+      let decoder = null, writer = null, socket = null, writes = true, configuration = null, catchingUp = false;
+      const stats = { formats: [], decoded: 0, delays: [], errors: [], firstAt: 0, lastAt: 0, keyFrames: 0, deltaFrames: 0, mostQueued: 0, fellBehind: 0, skipped: 0 };
+      // More frames than this waiting to be decoded means the page cannot
+      // keep up; what waits is thrown away and decoding starts again from
+      // a frame asked for, so that being late never adds up.
+      const mostWaiting = 4;
+      function configure(message) {
+        if (decoder) decoder.close();
+        stats.formats.push({ codec: message.codec, width: message.width, height: message.height });
+        decoder = new VideoDecoder({
+          output: (frame) => {
+            const now = Date.now();
+            stats.decoded += 1;
+            stats.delays.push(now - frame.timestamp / 1000);
+            if (!stats.firstAt) stats.firstAt = now;
+            stats.lastAt = now;
+            if (!writes) { frame.close(); return; }
+            writer.write(frame).then(() => frame.close(), (error) => { stats.errors.push('write: ' + error.name); frame.close(); });
+          },
+          error: (error) => stats.errors.push('decode: ' + error.name + ' ' + error.message),
+        });
+        configuration = {
+          codec: message.codec, codedWidth: message.width, codedHeight: message.height,
+          description: Uint8Array.from(atob(message.description), (c) => c.charCodeAt(0)),
+          optimizeForLatency: true,
+        };
+        decoder.configure(configuration);
+      }
+      onmessage = (event) => {
+        if (event.data.ask === 'stats') { stats.queued = decoder ? decoder.decodeQueueSize : -1; postMessage({ stats }); return; }
+        if (event.data.ask === 'keyframe') { socket.send(JSON.stringify({ type: 'keyframe' })); return; }
+        writes = event.data.sink !== 'none';
+        const generator = new VideoTrackGenerator();
+        writer = generator.writable.getWriter();
+        postMessage({ track: generator.track }, [generator.track]);
+        socket = new WebSocket(event.data.url);
+        socket.binaryType = 'arraybuffer';
+        socket.onopen = () => socket.send(event.data.token);
+        socket.onmessage = (message) => {
+          if (typeof message.data === 'string') { configure(JSON.parse(message.data)); return; }
+          const view = new DataView(message.data);
+          const key = view.getUint8(0) === 1;
+          if (key) stats.keyFrames += 1; else stats.deltaFrames += 1;
+          stats.mostQueued = Math.max(stats.mostQueued, decoder.decodeQueueSize);
+          if (!catchingUp && decoder.decodeQueueSize > mostWaiting) {
+            stats.fellBehind += 1;
+            stats.skipped += decoder.decodeQueueSize;
+            catchingUp = true;
+            decoder.reset();
+            decoder.configure(configuration);
+            socket.send(JSON.stringify({ type: 'keyframe' }));
+          }
+          if (catchingUp) {
+            if (!key) { stats.skipped += 1; return; }
+            catchingUp = false;
+          }
+          decoder.decode(new EncodedVideoChunk({
+            type: key ? 'key' : 'delta',
+            timestamp: Math.round(view.getFloat64(1, true) * 1000),
+            data: new Uint8Array(message.data, 9),
+          }));
+        };
+      };
+    `;
+    // The shell waits for a web client to say it started.
+    window.backspace.rendererReady();
+    window.startPipe = (url, token, sink) => new Promise((resolve, reject) => {
+      const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
+      window.pipeWorker = worker;
+      worker.onerror = (event) => reject(new Error(event.message));
+      worker.onmessage = (event) => {
+        if (!event.data.track) return;
+        const video = document.createElement('video');
+        video.muted = true;
+        video.srcObject = new MediaStream([event.data.track]);
+        document.body.appendChild(video);
+        video.play().catch(() => {});
+        window.pipeVideo = video;
+        resolve(event.data.track.kind);
+      };
+      worker.postMessage({ url, token, sink });
+    });
+    window.pipeStats = () => new Promise((resolve) => {
+      window.pipeWorker.onmessage = (event) => {
+        if (!event.data.stats) return;
+        const stats = event.data.stats;
+        // The first second is the decoder starting up; what a share feels
+        // like is the rest.
+        const d = stats.delays.slice(60).sort((a, b) => a - b);
+        const first = stats.delays.slice(0, 60);
+        resolve({
+          startUpMax: first.length ? Math.max(...first) : -1,
+          formats: stats.formats, decoded: stats.decoded, errors: stats.errors,
+          keyFrames: stats.keyFrames, deltaFrames: stats.deltaFrames, queued: stats.queued, mostQueued: stats.mostQueued,
+          fellBehind: stats.fellBehind, skipped: stats.skipped,
+          p50: d.length ? d[Math.floor(d.length / 2)] : -1,
+          p95: d.length ? d[Math.floor(d.length * 0.95)] : -1,
+          max: d.length ? d[d.length - 1] : -1,
+          framesPerSecond: stats.decoded > 1 ? (stats.decoded - 1) * 1000 / (stats.lastAt - stats.firstAt) : 0,
+          videoWidth: window.pipeVideo.videoWidth, videoHeight: window.pipeVideo.videoHeight,
+        });
+      };
+      window.pipeWorker.postMessage({ ask: 'stats' });
+    });
+    return true;
+    """
+
+/// Frames the check draws, through the encoder and the channel, to a decoder
+/// in a worker of the page and into a track. `size` is "1920x1080".
+func checkVideoPipe(size: String, sink: String, noiseEvery: Int) -> Never {
+    let parts = size.split(separator: "x").compactMap { Int($0) }
+    guard parts.count == 2, parts[0] >= 16, parts[1] >= 16, parts[0] % 2 == 0, parts[1] % 2 == 0 else {
+        fail("--size takes a width and a height in even pixels, as in 1920x1080")
+    }
+    let (width, height) = (parts[0], parts[1])
+    let framesPerSecond = 60
+    let frameCount = 300
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+
+    var opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)?
+    shell.openMediaChannel { result in
+        if case .success(let made) = result { opened = made }
+    }
+    guard wait(10, until: { opened != nil }), let (channel, endpoint) = opened else {
+        fail("the media channel did not open")
+    }
+    var connected = false
+    channel.onClientConnected = { connected = true }
+
+    let encoder: VideoEncoder
+    do {
+        encoder = try VideoEncoder(settings: .init(width: width, height: height, framesPerSecond: framesPerSecond))
+    } catch {
+        fail("the encoder could not be made: \(error)")
+    }
+    let counters = NSLock()
+    var sentBytes = 0
+    var dropped = 0
+    var formats: [MediaWire.VideoFormat] = []
+    encoder.onFormat = { format in
+        counters.lock()
+        formats.append(format)
+        counters.unlock()
+        channel.send(text: format.message)
+    }
+    encoder.onFrame = { message in
+        let wasSent = channel.send(message)
+        counters.lock()
+        if wasSent { sentBytes += message.count } else { dropped += 1 }
+        counters.unlock()
+    }
+    channel.onMessage = { message in
+        if MediaWire.Request(message: message) == .keyFrame {
+            encoder.requestKeyFrame()
+        }
+    }
+
+    _ = page(videoPipePage)
+    let kind = page("return await window.startPipe('\(endpoint.url)', '\(endpoint.token)', '\(sink)');") as? String
+    if kind != "video" {
+        problems.append("the page got no video track from its worker (\(String(describing: kind)))")
+    }
+    guard wait(10, until: { connected }) else { fail("the page's worker did not connect to the channel") }
+
+    // Sixty frames a second from a thread of their own, as a capture gives them.
+    let source = CheckFrameSource(width: width, height: height, noiseEvery: noiseEvery)
+    let feeding = DispatchQueue(label: "check-frames")
+    let timer = DispatchSource.makeTimerSource(queue: feeding)
+    var fed = 0
+    var isDone = false
+    var drawing = 0.0
+    var handing = 0.0
+    let started = Date()
+    timer.schedule(deadline: .now(), repeating: 1.0 / Double(framesPerSecond), leeway: .milliseconds(1))
+    timer.setEventHandler {
+        let beforeDrawing = CACurrentMediaTime()
+        guard fed < frameCount, let frame = source.frame(fed) else {
+            timer.cancel()
+            encoder.finish()
+            DispatchQueue.main.async { isDone = true }
+            return
+        }
+        let beforeHanding = CACurrentMediaTime()
+        encoder.encode(
+            frame, presentationTime: CMTime(value: CMTimeValue(fed), timescale: CMTimeScale(framesPerSecond)),
+            capturedAt: Date().timeIntervalSince1970 * 1000
+        )
+        drawing += beforeHanding - beforeDrawing
+        handing += CACurrentMediaTime() - beforeHanding
+        fed += 1
+        // Half way through, the page asks for a frame to start from.
+        if fed == frameCount / 2 {
+            DispatchQueue.main.async {
+                shell.webView.evaluateJavaScript("window.pipeWorker.postMessage({ ask: 'keyframe' });", completionHandler: nil)
+            }
+        }
+    }
+    timer.resume()
+    guard wait(30, until: { isDone }) else { fail("the frames were not all encoded in 30 s") }
+    let took = Date().timeIntervalSince(started)
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: a frame took %.1f ms to draw and %.1f ms to hand to the encoder (%@)\n",
+        drawing * 1000 / Double(frameCount), handing * 1000 / Double(frameCount),
+        encoder.isHardware ? "hardware" : "software"
+    ).utf8))
+    // The page may still be decoding what it was sent.
+    var stats: [String: Any] = [:]
+    let patience = Date().addingTimeInterval(10)
+    repeat {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        stats = page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    } while (stats["decoded"] as? Int ?? 0) + (stats["skipped"] as? Int ?? 0) < frameCount && Date() < patience
+    FileHandle.standardError.write(Data("ContractCheck: page: received \((stats["keyFrames"] as? Int ?? 0) + (stats["deltaFrames"] as? Int ?? 0)), "
+        .appending("most queued in the decoder \(stats["mostQueued"] ?? "?"), still queued \(stats["queued"] ?? "?")\n").utf8))
+    let decoded = stats["decoded"] as? Int ?? 0
+    let errors = stats["errors"] as? [String] ?? []
+    let p50 = stats["p50"] as? Double ?? -1
+    let p95 = stats["p95"] as? Double ?? -1
+    let longest = stats["max"] as? Double ?? -1
+    let rate = stats["framesPerSecond"] as? Double ?? 0
+    let keyFrames = stats["keyFrames"] as? Int ?? 0
+    counters.lock()
+    let (bytes, lost, announced) = (sentBytes, dropped, formats)
+    counters.unlock()
+
+    if announced.count != 1 || announced.first?.width != width || announced.first?.height != height {
+        problems.append("the encoder announced \(announced.map { "\($0.codec) \($0.width)x\($0.height)" }), expected one format of \(width)x\(height)")
+    }
+    if !errors.isEmpty {
+        problems.append("the page's decoder reported \(errors.prefix(3))")
+    }
+    let givenUp = encoder.framesDropped
+    let fellBehind = stats["fellBehind"] as? Int ?? 0
+    let skipped = stats["skipped"] as? Int ?? 0
+    // A decoder that is reset also loses the frames it was working on,
+    // which nothing counts: a few frames for each time the page fell behind.
+    let accounted = decoded + skipped + givenUp
+    if lost != 0 || accounted > frameCount || accounted < frameCount - 8 * fellBehind {
+        problems.append("\(decoded) of \(frameCount) frames were decoded in the page; the encoder gave back \(givenUp), the channel dropped \(lost), the page skipped \(skipped)")
+    }
+    // A page that falls behind now and then on a busy machine is what the
+    // skipping is for; one that skips a tenth of the frames cannot keep up.
+    if skipped > frameCount / 10 {
+        problems.append("the page fell behind \(fellBehind) time(s) and skipped \(skipped) of \(frameCount) frames")
+    }
+    if givenUp > frameCount / 20 {
+        problems.append("the encoder gave back \(givenUp) of \(frameCount) frames without encoding them")
+    }
+    if keyFrames < 2 + fellBehind {
+        problems.append("the page asked for a key frame and got none (\(keyFrames) key frame(s) in all)")
+    }
+    if stats["videoWidth"] as? Int != width || stats["videoHeight"] as? Int != height {
+        problems.append("the page's video element shows \(String(describing: stats["videoWidth"]))x\(String(describing: stats["videoHeight"])), expected \(width)x\(height)")
+    }
+    // A decoder that is not told the frames come in order holds four to
+    // twelve of them: 90 ms and more. A frame asked for half way through
+    // is large and late, which is why this looks at the median.
+    if p50 < 0 || p50 > 80 {
+        problems.append("after the first second half of the frames should be in the page within 80 ms of being made, took \(p50)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    let startUp = stats["startUpMax"] as? Double ?? -1
+    let megabits = Double(bytes) * 8 / took / 1_000_000
+    print(String(
+        format: "video pipe %dx%d: %d frames in %.2f s, %@, %.1f Mbit/s; in the page %.1f frames/s, "
+            + "made-to-decoded after the first second %.0f ms at the median, %.0f at the 95th percentile, "
+            + "%.0f at most (%.0f at most in the first second); %d key frames, %d frames given back by the encoder; "
+            + "the page fell behind %d time(s) and skipped %d frames%@",
+        width, height, decoded, took, announced.first?.codec ?? "no format", megabits, rate, p50, p95, longest, startUp,
+        keyFrames, givenUp, fellBehind, skipped,
+        problems.isEmpty ? "" : "; \(problems.count) problem(s)"
+    ))
     exit(problems.isEmpty ? 0 : 1)
 }
 
@@ -2115,6 +2729,13 @@ case "notifications":
     checkNotifications()
 case "sources":
     checkSources()
+case "media-channel":
+    checkMediaChannel()
+case "video-pipe":
+    checkVideoPipe(
+        size: arguments["size"] ?? "1920x1080", sink: arguments["sink"] ?? "track",
+        noiseEvery: arguments["noise-every"].flatMap { Int($0) } ?? 32
+    )
 case "sources-system":
     checkSourcesSystem()
 case "launch":
@@ -2124,7 +2745,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe or electron-profile")
 }
 
 let contract: BridgeContract

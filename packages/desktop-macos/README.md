@@ -564,6 +564,132 @@ The web client does not ask for the list yet: `get-screen-share-picker-mode`
 still answers `'system'` (`InterimReplies`), and stays so until the shell can
 capture what was picked.
 
+### The local media channel
+
+Captured video and sound reach the page over a WebSocket on the loopback
+address (`LocalMediaChannel`). A page served over `https` may open nothing
+less than `wss://`: `ws://127.0.0.1` and a custom URL scheme are refused as
+mixed content (measured in the audit). The server's Content Security Policy
+already allows it (`connect-src wss:`).
+
+- **The certificate.** Nobody can issue one for `127.0.0.1`, so every channel
+  makes its own (`LocalIdentity`): a fresh P-256 key and a version 3
+  certificate signed with it, for the address `127.0.0.1`, a TLS server's,
+  written in DER by the package itself. The system turns a key and a
+  certificate into a TLS server's identity only through a PKCS#12 file, so
+  one is written in memory (triple DES and HMAC-SHA1 with the key derivation
+  of RFC 7292: the form everything reads) and imported with
+  `kSecImportToMemoryOnly` (macOS 15). No keychain is touched and nothing is
+  written to disk.
+- **Trust.** Nothing trusts that certificate except the shell's own web view:
+  when a TLS server shows its certificate, the navigation delegate vouches
+  for it only if the address is `127.0.0.1`, the port is that of a channel
+  the shell has open, and the certificate is that channel's, byte for byte.
+  Everything else is decided by the system as before.
+- **Who may speak** (`MediaChannelGate`). Any program of the machine can
+  connect to a loopback port. A handshake from an origin other than the
+  page's is refused. Then the first message has to be the token the shell
+  gave the page, 32 random bytes; it works once, a wrong guess does not spend
+  it, and nothing that connects after it was used is heard, even when that
+  connection is gone. A connection that says nothing for five seconds is
+  closed.
+- **A slow page.** A message is dropped, and `send` says so, when 4 MB
+  already wait to be sent: old frames are worth nothing.
+- **One page.** A channel is opened for the page the window shows
+  (`openMediaChannel`; the shell's own pages get none) and closed when the
+  window shows another.
+
+Measured on the shell (`--check media-channel`, macOS 27.2.1): 240 messages
+of 40 KB at 60 a second reach the page 0.2 ms after they leave at the median,
+1.8 ms at the 95th percentile, 4.8 ms at most. The same from a page with an
+`https` origin, on a bench: 0.5, 3.1 and 8.2 ms.
+
+Outside the checks nothing sends on the channel yet: the capture that will
+is the next part of stage 4, and the bridge member that gives the page the
+address and the token comes with it.
+
+### Video on the channel
+
+What the channel carries is described by `MediaWire`. Text messages are JSON
+and say what is coming; binary messages are the media.
+
+- **The format** is announced before the first frame and whenever it changes:
+  `{"type":"video","codec":"avc1.64002a","width":1920,"height":1080,"description":"<base64>"}`.
+  `codec` and `description` (the `avcC` decoder configuration record) are
+  what WebCodecs' `VideoDecoder.configure` takes.
+- **A frame** is a binary message: one byte for what it is (1 a key frame,
+  2 a frame that needs the ones before it), eight bytes for when it was
+  captured (milliseconds since 1970, a little-endian double, the page's
+  `Date.now()` clock), then one H.264 access unit with each NAL unit behind
+  its length in four bytes, as VideoToolbox makes it.
+- **The page may ask** for a key frame with `{"type":"keyframe"}` when its
+  decoder lost its place.
+
+`VideoEncoder` makes the frames: H.264 High profile on the hardware encoder,
+in real time, with no frame reordering, about 0.12 bits a pixel
+(`VideoShape.bitsPerSecond`: 15 Mbit/s at 1080p60, 27 at 1440p60, 43 at
+3024 by 1964; the page decodes it and the browser encodes it again for the
+call, so this stream is kept well above what the call carries). A key frame
+is made at the start, when the page asks, and at least every ten seconds.
+
+Two things were found by measuring, and both differ from what the audit's
+prototype did:
+
+- **The low-latency rate control is not used.** Asking for it
+  (`EnableLowLatencyRateControl`) selects another encoder,
+  `h264.rtvc`, in place of the hardware one, `ave.avc`. On macOS 27.2.1, 180
+  frames at 60 a second:
+
+  | Size | Hardware encoder: frames out, time inside | Low-latency: frames out, time inside | Low-latency: the call blocks |
+  |------|-------------------------------------------|--------------------------------------|------------------------------|
+  | 1920 by 1080 | 60 a second, 18 ms | 39 a second, 124 ms | 25 ms a frame |
+  | 2560 by 1440 | 60 a second, 23 ms | 34 a second, 28 ms | 28 ms a frame |
+  | 3024 by 1964 | 60 a second, 35 ms | 29 a second, 163 ms | 32 ms a frame |
+
+  With the hardware encoder the call returns in 0.1 ms.
+- **The stream is made to say that its frames come in order**
+  (`H264ParameterSets`). The hardware encoder does not reorder frames and
+  does not say so, and a decoder that is not told assumes the worst its
+  level allows: WebKit's held 4 frames at 1080p, 12 at 1440p and 7 at 3024
+  by 1964 before showing the first. The sequence parameter set in the
+  decoder configuration record is rewritten to carry
+  `bitstream_restriction_flag` with `max_num_reorder_frames` of zero, and
+  nothing else in it changes. Choosing another profile does not help
+  (Baseline, Constrained Baseline, Main and Constrained High were tried).
+
+Measured end to end on the shell (`--check video-pipe --size <w>x<h>`, run by
+hand: it measures this machine's hardware encoder): 300 frames the check
+draws, a busy picture, 60 a second, through the encoder and the channel to a
+worker of the page that decodes them (`VideoDecoder`) into a track
+(`VideoTrackGenerator`) the page plays, which is how the web client will do
+it. From a frame being made to its being decoded in the page, after the
+first second, over several runs on a machine that was busy with other work
+(load average 10 to 17):
+
+| Size | Frames a second in the page | Median | 95th percentile | With the decoder left to guess (median) |
+|------|----------------------------:|-------:|----------------:|----------------------------------------:|
+| 1920 by 1080 | 60 | 23 to 26 ms | 36 to 63 ms | 90 ms |
+| 2560 by 1440 | 60 | 28 to 31 ms | 40 to 79 ms | 230 ms |
+| 3024 by 1964 | 58 to 61 | 42 to 46 ms | 51 to 115 ms | 161 ms |
+
+The encoder gave back no frame and the channel dropped none. The 95th
+percentile is mostly the key frame the page asks for half way through: it
+is large and arrives late, and the frames behind it queue.
+
+**A page that falls behind catches up.** Nothing on the way drops a frame,
+so a decoder that is slower than the stream for a moment would stay late
+for good, and later with every such moment: at 3024 by 1964, on the busy
+machine, one run in three ended with 30 frames waiting in the decoder and
+frames 0.8 s late. The reader therefore watches the decoder's queue: more
+than four frames waiting, and it resets the decoder, asks the shell for a
+key frame and skips what arrives before it. In the runs where that
+happened (once in a run, 10 or 11 frames skipped of 300) the latest frame
+was 0.16 to 0.22 s late. The check's page does this; the web client's
+reader has to do the same.
+
+Not done yet: the capture itself (ScreenCaptureKit feeding this encoder), the
+bridge member that starts it, and the web client's side (changes 4 and 5).
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -657,7 +783,17 @@ a window that is not focused get the list they had; two requests at once
 share one listing; another page starts with nothing. The screen is not
 looked at there: `--check sources-system`, run by hand, asks the system
 once and prints how many displays and windows it gave and how large their
-pictures are, never a name, a title or a picture. Then it loads
+pictures are, never a name, a title or a picture. The local media channel
+(`--check media-channel`) is checked on a page served from the loopback
+address: a window with no page gets no channel; a connection that says a
+wrong token is closed and hears nothing; the one that says the token gets
+240 messages of 40 KB at 60 a second, and the check prints how long they
+took; what the page says back reaches the shell; the token works once; a
+channel the shell did not open is not trusted by the page; the channel
+closes with its page. `--check video-pipe`, run by hand, sends frames the
+check draws through the encoder and the channel to a decoder in a worker
+of the page and prints how long they took (see "Video on the channel").
+Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
