@@ -15,8 +15,6 @@ import Foundation
 public enum InterimReplies {
     /// `fire` channels that are accepted and do nothing yet.
     public static let fireChannels: Set<String> = [
-        // Stage 3: tray, global shortcuts.
-        "set-tray-state", "set-tray-context", "keybind-portal-retry",
         // Stage 4: screen sharing, viewers' pointers.
         "screen-share-selected", "screen-share-audio-preference",
         "stream-pointer-overlay", "stream-pointer-overlay-end",
@@ -27,12 +25,6 @@ public enum InterimReplies {
     /// `invoke` channels with the answer each gives for now.
     public static func invokeReplies() -> [String: BridgeReply] {
         return [
-            // Stage 3. No activity detected; the shortcut hook is not running;
-            // the portal status is null everywhere but on Wayland.
-            "get-current-activity": .null,
-            "keybinds-sync": .value(false),
-            "keybind-portal-status": .null,
-            "check-accessibility": .value(false),
 
             // Stage 4. WebKit's own picker chooses the source, as for a server
             // whose client knows nothing of the native shell (plan, 5.5).

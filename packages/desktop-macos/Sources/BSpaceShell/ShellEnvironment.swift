@@ -14,12 +14,16 @@ public struct ShellResources {
     public let stringsURL: URL
     /// `recovery.html`, the page shown when the web client cannot be.
     public let recoveryURL: URL
+    /// `games.json`, the dictionary of games recognised by their process
+    /// names. Without it nothing is detected.
+    public let gamesURL: URL?
 
-    public init(pickerURL: URL, contractURL: URL, stringsURL: URL, recoveryURL: URL) {
+    public init(pickerURL: URL, contractURL: URL, stringsURL: URL, recoveryURL: URL, gamesURL: URL? = nil) {
         self.pickerURL = pickerURL
         self.contractURL = contractURL
         self.stringsURL = stringsURL
         self.recoveryURL = recoveryURL
+        self.gamesURL = gamesURL
     }
 
     public static func bundled(in bundle: Bundle = .main) -> ShellResources? {
@@ -29,7 +33,13 @@ public struct ShellResources {
             let strings = bundle.url(forResource: "desktop-strings", withExtension: "json"),
             let recovery = bundle.url(forResource: "recovery", withExtension: "html")
         else { return nil }
-        return ShellResources(pickerURL: picker, contractURL: contract, stringsURL: strings, recoveryURL: recovery)
+        return ShellResources(
+            pickerURL: picker,
+            contractURL: contract,
+            stringsURL: strings,
+            recoveryURL: recovery,
+            gamesURL: bundle.url(forResource: "games", withExtension: "json")
+        )
     }
 }
 

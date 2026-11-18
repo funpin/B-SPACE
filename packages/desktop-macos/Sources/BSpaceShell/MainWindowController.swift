@@ -195,6 +195,9 @@ public final class MainWindowController: NSObject {
     private let localStorageImporter: LocalStorageImporter
     private let autoLaunch: AutoLaunch
     private let notifications: NotificationPresenter?
+    private let tray: TrayCoordinator?
+    private let activity: ActivityDetector?
+    private let keybinds: KeybindCoordinator?
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -234,6 +237,14 @@ public final class MainWindowController: NSObject {
     ///     passes one that registers nothing.
     ///   - notifications: what shows notifications; nil shows none. A test
     ///     run passes one that only records them.
+    ///   - tray: what draws the tray; nil shows none. A test run passes one
+    ///     that only records what it was given.
+    ///   - keybinds: what listens for the global keybinds; nil listens for
+    ///     none. The app passes one that listens to the real keyboard, a test
+    ///     run one that is fed made-up keys.
+    ///   - activity: what notices a running game; nil detects none. The app
+    ///     passes one that lists the real processes and fetches the
+    ///     dictionary, a test run one that does neither.
     ///   - recoveryTimings: the clocks of recovery mode. A test run shortens
     ///     them.
     public init(
@@ -242,11 +253,19 @@ public final class MainWindowController: NSObject {
         websiteDataStore: WKWebsiteDataStore = .default(),
         loginItem: LoginItem = SystemLoginItem(),
         notifications: NotificationPresenter? = SystemNotificationPresenter(),
+        tray: TrayPresenter? = SystemTrayPresenter(),
+        activity: ActivityDetector? = nil,
+        keybinds: KeybindCoordinator? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
+        self.activity = activity
+        self.keybinds = keybinds
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
+        self.tray = tray.map {
+            TrayCoordinator(presenter: $0, strings: environment.strings, language: environment.language)
+        }
         timings = recoveryTimings
         language = environment.language
         autoLaunch = AutoLaunch(
@@ -325,6 +344,24 @@ public final class MainWindowController: NSObject {
         webView.uiDelegate = self
         window.delegate = self
         registerBridgeHandlers()
+        self.tray?.onCommand = { [weak self] command in
+            self?.trayItemChosen(command)
+        }
+        self.keybinds?.onEvent = { [weak self] event in
+            self?.bridge.emit("keybind-action", payload: event.bridgeValue)
+        }
+        // The web client's name for it is Electron's permission; here it is
+        // Input Monitoring.
+        self.keybinds?.onPermissionStatus = { [weak self] granted in
+            self?.bridge.emit("accessibility-status", payload: ["trusted": granted])
+        }
+        self.keybinds?.onListenerError = { [weak self] message in
+            self?.bridge.emit("keybind-hook-error", payload: ["message": message])
+        }
+        // The web client shows it as the user's activity, when they let it.
+        self.activity?.onChange = { [weak self] detected in
+            self?.bridge.emit("activity-detected", payload: detected?.bridgeValue ?? NSNull())
+        }
         notifications?.onClick = { [weak self] userInfo in
             self?.notificationClicked(userInfo)
         }
@@ -348,6 +385,7 @@ public final class MainWindowController: NSObject {
     ///   launch). The page loads and connects all the same.
     public func start(hidden: Bool = false) {
         staysHidden = hidden
+        activity?.start()
         let stale: Set<String> = [
             WKWebsiteDataTypeDiskCache,
             WKWebsiteDataTypeMemoryCache,
@@ -465,6 +503,8 @@ public final class MainWindowController: NSObject {
         shellLoad = nil
         deepLinks.pageChanged()
         dragMap.pageChanged()
+        tray?.pageChanged()
+        keybinds?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -624,6 +664,27 @@ public final class MainWindowController: NSObject {
 
     /// Opens the source code of the instance in the user's browser: the
     /// address the instance names for itself, or the project's own.
+    /// An item of the tray menu was chosen.
+    private func trayItemChosen(_ command: TrayMenuCommand) {
+        switch command {
+        case .control(let action):
+            // The web client carries it out, as its voice bar or status
+            // picker would.
+            bridge.emit("tray-action", payload: action.bridgeValue)
+        case .show:
+            showWindow()
+            activateApp()
+        case .quit:
+            onQuitRequested?()
+        }
+    }
+
+    /// Brings the app in front of the others, when it has a window to show.
+    private func activateApp() {
+        guard showsWindow else { return }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     public func openSourceCode() {
         let page = webView.url.flatMap { WebOrigin.of($0) }
         let instance = environment.overrideURL ?? instanceStore.load() ?? page
@@ -789,10 +850,23 @@ public final class MainWindowController: NSObject {
             }
             guard language != self.language else { return }
             self.language = language
+            self.tray?.setLanguage(language)
             self.onLanguageChanged?(language)
         }
         router.onFire("set-badge-count") { arguments in
             NSApp.dockTile.badgeLabel = BadgeCount.label(for: arguments.number(at: 0))
+        }
+
+        // The web client decides what the character in the tray is doing
+        // and which quick controls its menu offers. Anything malformed is
+        // ignored and the tray stays as it was.
+        router.onFire("set-tray-state") { [weak self] arguments in
+            guard let state = TrayState(arguments: arguments) else { return }
+            self?.tray?.setState(state)
+        }
+        router.onFire("set-tray-context") { [weak self] arguments in
+            guard let context = TrayContext(arguments: arguments) else { return }
+            self?.tray?.setContext(context)
         }
 
         router.onFire("set-drag-regions") { [weak self] arguments in
@@ -837,6 +911,27 @@ public final class MainWindowController: NSObject {
             .value(environment.appVersion)
         })
         router.onInvoke("is-sandboxed", answering: { _ in .value(false) })
+        // Global keybinds. A list that cannot be read changes nothing: the
+        // answer is still whether the shell is listening.
+        router.onInvoke("keybinds-sync", answering: { [weak self] arguments in
+            guard let keybinds = self?.keybinds else { return .value(false) }
+            guard let list = Keybind.list(arguments: arguments) else { return .value(keybinds.isListening) }
+            return .value(keybinds.sync(list))
+        })
+        router.onInvoke("check-accessibility", answering: { [weak self] _ in
+            .value(self?.keybinds?.checkPermission() ?? false)
+        })
+        router.onFire("open-keybind-permission-settings") { [weak self] _ in
+            self?.keybinds?.openPermissionSettings()
+        }
+        // The portal is how the Electron build registers shortcuts on
+        // Wayland; everywhere else its status is null and a retry is nothing.
+        router.onInvoke("keybind-portal-status", answering: { _ in .null })
+        router.onFire("keybind-portal-retry") { _ in }
+
+        router.onInvoke("get-current-activity", answering: { [weak self] _ in
+            self?.activity?.current.map { .value($0.bridgeValue) } ?? .null
+        })
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in
             instanceStore.load().map { .value($0) } ?? .null
         })
@@ -921,10 +1016,12 @@ extension MainWindowController: WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // A new document: whatever listened for links in the old one is gone,
-        // what it said of its title bar is gone, and the web client in it has
-        // yet to say it started.
+        // what it said of its title bar, of the tray and of its keybinds is
+        // gone, and the web client in it has yet to say it started.
         deepLinks.pageChanged()
         dragMap.pageChanged()
+        tray?.pageChanged()
+        keybinds?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -949,6 +1046,8 @@ extension MainWindowController: WKNavigationDelegate {
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         deepLinks.pageChanged()
         dragMap.pageChanged()
+        tray?.pageChanged()
+        keybinds?.pageChanged()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
         // WebKit ends this process for its own reasons too (the system is
@@ -1159,6 +1258,8 @@ extension MainWindowController: WKUIDelegate {
 extension MainWindowController: NSWindowDelegate {
     public func windowDidBecomeKey(_ notification: Notification) {
         bridge.emit("window-focus-changed", payload: true)
+        // The user may be back from granting the permission in System Settings.
+        keybinds?.appBecameActive()
     }
 
     public func windowDidResignKey(_ notification: Notification) {

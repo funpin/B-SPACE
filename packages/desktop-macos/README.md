@@ -336,6 +336,164 @@ the system to drag the window by those parts.
 - An executable that is not an application bundle has no notification centre
   and shows none.
 
+### The tray
+
+The B:SPACE character sits in the menu bar and shows what the app needs the
+user to know; under it is a menu with quick controls. The web client decides
+both: it reports the character's state over `set-tray-state` and what the
+menu may offer over `set-tray-context`, and gets a chosen control back as a
+`tray-action`. `BSpaceCore/Tray.swift` is a port of
+`packages/desktop/src/trayState.ts` and `trayContext.ts`; `TrayCoordinator`
+and `SystemTrayPresenter` in `BSpaceShell/Tray.swift` are the status item.
+
+- **The character.** Nine states, each a loop of frames with their
+  durations (`TrayAnimations`), the same as in the Electron build. The frame
+  images are that build's template PNGs, `tray-<frame>Template.png` with
+  their `@2x` files, which `bundle.sh` copies into the bundle (it stops if
+  there are not 32) and the system tints for the menu bar's colour. Their
+  size is set by hand, 18 by 22 points from the pixels of the plain file:
+  the PNGs say 1200 dpi, AppKit believes them and would draw the character
+  one point wide, where Electron goes by the pixels alone
+  (`SystemTrayPresenter.loadFrames`).
+  `TrayAnimator` owns no timer: each call answers with the frame to show and
+  the delay to the next one. A state reported again keeps its place in the
+  loop; a state that is not one is ignored.
+- **Reduced motion.** When the system asks apps to keep still
+  (`accessibilityDisplayShouldReduceMotion`), each state shows its first
+  frame and no more. The setting is read at every step, so turning it on
+  stops the loop at the next frame.
+- **The menu** is this shell's own, not the Electron build's
+  ([design](../../docs/superpowers/specs/2026-11-18-macos-tray-menu-design.md)).
+  From the top: the name of the call; a row of round buttons for what is done
+  in one press; Do Not Disturb with a check mark; Show B:SPACE; Quit. Changing
+  the instance, the source code and (from stage 5) updates are in the app's
+  menu, where macOS has them. Before sign-in it is Show and Quit alone.
+
+  | Button | When it is there | Colour |
+  |--------|------------------|--------|
+  | Microphone | signed in | red when off |
+  | Sound | signed in | red when off |
+  | Viewers' pointers | in a call, when the web client reports the setting | the accent when shown |
+  | Turn off camera | while the camera is on | red |
+  | Stop sharing | while the screen is shared | red |
+  | Disconnect | in a call | plain |
+
+  The tray can turn the camera off and stop a share and cannot start either:
+  that is done in the window, in plain sight. `TrayMenu.items` builds the
+  model (`TrayControl`: kind, tone, title, command, whether it closes the
+  menu); `SystemTrayPresenter` draws the row as the view of one menu item
+  (`TrayControlsView`, `TrayRoundButton`, system symbols) and the lines with a
+  system symbol in front.
+- **A switch leaves the menu open.** Pressing Microphone, Sound or Pointers
+  sends the action and changes nothing by itself: the button changes when the
+  web client reports the new state, and a menu with the same items in another
+  state is changed in place. The buttons that end something close the menu.
+- **Width.** Beside an item with a view of its own the system sizes the menu
+  by that view and cuts the lines of text short ("Показа…B:SPACE"), so the
+  menu's minimum width is worked out from its longest line
+  (`SystemTrayPresenter.minimumWidth`).
+- **What the web client reports.** `set-tray-context` carries `signedIn`,
+  `voice`, `muted`, `deafened`, `status`, and, for this shell alone,
+  `cameraOn`, `screenSharing` and `showPointers`. A server whose web client
+  is older does not send the last three: Pointers, Turn off camera and Stop
+  sharing are then left out and the rest works. The actions that come back
+  are `toggleMute`, `toggleDeafen`, `disconnect`, `setStatus`, and from this
+  shell alone `toggleShowPointers`, `stopCamera`, `stopScreenShare`.
+- **A context that cannot be read is refused whole** (`TrayContext`), a field
+  of the wrong type among the three included, and the menu stays as it was.
+  A channel name longer than 40 characters is cut with an ellipsis.
+- **Another page.** When the window shows another page (the picker, recovery,
+  a reload), the controls go and the character rests until the new page
+  reports. The Electron build keeps what the last page said, so its menu can
+  offer controls to a page that does not listen.
+- An executable that is not an application bundle has no frame images and
+  shows no tray.
+
+### Game detection
+
+The shell notices a game or app it knows among the running processes and
+tells the web client, which shows it as the user's activity when they allow
+it. `BSpaceCore/Activity.swift` and `BSpaceShell/ActivityDetector.swift` are
+a port of `packages/desktop/src/activityDetector.ts`.
+
+- **The dictionary** is `games.json` of the Electron build (`{ version, games
+  }`, each game an id, a name, process names and a type), copied into the
+  bundle. Entries that are not games are skipped; a file with none left is
+  not a dictionary.
+- **Looking.** Every fifteen seconds the processes are listed with the
+  system's `ps -c -A -o comm`, the command the Electron build runs, so the
+  names are the ones the dictionary was written against. The first listed
+  game one of whose processes is running, whatever the case, is the activity.
+  The web client hears of it once when it starts (`activity-detected` with
+  `{ type, name, timestamps: { start } }`) and once when it ends (`null`),
+  and reads the same from `getCurrentActivity()`. If the processes cannot be
+  listed, detection stops instead of asking again.
+- **A newer dictionary** is fetched once at start from the project's
+  repository (`GameDictionarySync.remoteAddress`), with the tag of the copy
+  already here, so an unchanged file costs no download. A newer one is saved
+  as `games-cache.json` with its tag in `games-cache-etag.txt` (the Electron
+  build's files, in the settings folder) and used from the next look on; what
+  is detected at that moment stays detected.
+- **Which one to start with.** The saved dictionary or the shipped one,
+  whichever is newer. The Electron build takes the saved one whenever it can
+  be read, so there an app update with a newer dictionary waits for the
+  network.
+
+### Global keybinds
+
+What the web client syncs over `keybinds-sync` is listened for while any app
+is in front, and the web client is told over `keybind-action` when an action
+begins and ends: push-to-talk with the window hidden. The logic is in
+`BSpaceCore/Keybinds.swift`, the listener and the permission in
+`BSpaceShell/Keybinds.swift`; together a port of
+`packages/desktop/src/keybindManager.ts`.
+
+- **Keys.** The web client records a keybind as hashes of DOM
+  `KeyboardEvent.code` strings. `KeyCodes.domCodes` names the DOM code of
+  each of the system's virtual key codes, and `KeyCodes.hash` is the web
+  client's own hash (djb2 over UTF-16 units, wrapped to 32 bits). A test
+  reads the table of `packages/desktop/src/keybindManager.ts` and holds the
+  two to the same codes, short of six keys no Mac keyboard has (F21 to F24,
+  Scroll Lock, Print Screen).
+- **Matching.** `KeybindMatcher` is fed what the system reports and answers
+  with the actions that begin and end. An action is pressed once when all
+  its keys are down and released once when one goes up, however often the
+  system repeats a held key. A mouse button (3 middle, 4 back, 5 forward)
+  fires its keybind with the keys held and ends it when the button goes up;
+  the left and right buttons are never keybinds.
+- **Modifiers.** The system reports Shift, Control, Option and Command as a
+  change of the flags, not as a key going down or up. Which key it was, and
+  whether it is down, is read from the bit each side has of its own
+  (`ModifierKeys`): with both Shifts held, the shared bit stays set when one
+  is let go.
+- **The listener** is an event tap that only listens
+  (`EventTapKeyInputSource`): it cannot change or hold back what it sees. It
+  runs only while there is a keybind to listen for, and is switched back on
+  when the system switches it off for answering slowly.
+- **A release the system never reports.** While a password is typed the
+  system hides the keyboard from listeners, and it switches a listener off
+  when it answers slowly; a release lost that way would leave push-to-talk
+  transmitting. So twice a second, while anything is held, and whenever the
+  listener was switched off and on, what is believed to be down is checked
+  against what the system says is down (`KeybindMatcher.reconcile`,
+  `SystemKeyStateProbe`), and what is not is let go. The Electron build has
+  no such check.
+- **The permission is Input Monitoring**, not Accessibility as in the Electron
+  build: a tap that only listens needs no more
+  (`InputMonitoringPermission`). The first keybind has the system ask for
+  it; `check-accessibility` answers whether it is given and
+  `accessibility-status` says so when it changes (the web client's names are
+  Electron's). When the window comes forward the shell looks again, so
+  coming back from System Settings starts the listening. The web client's
+  settings show a warning that names this permission and whose button opens
+  its list (`openKeybindPermissionSettings`, a `nativeOnly` member).
+- **Another page.** When the window shows another page its keybinds go and
+  the listening stops, until the new page syncs its own. The Electron build
+  keeps the list of the page that is gone.
+- The Wayland portal of the Electron build has no part here:
+  `keybind-portal-status` answers null and `keybind-portal-retry` does
+  nothing.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -345,9 +503,10 @@ the script injected at document start in the main frame; `BridgeRouter` routes
 what the page posts to handlers by channel name; `BridgeHost` connects the two
 to WebKit and sends the shell's events back.
 
-A member marked `nativeOnly` exists in this shell alone, for something
-Chromium does by itself and WebKit does not: `setDragRegions` is the one so
-far (see "Dragging the window").
+A member marked `nativeOnly` exists in this shell alone, for something this
+shell does differently from the Electron build: `setDragRegions` (see
+"Dragging the window") and `openKeybindPermissionSettings` (see "Global
+keybinds").
 
 Every call channel of the contract has to be answered before the first page
 loads, or the app stops at launch. Channels whose feature is not ported yet
@@ -395,7 +554,33 @@ drags and the whole click of one that does not; a double click asks the
 system's setting; the parts follow the window's size). The check reads which
 parts the system is told about and gives its presses to the web view
 directly. The drag itself is the system's and needs a real mouse: it was
-tried by hand on the built app. Then it loads
+tried by hand on the built app. The tray (`--check tray`) is checked with
+something that records what it is given in place of the menu bar: every
+frame image loads at 18 by 22 points, as a template, with its `@2x`; the
+character plays the loop of the state the page reports and ignores a state
+that is not one; this system has every symbol the menu is drawn with; the
+menu has the row of buttons the page's context allows, fewer for a web
+client that does not report the camera, the screen share and the pointers,
+and stays as it was for a context that cannot be read; a pressed button
+comes back to the page as a `tray-action`; Show and Quit do what they say;
+the menu follows the page's language; another page starts from an empty menu
+and a resting character. Game detection (`--check activity`) is checked with
+a list of processes and an answer of the network that the check makes up:
+the page hears of a game once when it starts and once when it ends and reads
+the same from `getCurrentActivity`; a fetched dictionary is saved with its
+tag and used; a second start reads the saved one and names its tag;
+detection stops when the processes cannot be listed; the system's own list
+is read once. Nothing is fetched there: `--check activity-network`, run by
+hand, fetches the dictionary once the way the app does. The global keybinds
+(`--check keybinds`) are checked with a keyboard and a permission the check
+makes up: without the permission nothing is listened to, the page is told
+and the system is asked once; with it a held key presses its action once and
+releases it once, and a release that was never reported ends the action all
+the same; a combination with a modifier and a mouse button work; an
+empty list stops the listening; a list that cannot be read changes nothing;
+the page's request opens the permission's settings; a listener the system
+will not start is reported; another page starts with no keybinds. No real
+key is listened to there. Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails

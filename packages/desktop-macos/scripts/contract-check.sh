@@ -7,7 +7,9 @@
 # import of the Electron build's localStorage (--check local-storage-import),
 # links and auto-launch settings (--check launch), notifications and the
 # badge (--check notifications), the menu bar (--check menu), recovery mode
-# (--check recovery) and dragging the window (--check drag).
+# (--check recovery), dragging the window (--check drag), the tray
+# (--check tray), game detection (--check activity) and the global keybinds
+# (--check keybinds).
 #
 # Usage:
 #   scripts/contract-check.sh [--out <report.json>]
@@ -107,6 +109,33 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check drag >&2
+
+# The tray: the character plays the state the page reports, the menu offers
+# the controls the page allows and sends the chosen one back.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check tray >&2
+
+# Game detection, with a made-up list of processes and a made-up answer of
+# the network: nothing real is listed and nothing is fetched.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check activity >&2
+
+# Global keybinds, with a made-up keyboard and a made-up permission: no real
+# key is listened to.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check keybinds >&2
 
 exec .build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \

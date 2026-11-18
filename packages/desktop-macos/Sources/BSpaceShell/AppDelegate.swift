@@ -30,7 +30,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
         do {
             let environment = try ShellEnvironment.ofRunningApplication()
             let strings = environment.strings
-            let controller = try MainWindowController(environment: environment)
+            let controller = try MainWindowController(
+                environment: environment,
+                activity: ActivityDetector(
+                    seedURL: environment.resources.gamesURL,
+                    settingsDirectory: environment.userDataDirectory
+                ),
+                keybinds: KeybindCoordinator()
+            )
             mainWindow = controller
             // The menu follows the language of the web client.
             NSApp.mainMenu = AppMenu.build(strings: strings, language: controller.language, actions: self)

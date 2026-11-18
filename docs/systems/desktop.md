@@ -290,6 +290,8 @@ The renderer (`hooks/useTrayBridge.ts`, mounted by `NotificationController`) rep
 
 Tray click toggles window visibility (show/hide).
 
+The native macOS shell (`packages/desktop-macos`) has a tray menu of its own, built from the same context: a row of round buttons (microphone, sound, viewers' pointers, turn off camera, stop sharing, disconnect), Do Not Disturb, Show and Quit. For it the context carries three more fields, `cameraOn`, `screenSharing` and `showPointers`, and three more actions come back, `toggleShowPointers`, `stopCamera` and `stopScreenShare` (`runTrayAction` in `hooks/useTrayBridge.ts`; the two stop actions do nothing when there is nothing to stop, because the voice bar's own controls would turn the camera on and open the share setup). `parseTrayContext` here passes over the three fields, and this build never sends the three actions. See "The tray" in `packages/desktop-macos/README.md`.
+
 ---
 
 ## Deep Linking
@@ -915,8 +917,8 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 | `notification-click` | M->R | `{ channelId?, spaceId?, userId? }` | Open the notification's chat in the originating session |
 | `set-badge-count` | R->M | `number` | Set dock/taskbar badge |
 | `set-tray-state` | R->M | One of `TRAY_STATES` | Play the character's animation for that state in the tray (unknown values ignored) |
-| `set-tray-context` | R->M | `TrayContext` (`signedIn`, `voice: {channelName} \| null`, `muted`, `deafened`, `status`) | The tray menu's quick controls; validated by `parseTrayContext` |
-| `tray-action` | M->R | `TrayAction` (`toggleMute`, `toggleDeafen`, `disconnect`, `setStatus`) | A quick control clicked in the tray menu |
+| `set-tray-context` | R->M | `TrayContext` (`signedIn`, `voice: {channelName} \| null`, `muted`, `deafened`, `status`; plus `cameraOn`, `screenSharing`, `showPointers`, read by the native macOS shell alone) | The tray menu's quick controls; validated by `parseTrayContext` |
+| `tray-action` | M->R | `TrayAction` (`toggleMute`, `toggleDeafen`, `disconnect`, `setStatus`; plus `toggleShowPointers`, `stopCamera`, `stopScreenShare`, sent by the native macOS shell alone) | A quick control clicked in the tray menu |
 | `minimize-window` | R->M | — | Minimize window |
 | `maximize-window` | R->M | — | Toggle maximize/unmaximize |
 | `close-window` | R->M | — | Close (hides to tray) |
@@ -984,10 +986,11 @@ The bridges are also described as data. `bridgeContract.json` lists every member
 
 One channel may carry a call and an event (`keybind-portal-status`); two calls, or two events, may not share one.
 
-A member may also carry `"nativeOnly": true`: it exists in the native macOS shell alone, standing in for something Chromium does by itself and WebKit does not. The preloads do not have it and the main process does not know its channel (the contract test checks both), so the web client declares it optional in `electron.d.ts` and checks that it is there before calling. There is one so far:
+A member may also carry `"nativeOnly": true`: it exists in the native macOS shell alone, for something that shell does differently from Electron. The preloads do not have it and the main process does not know its channel (the contract test checks both), so the web client declares it optional in `electron.d.ts` and checks that it is there before calling. There are two:
 
 | Member | Channel | What it is for |
 |--------|---------|----------------|
+| `openKeybindPermissionSettings()` | `open-keybind-permission-settings` (`fire`) | The native shell listens for the global keybinds with the Input Monitoring permission, not Accessibility. This has the system ask for it and opens its list in System Settings; `KeybindsPanel` shows a warning naming that permission, with this as its button, when the member is there. `checkAccessibility` and `onAccessibilityStatus` report Input Monitoring in that shell. |
 | `setDragRegions({ drag, noDrag })` | `set-drag-regions` (`fire`) | WebKit drops `-webkit-app-region`, so the web client reports the rectangles of its `.titlebar-drag` and `.titlebar-no-drag` elements (viewport coordinates, as `getBoundingClientRect()` gives them) and the shell drags the window by them. `packages/web/src/platform/windowDragRegions.ts` measures and reports; see "Dragging the window" in `packages/desktop-macos/README.md` for the shell's side. In Electron nothing is reported and the CSS property does the work. |
 
 Two shells implement the description: Electron's preload scripts here, and the native macOS shell (`packages/desktop-macos`), which builds its page-side script from the file as it is and refuses to start with a call channel nobody answers. The file is JSON so that the Swift build reads it without a generated copy. `bridgeContract.ts` parses and types it (`BRIDGE_CONTRACT`, `parseBridgeContract`).

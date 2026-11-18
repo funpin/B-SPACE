@@ -22,6 +22,9 @@ on:
       - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
       - packages/desktop/resources/recovery.html
+      - packages/desktop/resources/games.json
+      - packages/desktop/resources/tray-*Template*.png
+      - packages/desktop/src/keybindManager.ts
       - packages/desktop/build/icon.icns
       - package.json
       - .github/workflows/desktop-macos.yml
@@ -35,6 +38,9 @@ on:
       - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
       - packages/desktop/resources/recovery.html
+      - packages/desktop/resources/games.json
+      - packages/desktop/resources/tray-*Template*.png
+      - packages/desktop/src/keybindManager.ts
       - packages/desktop/build/icon.icns
       - package.json
       - .github/workflows/desktop-macos.yml
