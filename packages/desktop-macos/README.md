@@ -15,6 +15,7 @@ and the measuring harness of stage 0.
 | `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app` |
 | `ContractCheck` | Drives `BSpaceShell` through the bridge contract check, or opens a live instance in it |
 | `WebKitProbe`, `ProbeSupport` | The measuring harness of stage 0 |
+| `CaptureProbe` | The stage 4 experiment: does a system audio capture that excludes an application leave out what its web view plays |
 
 ## Requirements
 
@@ -703,3 +704,88 @@ any browser for comparison.
 To look at a page of the web client itself, start Vite (`pnpm dev:web`) and
 point `--url` at `http://localhost:5173/dev-voice-grid.html` or any other
 workbench page.
+
+## CaptureProbe
+
+The experiment stage 4 starts with. The client streams system audio next to a
+voice call. If the call's own sound came back through the capture, everybody
+in the stream would hear themselves, so the capture has to leave the
+application out. A web view does not play in the application's process,
+though: WebKit's helper processes do. Does excluding the application exclude
+them?
+
+The probe opens a page that plays four quiet tones, one through each way a
+page makes sound, records system audio with ScreenCaptureKit under each way of
+leaving an application out, and reports which tones each recording holds. A
+second copy of the probe, in a bundle with another identifier, plays the same
+four paths at other frequencies: it is "some other application", and, started
+through LaunchServices whatever the probe itself was started by, it is the
+subject of the question.
+
+```bash
+# From packages/desktop-macos. About fifty seconds of quiet tones.
+scripts/capture-probe.sh -- --gain 0.02
+scripts/capture-probe.sh --open -- --request-permission   # under the probe's own permission
+scripts/capture-probe.sh --help
+```
+
+It needs the Screen Recording permission: the terminal application's when run
+as above, its own with `--open`. A tone counts as present when the recording
+holds it within 3 dB of the level it was played at, and as absent when it is
+10 dB or more below; a capture records an application at the level the
+application gave its sound, whatever the output volume.
+
+### What it showed
+
+macOS 27.2.1, 2026-11-18, probe started from a terminal, second copy started
+through LaunchServices. Level of each tone in the recording, in dB relative to
+full scale; the tones were played at -34.
+
+| Capture | Probe: Web Audio | Probe: file | Probe: live stream | Second copy: Web Audio | Second copy: file | Second copy: live stream |
+|---------|-----------------:|------------:|-------------------:|-----------------------:|------------------:|-------------------------:|
+| Nothing excluded | -34 | -34 | -34 | -34 | -34 | -34 |
+| `excludesCurrentProcessAudio` | -34 | -34 | -34 | -34 | -34 | -34 |
+| Probe in `excludingApplications` | -34 | -34 | -34 | -34 | -34 | -34 |
+| Both of the above | -34 | -34 | -34 | -34 | -34 | -34 |
+| Only the other applications included | -138 | -136 | -112 | -34 | -34 | -34 |
+| Second copy in `excludingApplications` | -34 | -34 | -34 | **-139** | **-113** | **-115** |
+| Neither copy included | -160 | -160 | -160 | -160 | -160 | -160 |
+| Nothing excluded, again | -34 | -34 | -34 | -34 | -34 | -34 |
+
+- **An application started the ordinary way is excluded together with its web
+  view's sound.** With the second copy in the content filter's list of
+  excluded applications, none of its three tones is in the recording, and the
+  probe's own tones still are. The system counts the sound of WebKit's helpers
+  as the sound of the application they work for. The hypothesis of the plan
+  holds, and the Core Audio process tap is not needed.
+- **It follows the responsible process, not the bundle.** The probe itself,
+  started from a terminal, keeps all its tones under both ways of excluding
+  it: its helpers answer to the terminal's application. A client started from
+  a terminal (`swift run`, the bundle's executable by path) will hear itself
+  in its own stream; one started from Finder, the Dock, at login or by `open`
+  will not.
+- **A list of included applications works too**, and in both cases: leaving an
+  application out of the list removes its web view's sound even for the
+  terminal-started probe. It is the stricter filter, but it also drops
+  everything that is not an application, and an application started after
+  the capture began has to be added to it.
+- The system does not list WebKit's helpers as applications of their own, so
+  they cannot be excluded one by one.
+
+Not answered by this run:
+
+- **A track that arrived over WebRTC.** The two peer connections in the page
+  did not reach each other on this machine (ICE failed with host candidates
+  only; the machine's tunnel). The live-stream path stands in for it: a remote
+  track reaches its element as a stream as well. A call on the test instance
+  has to confirm it.
+- **`excludesCurrentProcessAudio` for an application started the ordinary
+  way.** It can only be read from inside such an application, which needs the
+  probe's own Screen Recording permission (`--open`). The client does not
+  depend on it: it names itself in `excludingApplications`.
+- **The client itself.** The same has to be seen once on the built client,
+  when its capture exists.
+
+One thing about the page: a short file played on a loop is not a reliable
+tone. The element started it up to thirteen seconds late or sat at zero while
+reporting that it played; a file longer than the run plays from the start.

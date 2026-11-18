@@ -8,6 +8,8 @@ import PackageDescription
 //   BSpaceApp      the application: starts BSpaceShell (scripts/bundle.sh wraps it)
 //   ContractCheck  drives BSpaceShell through the bridge contract check
 //   WebKitProbe    the measuring harness of the stage 0 pre-audit
+//   CaptureProbe   the stage 4 experiment: does a system audio capture that
+//                  excludes the application leave out what its web view plays
 let package = Package(
     name: "BSpaceMac",
     platforms: [.macOS(.v14)],
@@ -47,6 +49,11 @@ let package = Package(
             name: "WebKitProbe",
             dependencies: ["ProbeSupport"],
             path: "Sources/WebKitProbe"
+        ),
+        .executableTarget(
+            name: "CaptureProbe",
+            dependencies: ["ProbeSupport"],
+            path: "Sources/CaptureProbe"
         ),
         .testTarget(
             name: "ProbeSupportTests",
