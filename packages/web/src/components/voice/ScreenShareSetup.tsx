@@ -16,6 +16,7 @@ import {
   isCaptureCancellation,
   canAddScreenShareAudioLater,
 } from '../../utils/screenShare';
+import { canCaptureNatively } from '../../platform/nativeCapture/nativeScreenCapture';
 import { StreamQualityControls, StreamSummary, StreamHostSubtitle } from './StreamQualityControls';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
@@ -164,7 +165,7 @@ export function ScreenShareSetup() {
    * `claimed` reuses a generation already taken by stageSource; a direct call
    * (the "Choose screen" button) takes a fresh one.
    */
-  const stage = useCallback(async (claimed?: number) => {
+  const stage = useCallback(async (claimed?: number, sourceId?: string) => {
     const generation = claimed ?? ++stageGenerationRef.current;
     setError(null);
     setStaging(true);
@@ -172,7 +173,7 @@ export function ScreenShareSetup() {
     // System picker: no tile carries the audio preference, so send it ahead of the request
     api?.setScreenShareAudioPreference?.(shareAudioAtStage);
     try {
-      const stream = await stageScreenCapture();
+      const stream = await stageScreenCapture(sourceId);
       if (generation !== stageGenerationRef.current) {
         // Superseded while the picker was open: never adopt it, and never
         // leave the OS capturing for a stream nothing will publish.
@@ -216,7 +217,10 @@ export function ScreenShareSetup() {
     }
     setSelectedId(sourceId);
     const generation = ++stageGenerationRef.current;
-    if (api.preselectScreenSource) {
+    if (canCaptureNatively()) {
+      // The native macOS shell captures the source it is told to: there
+      // is no request to arm a preselection for.
+    } else if (api.preselectScreenSource) {
       // Awaited: the preselection and getDisplayMedia() travel different IPC
       // pipes with no ordering guarantee between them. If the display-media
       // handler wins the race it finds no preselection, degrades to the
@@ -233,7 +237,7 @@ export function ScreenShareSetup() {
       // Older desktop: the main process will push sources; answer with this id when it does.
       pendingPromptIdRef.current = sourceId;
     }
-    void stage(generation);
+    void stage(generation, sourceId);
   }, [api, stage]);
 
   // Ask the desktop who picks, once per open
@@ -242,7 +246,9 @@ export function ScreenShareSetup() {
     if (!electron) { setPickerMode('app'); return; }
     if (!api?.getScreenSharePickerMode) { setPickerMode('app'); return; }
     let cancelled = false;
-    api.getScreenSharePickerMode()
+    // The native macOS shell lists sources itself only for a client that
+    // can take its capture; saying so is what turns the list on.
+    api.getScreenSharePickerMode(canCaptureNatively() ? { nativeCapture: true } : undefined)
       .then((mode) => { if (!cancelled) setPickerMode(mode); })
       .catch(() => { if (!cancelled) setPickerMode('app'); });
     return () => { cancelled = true; };

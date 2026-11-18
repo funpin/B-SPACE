@@ -690,13 +690,15 @@ What feeds the encoder is in "Capturing the screen".
 
 ### Capturing the screen
 
-A share starts when the page calls `startNativeScreenCapture({ sourceId,
+A capture starts when the page calls `startNativeScreenCapture({ sourceId,
 maxWidth, maxHeight, frameRate })` with an id from the list of sources. The
 shell opens a local media channel, starts the capture and the encoder, and
-answers with the channel's address, its token and the size and rate of the
-video that will come; the page connects and decodes. One share runs at a
-time: starting another ends the one before it. `stopNativeScreenCapture()`
-ends it, and so does the window showing another page.
+answers with an id for the capture, the channel's address, its token and the
+size and rate of the video that will come; the page connects and decodes.
+`stopNativeScreenCapture(id)` ends it, and so does the window showing
+another page. A page may have up to four at once: while a share runs, the
+stream setup screen previews the source the user is about to switch to, and
+a change of size starts the new capture before it stops the old one.
 
 - **The capture** is ScreenCaptureKit's (`SystemScreenCapturer`): a display
   by its id, or one window apart from the desktop. The video has the
@@ -716,11 +718,11 @@ ends it, and so does the window showing another page.
   connected yet) breaks the chain the following frames depend on, so the
   next one is made a key frame.
 - **The capture ending by itself** (the window was closed, the display
-  unplugged, the permission taken away) closes the share, and the page hears
-  `onNativeScreenCaptureEnded`.
+  unplugged, the permission taken away) closes it, and the page hears
+  `onNativeScreenCaptureEnded` with its id.
 - **Refusals** say why: `bad-request` (no source named), `no-permission`
   (no Screen Recording; the system has been asked), `no-source`,
-  `unsupported` (the channel needs macOS 15), `failed`.
+  `unsupported` (the channel needs macOS 15), `too-many`, `failed`.
 - **Who picks the source.** `getScreenSharePickerMode({ nativeCapture: true
   })` answers `'app'`: a web client that says it can take a native capture
   is shown the app's own list. Without the argument the answer is
@@ -731,8 +733,9 @@ Checked on the shell with a screen the check makes up (`--check capture`,
 part of `contract-check.sh`): the picker mode by what the client says; a
 request without a source, and for one that is gone; a share fitted into what
 was asked for and decoded in the page; a screen standing still giving a
-picture to a page that connects late and to a decoder that asks; the three
-ways a share ends.
+picture to a page that connects late and to a decoder that asks; two
+captures at once, each stopped by its id, and a fifth refused; the three
+ways a capture ends.
 
 The real screen (`--check capture-system`, by hand, macOS 27.2.1): the main
 display, 3456 by 2234, asked for at 1080p and 60 frames a second, was
@@ -741,10 +744,33 @@ page decoded 249 frames, 51.5 a second while the screen changed, each 20 ms
 after it was captured at the median, 38 ms at the 95th percentile, 59 ms at
 most; no frame was skipped.
 
-Not done: the web client does not use any of this yet (change 4 of the
-plan), no sound is captured (change 5), the pointer overlay is not excluded
-because there is none, and processor load and the comparison with the
-Electron build are not measured.
+**The web client's side** is `packages/web/src/platform/nativeCapture/`
+(change 4 of the plan). `nativeScreenCapture.ts` starts a capture and
+returns an ordinary stream with one video track; a module worker
+(`reader.worker.ts`) connects to the channel, decodes with `VideoDecoder`
+and writes into a `VideoTrackGenerator`, which WebKit has in workers only;
+`channelReader.ts` is its logic, the catch-up rule included (see "Video on
+the channel"). Stopping the track ends the capture; a capture that ends by
+itself fires `ended` on the track; another size or rate is a second
+capture of the same source behind the same track. The stream setup screen
+passes `nativeCapture: true` when it asks who picks the source, and stages
+the picked tile through it instead of `getDisplayMedia`. The details are in
+"Screen sharing in the native macOS client" in
+[voice.md](../../docs/systems/voice.md).
+
+That code was run in the shell (`--check capture-web`, by hand: it needs the
+web package's dev server and its workbench page
+`dev-native-capture.html`) with a screen the check makes up: the track plays
+in a video element at 1152 by 720, goes on playing, follows other limits to
+640 by 400 behind the same track while the first capture stops, says when
+the capture ends, stops the capture when stopped, and reports a source that
+is gone.
+
+Not done: no sound is captured (change 5), so the System Audio switch does
+nothing in this client yet; the pointer overlay is not excluded because
+there is none; a share in a real call (through LiveKit, watched from
+another client), processor load and the comparison with the Electron build
+are not measured.
 
 ### The bridge
 
@@ -851,8 +877,10 @@ closes with its page. `--check video-pipe`, run by hand, sends frames the
 check draws through the encoder and the channel to a decoder in a worker
 of the page and prints how long they took (see "Video on the channel").
 A share (`--check capture`) is started through the bridge with a screen
-the check makes up, and `--check capture-system`, run by hand, captures
-the real main display for a few seconds (see "Capturing the screen").
+the check makes up; `--check capture-system`, run by hand, captures
+the real main display for a few seconds; `--check capture-web`, run by
+hand against the web package's dev server, runs the web client's own
+capture code in the shell (see "Capturing the screen").
 Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every

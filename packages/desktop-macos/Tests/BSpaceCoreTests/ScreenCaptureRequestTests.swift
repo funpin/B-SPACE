@@ -54,9 +54,10 @@ private func arguments(_ options: [String: Any]) -> BridgeArguments {
 @Suite struct ScreenCaptureReplyTests {
     @Test func aStartedCaptureTellsThePageWhereToConnect() {
         let value = ScreenCaptureReply.started(
-            url: "wss://127.0.0.1:50123/", token: "abc", width: 1670, height: 1080, framesPerSecond: 60
+            id: "one", url: "wss://127.0.0.1:50123/", token: "abc", width: 1670, height: 1080, framesPerSecond: 60
         ).bridgeValue
         #expect(value["ok"] as? Bool == true)
+        #expect(value["id"] as? String == "one")
         #expect(value["url"] as? String == "wss://127.0.0.1:50123/")
         #expect(value["token"] as? String == "abc")
         #expect(value["width"] as? Int == 1670)
@@ -68,7 +69,7 @@ private func arguments(_ options: [String: Any]) -> BridgeArguments {
     @Test func aRefusalSaysWhy() {
         for (failure, reason) in [
             (ScreenCaptureFailure.badRequest, "bad-request"), (.noPermission, "no-permission"),
-            (.noSource, "no-source"), (.unsupported, "unsupported"), (.failed, "failed"),
+            (.noSource, "no-source"), (.unsupported, "unsupported"), (.tooMany, "too-many"), (.failed, "failed"),
         ] {
             let value = ScreenCaptureReply.refused(failure).bridgeValue
             #expect(value["ok"] as? Bool == false)

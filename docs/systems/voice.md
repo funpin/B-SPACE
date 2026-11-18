@@ -869,6 +869,27 @@ Both surfaces are backed by the shared `useAudioDevices()` hook. The store field
 - Output devices are gated behind microphone permission (no separate output permission exists in browsers).
 - Returns `inputLabels` / `outputLabels` maps with disambiguation suffixes for duplicate names (e.g. `"USB Audio (1)"`, `"USB Audio (2)"`).
 
+### Screen sharing in the native macOS client
+
+WebKit's `getDisplayMedia` cannot be told which source to take, gives 30 frames a second at point resolution and no system audio. The native macOS client (`packages/desktop-macos`) therefore captures the source itself and hands the frames to the page; the web client's side of that is `packages/web/src/platform/nativeCapture/`. In Electron and in browsers none of it runs: the bridge has no `startNativeScreenCapture`, and `canCaptureNatively()` is false.
+
+| File | What it does |
+|------|--------------|
+| `nativeScreenCapture.ts` | `canCaptureNatively()`; `acquireNativeScreenCapture(sourceId, limits)` starts a capture through the bridge, starts the worker and returns a `MediaStream` with one video track; `reconfigureNativeScreenCapture(track, limits)`; `isNativeScreenCapture(track)` |
+| `reader.worker.ts` | A module worker: connects to the shell's local WebSocket, says the token, decodes with `VideoDecoder`, writes the frames into a `VideoTrackGenerator` and transfers its track to the page. WebKit has `VideoTrackGenerator` in workers only |
+| `channelReader.ts` | The worker's logic, without a socket or a decoder: reads the format announcement and the frames, starts from a key frame, and catches up when the decoder falls behind |
+
+How it joins the rest of screen sharing (`utils/screenShare.ts`, `ScreenShareSetup`):
+
+- **Who picks the source.** The setup screen asks `getScreenSharePickerMode({ nativeCapture: true })` when `canCaptureNatively()`. The native shell answers `'app'` only to a client that says this, so a server with an older web client keeps WebKit's own picker.
+- **Staging.** A tile click calls `stageScreenCapture(sourceId)`. With native capture the stream comes from `acquireNativeScreenCapture`; the preselection (`preselectScreenSource`) is not armed, because there is no `getDisplayMedia` request for it to answer. The "Choose screen" path of the system picker has no source id and still uses `getDisplayMedia`.
+- **An ordinary track.** Preview, `publishScreenShare`, `republishScreenShare` (the track is reused) and `stopScreenShare` treat it as any other. `track.stop()` ends the native capture: the module puts its own `stop` on the track instance, since stopping a track fires no event. A capture that ends by itself (`onNativeScreenCaptureEnded`, or the channel closing) stops the track and dispatches `ended` on it, as a browser does when a shared window closes.
+- **Size and rate.** `applyCaptureLimits(track, capture, minFrameRate?)` is the one place a running capture is made to follow the configured size and rate (the staged preview, the settings effect in `useLiveKit`, and the overdrive pass). A browser's track is constrained with `applyConstraints`; a native one is reconfigured: a second capture of the same source is started with the new limits, the worker moves to its channel, the first is stopped. The track stays, so a published share is not republished. Limits it already has change nothing.
+- **Falling behind.** Nothing between the screen and the decoder drops a frame. When more than four frames wait in the decoder (`MOST_FRAMES_WAITING`), `ChannelReader` resets it, asks the shell for a key frame and skips what arrives before it; the same after a decoder error.
+- **System audio** is not captured natively yet. `canAddScreenShareAudioLater` is false with native capture, and a staged native stream has no audio track: the System Audio switch does nothing in the native client until that part lands.
+
+The wire format, the encoder and the measurements are in `packages/desktop-macos/README.md` ("The local media channel", "Video on the channel", "Capturing the screen"). `dev-native-capture.html` is the workbench page: it runs this code in whatever shell it is opened in.
+
 ### Output routing — `OutputRouter`
 All audio (remote voice, screen-share audio, sound effects) flows through `AudioManager`'s master bus (`masterBoost` → `masterCompressor`). What the compressor is connected to is decided by `OutputRouter` (`audio/outputRouter.ts`), which `AudioManager` creates with the context and which is the only thing that connects the bus to an output. LiveKit's `switchActiveDevice('audiooutput')` is not used: it targets LiveKit's own `<audio>` elements, which `AppLayout`'s MutationObserver kills.
 

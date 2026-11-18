@@ -48,6 +48,7 @@ import {
   settleScreenShareAfterReconnect,
   resolveNativeOverdrive,
   syncScreenShareAudio,
+  applyCaptureLimits,
 } from '../utils/screenShare';
 import { parseStreamPointer, parseStreamPointerOverlay } from '../utils/streamPointerProtocol';
 import { useStreamPointerStore } from '../stores/streamPointerStore';
@@ -1336,13 +1337,7 @@ export function useLiveKit() {
         if (screenPub?.videoTrack) {
           const mediaTrack = getMediaStreamTrack(screenPub.videoTrack);
           if (mediaTrack) {
-            if (opts.capture.width > 0 && opts.capture.height > 0) {
-              // Standard mode: apply resolution + frameRate together
-              await mediaTrack.applyConstraints({ width: { ideal: opts.capture.width }, height: { ideal: opts.capture.height }, frameRate: { ideal: opts.capture.frameRate, min: 15 } });
-            } else {
-              // Native mode: apply frameRate only — never pass 0 to width/height
-              await mediaTrack.applyConstraints({ frameRate: { ideal: opts.capture.frameRate, min: 15 } });
-            }
+            await applyCaptureLimits(mediaTrack, opts.capture, 15);
             mediaTrack.contentHint = opts.contentHint;
           }
           // For native mode, recompute overdrive bitrate from actual track dimensions

@@ -207,11 +207,9 @@ public final class MainWindowController: NSObject {
     /// Makes what captures the screen for a share; nil when the shell
     /// cannot capture.
     private let makeScreenCapturer: (() -> ScreenCapturer)?
-    /// The share that runs now, and the channel it sends on.
-    private var capture: (session: CaptureSession, channel: LocalMediaChannel)?
-    /// Counts the requests to start a share: an answer that comes after a
-    /// newer request, or after a stop, starts nothing.
-    private var captureRequests = 0
+    /// The captures that run now, by the id the page knows each by, with
+    /// the channel each sends on.
+    private var captures: [String: (session: CaptureSession, channel: LocalMediaChannel)] = [:]
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -778,7 +776,7 @@ public final class MainWindowController: NSObject {
     }
 
     private func closeMediaChannels() {
-        stopScreenCapture()
+        stopScreenCaptures()
         let channels = mediaChannels
         mediaChannels = []
         channels.forEach { $0.stop() }
@@ -795,16 +793,18 @@ public final class MainWindowController: NSObject {
         return false
     }
 
-    /// Starts a share for the page: a channel, a capture, an encoder. One
-    /// share runs at a time; starting another ends the one before it.
+    /// Starts a capture for the page: a channel, a capturer, an encoder. A
+    /// page may have a few at once: while a share runs, the stream setup
+    /// screen previews the source the user is about to switch to.
     private func startScreenCapture(_ request: ScreenCaptureRequest, reply: @escaping (ScreenCaptureReply) -> Void) {
-        stopScreenCapture()
         guard canCaptureScreen, let makeScreenCapturer else {
             reply(.refused(.unsupported))
             return
         }
-        captureRequests += 1
-        let asked = captureRequests
+        guard captures.count < ScreenCaptureRequest.mostAtOnce else {
+            reply(.refused(.tooMany))
+            return
+        }
         openMediaChannel { [weak self] result in
             guard let self else { return }
             let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
@@ -812,47 +812,48 @@ public final class MainWindowController: NSObject {
             case .success(let made):
                 opened = made
             case .failure(let failure):
-                NSLog("[capture] no channel for the share: %@", String(describing: failure))
+                NSLog("[capture] no channel for the capture: %@", String(describing: failure))
                 reply(.refused(failure == .unsupportedSystem ? .unsupported : .failed))
                 return
             }
-            guard asked == self.captureRequests else {
-                self.closeMediaChannel(opened.channel)
-                reply(.refused(.failed))
-                return
-            }
+            let id = UUID().uuidString.lowercased()
             let session = CaptureSession(capturer: makeScreenCapturer(), channel: opened.channel, request: request)
-            self.capture = (session, opened.channel)
-            session.onEnded = { [weak self, weak session] in
-                guard let self, let session, self.capture?.session === session else { return }
-                self.stopScreenCapture()
-                self.bridge.emit("native-screen-capture-ended", payload: NSNull())
+            self.captures[id] = (session, opened.channel)
+            session.onEnded = { [weak self] in
+                guard let self, self.captures[id] != nil else { return }
+                self.stopScreenCapture(id)
+                self.bridge.emit("native-screen-capture-ended", payload: ["id": id])
             }
-            session.start { [weak self, weak session] result in
-                guard let self, let session, self.capture?.session === session else {
+            session.start { [weak self] result in
+                // The page stopped it, or the window shows another page.
+                guard let self, self.captures[id] != nil else {
                     reply(.refused(.failed))
                     return
                 }
                 switch result {
                 case .success(let size):
                     reply(.started(
-                        url: opened.endpoint.url, token: opened.endpoint.token,
+                        id: id, url: opened.endpoint.url, token: opened.endpoint.token,
                         width: size.width, height: size.height, framesPerSecond: request.framesPerSecond
                     ))
                 case .failure(let failure):
-                    self.stopScreenCapture()
+                    self.stopScreenCapture(id)
                     reply(.refused(failure))
                 }
             }
         }
     }
 
-    private func stopScreenCapture() {
-        captureRequests += 1
-        guard let capture else { return }
-        self.capture = nil
+    private func stopScreenCapture(_ id: String) {
+        guard let capture = captures.removeValue(forKey: id) else { return }
         capture.session.stop()
         closeMediaChannel(capture.channel)
+    }
+
+    private func stopScreenCaptures() {
+        for id in Array(captures.keys) {
+            stopScreenCapture(id)
+        }
     }
 
     // MARK: Notifications
@@ -1114,8 +1115,9 @@ public final class MainWindowController: NSObject {
                 reply(.value(answer.bridgeValue))
             }
         }
-        router.onFire("native-screen-capture-stop") { [weak self] _ in
-            self?.stopScreenCapture()
+        router.onFire("native-screen-capture-stop") { [weak self] arguments in
+            guard let id = arguments.string(at: 0) else { return }
+            self?.stopScreenCapture(id)
         }
 
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in

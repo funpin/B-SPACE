@@ -145,6 +145,14 @@ import WebKit
 // it, when the capture ends by itself (the page is told) and with its page.
 // The real screen is not captured.
 //
+// With --check capture-web [--url http://localhost:5173/dev-native-capture.html]
+// it loads the web package's workbench page from a running Vite server and
+// has the web client's own capture code (its worker included) take a capture
+// of a screen the check makes up: the track plays in a video element at the
+// size asked for, follows other limits behind the same track, says when the
+// capture ends, stops the capture when it is stopped, and reports a source
+// that is gone. It needs the dev server and is not part of contract-check.sh.
+//
 // With --check capture-system [--size 1920x1080] [--frame-rate 60]
 // [--seconds 5] it captures the main display for a few seconds through the
 // whole path and prints the size, how many frames the page decoded and how
@@ -1856,7 +1864,8 @@ func checkCapture() -> Never {
     _ = page(videoPipePage)
     _ = page("""
         window.ended = 0;
-        window.backspace.onNativeScreenCaptureEnded(() => { window.ended += 1; });
+        window.endedIDs = [];
+        window.backspace.onNativeScreenCaptureEnded((event) => { window.ended += 1; window.endedIDs.push(event && event.id); });
         return true;
         """)
 
@@ -1906,11 +1915,17 @@ func checkCapture() -> Never {
 
     // 4. A screen that stands still. The one frame it gives is long gone when
     //    the page connects, and the page still gets a picture; and another
-    //    when its decoder asks for one.
+    //    when its decoder asks for one. The capture before it runs on: the
+    //    page previews a source while its share continues.
+    let movingID = moving["id"] as? String ?? ""
     movingFrames = 1
     let still = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
-    if movingCapturer?.isStopped != true {
-        problems.append("starting a share left the one before it running")
+    if movingCapturer?.isStopped != false || movingID.isEmpty || still["id"] as? String == movingID {
+        problems.append("a second capture ended the first, or the two share an id")
+    }
+    _ = page("window.backspace.stopNativeScreenCapture('\(movingID)'); return true;")
+    if !wait(5, until: { movingCapturer?.isStopped == true }) || capturers.last?.isStopped != false {
+        problems.append("stopping a capture by its id did not stop that one alone")
     }
     RunLoop.main.run(until: Date().addingTimeInterval(0.7))
     _ = page(connect)
@@ -1931,15 +1946,16 @@ func checkCapture() -> Never {
     // 5. The capture ends by itself: the page is told, and the share is over.
     let endedBefore = page("return window.ended;") as? Int ?? -1
     capturers.last?.endByItself()
-    if !wait(5, until: { page("return window.ended;") as? Int == endedBefore + 1 }) {
-        problems.append("the page was not told that the capture ended")
+    if !wait(5, until: { page("return window.ended;") as? Int == endedBefore + 1 })
+        || page("return window.endedIDs;") as? [String] != [still["id"] as? String ?? "?"] {
+        problems.append("the page was not told which capture ended")
     }
 
     // 6. The page stops a share.
     movingFrames = 900
     _ = start("{ sourceId: 'screen:1:0', frameRate: 30 }")
     let running = capturers.last
-    _ = page("window.backspace.stopNativeScreenCapture(); return true;")
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
     if !wait(5, until: { running?.isStopped == true }) {
         problems.append("stopNativeScreenCapture left the capture running")
     }
@@ -1947,20 +1963,153 @@ func checkCapture() -> Never {
         problems.append("the page was told that a share it stopped itself had ended")
     }
 
-    // 7. Another page: the share of the one before it stops.
-    _ = start("{ sourceId: 'screen:1:0', frameRate: 30 }")
-    let leftBehind = capturers.last
+    // 7. A page may have a few captures at once, and no more.
+    let made = capturers.count
+    var answers: [[String: Any]] = []
+    for _ in 0...ScreenCaptureRequest.mostAtOnce {
+        answers.append(start("{ sourceId: 'screen:1:0', maxWidth: 320, maxHeight: 200, frameRate: 5 }"))
+    }
+    if answers.dropLast().contains(where: { $0["ok"] as? Bool != true })
+        || answers.last?["reason"] as? String != "too-many" {
+        problems.append("\(ScreenCaptureRequest.mostAtOnce) captures at once should start and one more be refused; got \(answers.map { $0["ok"] ?? $0 })")
+    }
+
+    // 8. Another page: the captures of the one before it stop.
+    let leftBehind = Array(capturers[made...])
     load(URL(string: origin + "/next")!)
-    if !wait(5, until: { leftBehind?.isStopped == true }) {
-        problems.append("a share outlived its page")
+    if !wait(5, until: { leftBehind.allSatisfy(\.isStopped) }) {
+        problems.append("a capture outlived its page")
     }
 
     for problem in problems {
         FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
     }
     print(problems.isEmpty
-        ? "capture: started through the bridge and fitted to what was asked; a screen standing still still gives a picture; stopped by the page, by itself and with its page"
+        ? "capture: started through the bridge and fitted to what was asked; a screen standing still still gives a picture; several run at once, each stopped by its id, by itself or with its page"
         : "capture: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The web client's own capture code, in the shell, with a screen the check
+/// makes up. `address` is the web package's workbench page
+/// (`dev-native-capture.html`) on a running Vite server.
+func checkCaptureWeb(address: String) -> Never {
+    guard let url = URL(string: address) else { fail("--url takes the address of dev-native-capture.html") }
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var movingFrames = 3000
+    var timings = RecoveryTimings()
+    // The workbench page is not a web client and never says it started.
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    do {
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: movingFrames)
+                capturers.append(capturer)
+                return capturer
+            },
+            recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    var hasEnded = false
+    var loadError: Error?
+    shell.onMainFrameLoadEnded = { error in
+        hasEnded = true
+        loadError = error
+    }
+    shell.load(url)
+    guard wait(30, until: { hasEnded }), loadError == nil else {
+        fail("\(address) did not load: \(loadError?.localizedDescription ?? "no answer"). Is the web package's dev server running?")
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func state() -> [String: Any] {
+        page("return window.nativeCaptureWorkbench ? window.nativeCaptureWorkbench.state() : null;") as? [String: Any] ?? [:]
+    }
+    guard wait(30, until: { state()["available"] != nil }) else {
+        fail("the workbench page did not start")
+    }
+    if state()["available"] as? Bool != true {
+        problems.append("the web client does not see the shell's native capture")
+    }
+
+    // 1. A capture started by the web client's code plays in a video element.
+    let started = page("""
+        return await window.nativeCaptureWorkbench.start('screen:1:0', { maxWidth: 1280, maxHeight: 720, frameRate: 30 });
+        """) as? [String: Any] ?? [:]
+    if started["phase"] as? String != "running" || started["native"] as? Bool != true {
+        problems.append("the capture did not start: \(started)")
+    }
+    if !wait(10, until: { state()["videoWidth"] as? Int == 1152 && state()["videoHeight"] as? Int == 720 }) {
+        problems.append("the video element shows \(state()["videoWidth"] ?? "?") by \(state()["videoHeight"] ?? "?"), expected 1152 by 720")
+    }
+    let playedThen = state()["played"] as? Double ?? 0
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let playedNow = state()["played"] as? Double ?? 0
+    if playedNow - playedThen < 0.5 {
+        problems.append("the video did not go on playing (\(playedThen) s, then \(playedNow) s)")
+    }
+
+    // 2. Other limits: a second capture behind the same track, and the first
+    //    one stopped.
+    let first = capturers.last
+    let changed = page("""
+        return await window.nativeCaptureWorkbench.reconfigure({ maxWidth: 640, maxHeight: 400, frameRate: 30 });
+        """) as? [String: Any] ?? [:]
+    if changed["error"] as? String != nil || capturers.count != 2 || changed["trackState"] as? String != "live" {
+        problems.append("other limits were answered \(changed) with \(capturers.count) capture(s) made")
+    }
+    if !wait(10, until: { state()["videoWidth"] as? Int == 640 && state()["videoHeight"] as? Int == 400 }) {
+        problems.append("after other limits the video element shows \(state()["videoWidth"] ?? "?") by \(state()["videoHeight"] ?? "?"), expected 640 by 400")
+    }
+    if !wait(5, until: { first?.isStopped == true }) || capturers.last?.isStopped != false {
+        problems.append("the capture with the old limits was left running, or the new one was stopped")
+    }
+
+    // 3. The capture ends by itself: the track says so.
+    capturers.last?.endByItself()
+    if !wait(5, until: { state()["phase"] as? String == "ended" }) {
+        problems.append("the track did not say that its capture ended (\(state()["phase"] ?? "?"))")
+    }
+
+    // 4. Stopping the track stops the capture.
+    movingFrames = 3000
+    _ = page("return await window.nativeCaptureWorkbench.start('screen:1:0', { frameRate: 30 });")
+    let running = capturers.last
+    let stopped = page("return window.nativeCaptureWorkbench.stop();") as? [String: Any] ?? [:]
+    if stopped["phase"] as? String != "stopped" || !wait(5, until: { running?.isStopped == true }) {
+        problems.append("stopping the track left the capture running (\(stopped))")
+    }
+
+    // 5. A source that is gone: the web client reports the failure.
+    let gone = page("return await window.nativeCaptureWorkbench.start('screen:77:0', { frameRate: 30 });") as? [String: Any] ?? [:]
+    if gone["phase"] as? String != "failed" || (gone["error"] as? String)?.contains("no-source") != true {
+        problems.append("a source that is gone was answered \(gone)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture, web client's side: its worker decodes the shell's capture into a track that plays, follows other limits behind the same track, says when the capture ends and stops it when stopped"
+        : "capture, web client's side: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
 }
 
@@ -2010,7 +2159,7 @@ func checkCaptureSystem(size: String, framesPerSecond: Int, seconds: Double) -> 
     _ = page("return await window.startPipe(window.share.url, window.share.token, 'track');")
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     let stats = page("return await window.pipeStats();") as? [String: Any] ?? [:]
-    _ = page("window.backspace.stopNativeScreenCapture(); return true;")
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
 
     let format = (stats["formats"] as? [[String: Any]])?.first
     print("captured the main display at \(reply["width"] ?? "?")x\(reply["height"] ?? "?"), asked for \(framesPerSecond) frames a second, for \(seconds) s")
@@ -3037,6 +3186,8 @@ case "media-channel":
     checkMediaChannel()
 case "capture":
     checkCapture()
+case "capture-web":
+    checkCaptureWeb(address: arguments["url"] ?? "http://localhost:5173/dev-native-capture.html")
 case "capture-system":
     checkCaptureSystem(
         size: arguments["size"] ?? "1920x1080",
@@ -3057,7 +3208,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-web, capture-system or electron-profile")
 }
 
 let contract: BridgeContract

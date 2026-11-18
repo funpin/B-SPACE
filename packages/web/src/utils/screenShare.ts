@@ -10,6 +10,10 @@ import { useUIStore } from '../stores/uiStore';
 import { openScreenShareSetup } from '../stores/screenShareSetupStore';
 import i18n from '../i18n';
 import { isElectron, getElectronAPI } from '../platform/platform';
+import {
+  acquireNativeScreenCapture, canCaptureNatively, isNativeScreenCapture, reconfigureNativeScreenCapture,
+  type NativeCaptureLimits,
+} from '../platform/nativeCapture/nativeScreenCapture';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import { startKeyframeWatchdog } from './keyframeWatchdog';
 import { isSoftwareH264Encoder, noteSoftwareH264, resolveScreenShareCodec, type ScreenShareCodec } from './screenShareCodec';
@@ -323,12 +327,49 @@ function buildCaptureConstraints(config: ScreenShareConfig, opts: ScreenShareBui
   };
 }
 
+/** What a native capture is limited to: the configured size, or the source's own. */
+function nativeCaptureLimits(capture: ScreenShareBuildResult['capture']): NativeCaptureLimits {
+  // Native mode: no size limit, so the source is captured at its own size.
+  if (capture.width > 0 && capture.height > 0) {
+    return { maxWidth: capture.width, maxHeight: capture.height, frameRate: capture.frameRate };
+  }
+  return { frameRate: capture.frameRate };
+}
+
+/**
+ * Makes a capture that already runs follow the configured size and rate: the
+ * staged preview when the quality drawer changes, the live share when the
+ * settings do. A browser's capture is constrained; the native macOS shell's is
+ * started again at the new size behind the same track.
+ *
+ * @param minFrameRate a floor for a published capture; a preview has none.
+ */
+export async function applyCaptureLimits(
+  track: MediaStreamTrack,
+  capture: ScreenShareBuildResult['capture'],
+  minFrameRate?: number,
+): Promise<void> {
+  if (isNativeScreenCapture(track)) {
+    await reconfigureNativeScreenCapture(track, nativeCaptureLimits(capture));
+    return;
+  }
+  const frameRate: ConstrainDouble = minFrameRate === undefined
+    ? { ideal: capture.frameRate }
+    : { ideal: capture.frameRate, min: minFrameRate };
+  // Native mode: frame rate only — never pass 0 to width/height.
+  await track.applyConstraints(capture.width > 0 && capture.height > 0
+    ? { width: { ideal: capture.width }, height: { ideal: capture.height }, frameRate }
+    : { frameRate });
+}
+
 // ---------------------------------------------------------------------------
 // Stage — capture without publishing.
 //
 // Every screen share starts here, on every platform. Browsers open their native
 // prompt; Electron's main process answers the request from the renderer's
-// preselected source (see ScreenShareSetup). The returned stream is previewed
+// preselected source (see ScreenShareSetup); the native macOS shell captures
+// the picked source itself and the stream comes from
+// platform/nativeCapture. The returned stream is previewed
 // in the setup screen and only reaches the room via publishScreenShare(), so
 // cancelling the setup never sends a frame.
 // ---------------------------------------------------------------------------
@@ -400,10 +441,23 @@ async function captureDisplayMedia(constraints: DisplayMediaStreamOptions): Prom
   return stream;
 }
 
-/** Must run inside a user gesture in browsers (getDisplayMedia requires transient activation). */
-export async function stageScreenCapture(): Promise<MediaStream> {
+/**
+ * Must run inside a user gesture in browsers (getDisplayMedia requires transient activation).
+ *
+ * @param sourceId the source picked in the app's own list, when there is
+ *   one. The native macOS shell captures exactly that; everywhere else the
+ *   source is the desktop app's preselection or the browser's prompt.
+ */
+export async function stageScreenCapture(sourceId?: string | null): Promise<MediaStream> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
+  if (sourceId && canCaptureNatively()) {
+    // Video only: the native capture carries no system audio yet.
+    const stream = await acquireNativeScreenCapture(sourceId, nativeCaptureLimits(opts.capture));
+    const video = stream.getVideoTracks()[0];
+    if (video) video.contentHint = opts.contentHint;
+    return stream;
+  }
   if (!isScreenCaptureSupported()) {
     throw new DOMException('getDisplayMedia is not available', 'NotSupportedError');
   }
@@ -450,9 +504,8 @@ export async function applyStagedCaptureConfig(stream: MediaStream): Promise<voi
   if (!track || track.readyState !== 'live') return;
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
-  const constraints = buildCaptureConstraints(config, opts).video;
   try {
-    if (typeof constraints === 'object') await track.applyConstraints(constraints);
+    await applyCaptureLimits(track, opts.capture);
   } catch (err) {
     console.warn('[ScreenShare] Failed to apply staged constraints:', err);
   }
@@ -708,6 +761,9 @@ export function canAddScreenShareAudioLater(
     && pickerMode === 'app'
     && isElectron()
     && isScreenCaptureSupported()
+    // The native macOS shell's capture has no system audio yet, and its
+    // preselection arms nothing.
+    && !canCaptureNatively()
     && typeof getElectronAPI()?.preselectScreenSource === 'function';
 }
 
@@ -961,19 +1017,7 @@ export function scheduleScreenShareOverdrive(room: Room): void {
       if (!captureConfigured) {
         captureConfigured = true;
         try {
-          if (freshOpts.capture.width > 0 && freshOpts.capture.height > 0) {
-            // Standard mode: apply resolution + frameRate together
-            await mediaTrack.applyConstraints({
-              width: { ideal: freshOpts.capture.width },
-              height: { ideal: freshOpts.capture.height },
-              frameRate: { ideal: freshOpts.capture.frameRate, min: 15 },
-            });
-          } else {
-            // Native mode: apply frameRate only — never pass 0 to width/height
-            await mediaTrack.applyConstraints({
-              frameRate: { ideal: freshOpts.capture.frameRate, min: 15 },
-            });
-          }
+          await applyCaptureLimits(mediaTrack, freshOpts.capture, 15);
           mediaTrack.contentHint = freshOpts.contentHint;
         } catch (err) {
           // Capture constraints and sender parameters are independent. A browser

@@ -17,6 +17,10 @@ public struct ScreenCaptureRequest: Equatable {
     public static let sizeRange = 160...8192
     public static let frameRateRange = 1...60
     public static let defaultFrameRate = 30
+    /// How many captures a page may have at once: the share that runs, the
+    /// preview of the source it is about to switch to, and one being
+    /// replaced by another of a different size.
+    public static let mostAtOnce = 4
 
     public init(source: ScreenSource.Kind, maxWidth: Int, maxHeight: Int, framesPerSecond: Int) {
         self.source = source
@@ -57,22 +61,24 @@ public enum ScreenCaptureFailure: String, Error, Equatable {
     case noSource = "no-source"
     /// This system cannot do it (the local channel needs macOS 15).
     case unsupported
+    /// The page already has as many captures as it may.
+    case tooMany = "too-many"
     /// The capture, the encoder or the channel would not start.
     case failed
 }
 
 /// What the page is told when it asks for a native capture.
 public enum ScreenCaptureReply: Equatable {
-    /// The capture runs: where to connect, what to say first, and the size
-    /// and rate of the video that will come.
-    case started(url: String, token: String, width: Int, height: Int, framesPerSecond: Int)
+    /// The capture runs: the id to stop it by, where to connect, what to
+    /// say first, and the size and rate of the video that will come.
+    case started(id: String, url: String, token: String, width: Int, height: Int, framesPerSecond: Int)
     case refused(ScreenCaptureFailure)
 
     public var bridgeValue: [String: Any] {
         switch self {
-        case .started(let url, let token, let width, let height, let framesPerSecond):
+        case .started(let id, let url, let token, let width, let height, let framesPerSecond):
             return [
-                "ok": true, "url": url, "token": token,
+                "ok": true, "id": id, "url": url, "token": token,
                 "width": width, "height": height, "frameRate": framesPerSecond,
             ]
         case .refused(let failure):

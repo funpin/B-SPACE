@@ -251,11 +251,13 @@ interface BackspaceElectronAPI {
   // the frames to the page over a local WebSocket: the answer says where to
   // connect and which token to say first. See "The local media channel" and
   // "Video on the channel" in packages/desktop-macos/README.md.
+  // A page may have a few captures at once (a share, and the preview of
+  // the source it is about to switch to); each is stopped by its id.
   startNativeScreenCapture?: (options: NativeScreenCaptureOptions) => Promise<NativeScreenCaptureResult>;
-  stopNativeScreenCapture?: () => void;
-  // The capture ended by itself: the window was closed, the display
+  stopNativeScreenCapture?: (id: string) => void;
+  // A capture ended by itself: the window was closed, the display
   // unplugged, the permission taken away.
-  onNativeScreenCaptureEnded?: (cb: () => void) => () => void;
+  onNativeScreenCaptureEnded?: (cb: (event: { id: string }) => void) => () => void;
 }
 
 interface NativeScreenCaptureOptions {
@@ -269,8 +271,8 @@ interface NativeScreenCaptureOptions {
 }
 
 type NativeScreenCaptureResult =
-  | { ok: true; url: string; token: string; width: number; height: number; frameRate: number }
-  | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'failed' };
+  | { ok: true; id: string; url: string; token: string; width: number; height: number; frameRate: number }
+  | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'too-many' | 'failed' };
 
 interface Window {
   backspace?: BackspaceElectronAPI;
