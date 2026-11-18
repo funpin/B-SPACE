@@ -183,6 +183,21 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   and `startMinimized` is on. The page loads and connects all the same. A
   launch by a link is never hidden.
 
+### What the page complains about
+
+A development build (`scripts/bundle.sh --identity dev`) writes the page's
+warnings and errors to `page.log` in its settings folder
+(`Application Support/Backspace-Dev`): what the web client logged with
+`console.warn` and `console.error`, errors nobody caught and promises nobody
+handled, one line each with the time, and a line for every page load. The
+file is started again when it passes a megabyte. The shipped app writes
+none (`ShellEnvironment.pageLogURL` is nil for it).
+
+It is there because a build that is being tried has no inspector open, and
+the system's own log says nothing of what happens inside the page. In the
+first call the client was tried in, a share that dropped the sharer from the
+call left only this to read, and the file named the cause in one attempt.
+
 ### Language and the menu bar
 
 - **Strings.** What the shell says on its own comes from

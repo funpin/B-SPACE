@@ -215,6 +215,9 @@ public final class MainWindowController: NSObject {
     private let makeSystemAudioCapturer: (() -> SystemAudioCapturer)?
     /// The captures of the system's sound that run now, as `captures`.
     private var audioCaptures: [String: (session: SystemAudioSession, channel: LocalMediaChannel)] = [:]
+    /// Writes the page's warnings and errors to a file, in a development
+    /// build.
+    private var pageLog: PageLog?
     /// Draws viewers' pointers over the display being shared; nil draws
     /// none.
     private let pointerOverlay: PointerOverlayPresenter?
@@ -344,6 +347,11 @@ public final class MainWindowController: NSObject {
             contract: contract,
             values: ["platform": AppIdentity.platform]
         )
+        if let url = environment.pageLogURL {
+            let log = PageLog(url: url)
+            log.install(into: configuration.userContentController)
+            pageLog = log
+        }
 
         let contentRect = NSRect(x: 0, y: 0, width: 1280, height: 800)
         webViewConfiguration = configuration
