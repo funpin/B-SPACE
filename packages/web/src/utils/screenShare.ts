@@ -14,6 +14,7 @@ import {
   acquireNativeScreenCapture, canCaptureNatively, isNativeScreenCapture, reconfigureNativeScreenCapture,
   type NativeCaptureLimits,
 } from '../platform/nativeCapture/nativeScreenCapture';
+import { acquireNativeSystemAudio, canCaptureSystemAudioNatively } from '../platform/nativeCapture/nativeSystemAudio';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import { startKeyframeWatchdog } from './keyframeWatchdog';
 import { isSoftwareH264Encoder, noteSoftwareH264, resolveScreenShareCodec, type ScreenShareCodec } from './screenShareCodec';
@@ -452,10 +453,19 @@ export async function stageScreenCapture(sourceId?: string | null): Promise<Medi
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
   if (sourceId && canCaptureNatively()) {
-    // Video only: the native capture carries no system audio yet.
     const stream = await acquireNativeScreenCapture(sourceId, nativeCaptureLimits(opts.capture));
     const video = stream.getVideoTracks()[0];
     if (video) video.contentHint = opts.contentHint;
+    // The system's sound is a capture of its own there. Without it the
+    // share still has its picture, so it goes on and says what is missing.
+    if (config.shareAudio && canCaptureSystemAudioNatively()) {
+      try {
+        stream.addTrack(await acquireNativeSystemAudio());
+      } catch (err) {
+        console.warn('[ScreenShare] The native system-audio capture did not start:', err);
+        useUIStore.getState().addToast(i18n.t('voice:screenPicker.audioCaptureFailed'), 'warning', 8000);
+      }
+    }
     return stream;
   }
   if (!isScreenCaptureSupported()) {
@@ -750,20 +760,19 @@ function liveOrNull(track: MediaStreamTrack | null): MediaStreamTrack | null {
  * Whether loopback audio can be added later, without a prompt, to a share of
  * this source: only the desktop app can, only for a source it listed itself
  * (picker mode `'app'`; a portal or an unknown mode would prompt again), and
- * only on a build that can preselect. The setup screen asks the same question
- * before Start.
+ * only on a build that can preselect. The native macOS shell captures the
+ * system's sound apart from the picture, so there it can whenever the shell
+ * has that capture. The setup screen asks the same question before Start.
  */
 export function canAddScreenShareAudioLater(
   sourceId: string | null,
   pickerMode: ScreenSharePickerMode | null,
 ): boolean {
-  return sourceId !== null
-    && pickerMode === 'app'
-    && isElectron()
+  if (sourceId === null || pickerMode !== 'app') return false;
+  // The native shell's preselection arms nothing: its sound is its own capture.
+  if (canCaptureNatively()) return canCaptureSystemAudioNatively();
+  return isElectron()
     && isScreenCaptureSupported()
-    // The native macOS shell's capture has no system audio yet, and its
-    // preselection arms nothing.
-    && !canCaptureNatively()
     && typeof getElectronAPI()?.preselectScreenSource === 'function';
 }
 
@@ -859,9 +868,11 @@ function settleWithin<T>(promise: Promise<T>, ms: number, discard: (late: T) => 
 /**
  * Take loopback audio for the running share: preselect the same source with
  * audio, capture it again, and keep only the audio track. The main process
- * answers a preselected request without a picker.
+ * answers a preselected request without a picker. In the native macOS shell
+ * the system's sound is a capture of its own and no source is involved.
  */
 async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTrack> {
+  if (canCaptureNatively()) return acquireNativeSystemAudio();
   const api = getElectronAPI();
   if (!api?.preselectScreenSource) throw new DOMException('Source preselection is not available', 'NotSupportedError');
   const ownFree = await acquireAppExcludedSystemAudio();

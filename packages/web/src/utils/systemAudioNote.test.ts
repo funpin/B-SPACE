@@ -57,6 +57,28 @@ describe('useOwnAudioInSystemAudio', () => {
     expect(ask).toHaveBeenCalledWith(true);
   });
 
+  it('tells the native macOS shell that this client takes its capture of the system\'s sound', async () => {
+    const ask = vi.fn<(does?: boolean | { nativeAudio: true }) => Promise<OwnAudioInSystemAudio>>(() => Promise.resolve('excluded'));
+    // The engine has what the capture is played into a track with.
+    vi.stubGlobal('Worker', class {});
+    vi.stubGlobal('AudioWorkletNode', class {});
+    window.backspace = {
+      platform: 'darwin',
+      getSystemAudioCapability: ask,
+      // The native shell's bridge has every member of the contract.
+      startSystemAudio: vi.fn(),
+      stopSystemAudio: vi.fn(),
+      startNativeSystemAudio: vi.fn(),
+    } as unknown as BackspaceElectronAPI;
+    try {
+      const { result } = renderHook(() => useOwnAudioInSystemAudio());
+      await waitFor(() => expect(result.current).toBe('excluded'));
+      expect(ask).toHaveBeenCalledWith({ nativeAudio: true });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('does not claim the source on a desktop app without the bridge to open it', async () => {
     const ask = vi.fn<(usesAppSource?: boolean) => Promise<OwnAudioInSystemAudio>>(() => Promise.resolve('included'));
     window.backspace = { platform: 'linux', getSystemAudioCapability: ask } as unknown as BackspaceElectronAPI;

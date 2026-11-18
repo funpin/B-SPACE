@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getElectronAPI } from '../platform/platform';
+import { canCaptureSystemAudioNatively } from '../platform/nativeCapture/nativeSystemAudio';
 import { canOpenAppSystemAudioSource } from './systemAudioSource';
 
 /**
@@ -17,6 +18,9 @@ import { canOpenAppSystemAudioSource } from './systemAudioSource';
  * - On Linux the answer is `excluded` only for a client that opens the
  *   desktop app's PipeWire source (`canOpenAppSystemAudioSource`); the
  *   loopback a client without it uses carries Backspace's playback.
+ * - In the native macOS shell the answer is `excluded` only for a client
+ *   that takes the shell's own capture (`canCaptureSystemAudioNatively`);
+ *   WebKit's capture, which a client without it uses, has no system audio.
  */
 export type SystemAudioNoteKey =
   | 'excluded'
@@ -98,10 +102,12 @@ function requestCapability(): Promise<OwnAudioInSystemAudio | null> {
   if (!capabilityRequest) {
     const ask = getElectronAPI()?.getSystemAudioCapability;
     // A desktop app older than the method keeps the notes it had before. The
-    // argument says whether this client opens the Linux system-audio source
-    // itself; a desktop app older than that argument ignores it.
+    // argument says what this client does itself: take the native macOS
+    // shell's capture, or open the Linux system-audio source; a desktop app
+    // older than that argument ignores it.
     capabilityRequest = typeof ask === 'function'
-      ? ask(canOpenAppSystemAudioSource()).then(asCapability, () => null)
+      ? ask(canCaptureSystemAudioNatively() ? { nativeAudio: true } : canOpenAppSystemAudioSource())
+        .then(asCapability, () => null)
       : Promise.resolve(null);
   }
   return capabilityRequest;
