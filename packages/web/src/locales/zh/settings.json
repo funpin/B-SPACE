@@ -49,8 +49,7 @@
       "title": "输出设备",
       "checkingAccess": "正在检查音频权限…",
       "device": {
-        "systemDefault": "系统默认",
-        "unsupported": "此浏览器不支持选择输出设备。音频将通过系统默认设备播放。"
+        "systemDefault": "系统默认"
       },
       "permissionPrompt": {
         "description": "请授予麦克风权限以列出输出设备（浏览器要求先获得麦克风权限方可读取输出设备名称）。",

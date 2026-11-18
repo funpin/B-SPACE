@@ -869,10 +869,26 @@ Both surfaces are backed by the shared `useAudioDevices()` hook. The store field
 - Output devices are gated behind microphone permission (no separate output permission exists in browsers).
 - Returns `inputLabels` / `outputLabels` maps with disambiguation suffixes for duplicate names (e.g. `"USB Audio (1)"`, `"USB Audio (2)"`).
 
-### Output routing — `AudioContext.setSinkId`
-All audio (remote voice, screen-share audio, sound effects) flows through `AudioManager`'s master bus → `AudioContext.destination`. Output device switching is therefore done via `AudioContext.setSinkId(deviceId)`, NOT via LiveKit's `switchActiveDevice('audiooutput')` (which targets `<audio>` elements that are killed by `AppLayout`'s MutationObserver). Safari < 17 lacks `setSinkId` on AudioContext — `AudioOutputSection` detects this (once a real context exists) and falls back to OS default with an explanatory note.
+### Output routing — `OutputRouter`
+All audio (remote voice, screen-share audio, sound effects) flows through `AudioManager`'s master bus (`masterBoost` → `masterCompressor`). What the compressor is connected to is decided by `OutputRouter` (`audio/outputRouter.ts`), which `AudioManager` creates with the context and which is the only thing that connects the bus to an output. LiveKit's `switchActiveDevice('audiooutput')` is not used: it targets LiveKit's own `<audio>` elements, which `AppLayout`'s MutationObserver kills.
 
-**Mobile platforms with no per-element output routing (iOS Safari):** `AudioOutputSection` feature-detects `'setSinkId' in HTMLMediaElement.prototype` at module load (cached). When false, the entire section is hidden — no header, no fallback copy. iOS users adjust audio routing via OS controls (Bluetooth menu, Control Center) and do not expect per-app output selection. Android Chrome ≥ 110 supports `setSinkId` and renders the picker normally. The detection runs before any hooks via an outer wrapper (`AudioOutputSection` → early-return-`null` → `AudioOutputSectionInner`) so the inner component's hook order remains stable.
+The router has three ways to work, chosen once from what the engine offers (`outputRoutingFor`):
+
+| Routing | Engine | How a device is reached |
+|---------|--------|-------------------------|
+| `context` | Chromium (browser, Electron) | `AudioContext.setSinkId(deviceId)`; the bus stays on `ctx.destination`. Unchanged from before the router |
+| `element` | WebKit (Safari, the native macOS client), Firefox: no `AudioContext.setSinkId`, but `HTMLMediaElement.setSinkId` | For the system default the bus plays on `ctx.destination` and nothing else is involved. For any other device the bus is connected to a `MediaStreamAudioDestinationNode` whose stream plays in an `<audio>` element (never attached to the document, marked `data-backspace="output"`) pointed at the device with `setSinkId`; the bus is disconnected from `ctx.destination` only after the element has started, so sound is on both devices for a moment and never on none |
+| `none` | iOS Safari | Nothing; the system routes sound |
+
+Rules of the `element` routing:
+
+- **A gesture may be required.** WebKit has a setting, `SpeakerSelectionRequiresUserGesture`, that is on by default in `WKWebView` on macOS 27.2 (read from its feature list). `setDevice` therefore reaches `setSinkId` before its first `await`, and callers invoke `AudioManager.setOutputDevice` straight from the click handler. A saved choice applied at start has no gesture: if `setSinkId` (or `play()`) rejects with `NotAllowedError`, sound stays on the default device, and the router applies the choice inside the user's next `pointerdown` or `keydown`. Whether WebKit really refuses a listed device outside a gesture has not been measured (an unknown device id is answered `NotFoundError` with or without one, and a listed id needs the microphone permission); the router works either way.
+- **The same choice arriving twice is asked once.** A pick reaches the router from the click and again from `AppLayout`'s effect on the saved setting; the second call has no gesture and would undo the first.
+- **A newer choice wins** over an answer that arrives late (a generation counter).
+- **A device that is gone** (`NotFoundError`) leaves sound on the default device and rejects; `pruneStaleDevices` then resets the saved choice.
+- The extra hop adds the element's playback buffer to the output delay; this is why the default device does not go through it. Whether WebKit's echo cancellation still sees sound played this way as the far end has not been measured: check with speakers on a non-default device before relying on it.
+
+**Platforms that can route nothing (iOS Safari):** `AudioOutputSection` asks `platformSupportsOutputSelection()`, which looks for `setSinkId` on `AudioContext.prototype` and `HTMLMediaElement.prototype`. When neither has it, the entire section is hidden — no header, no fallback copy. iOS users adjust audio routing via OS controls (Bluetooth menu, Control Center) and do not expect per-app output selection. Android Chrome ≥ 110 supports `setSinkId` and renders the picker normally. The detection runs before any hooks via an outer wrapper (`AudioOutputSection` → early-return-`null` → `AudioOutputSectionInner`) so the inner component's hook order remains stable.
 
 ### Touch-close on device pickers
 The Audio Input, Audio Output, and Video device dropdowns (`AudioInputSection.tsx`, `AudioOutputSection.tsx`, `VideoSection.tsx`) all listen for both `mousedown` AND `touchstart` (`{ passive: true }`) when implementing click-outside-to-close. iOS Safari does not synthesize `mousedown` reliably from a single tap; without the `touchstart` listener, mobile users would have to tap twice to dismiss an open popover.
@@ -884,7 +900,7 @@ Input device changes flow through `AudioManager.setInputDevice(deviceId)` (seria
 The global `devicechange` handler in `AppLayout.tsx` does four things on every event:
 1. **Prune** persisted IDs that no longer exist (`pruneStaleDevices`).
 2. **Re-acquire** the live mic stream when `inputDeviceId === 'default'` AND `AudioManager.hasActiveStream()`. Chromium does NOT migrate an existing `getUserMedia` track to the new OS-default — calling `setInputDevice('default')` triggers a fresh `getUserMedia` which picks up the new default; `syncMic` then republishes.
-3. **Re-apply** `setSinkId('')` when `outputDeviceId === 'default'`, for the analogous reason.
+3. **Re-apply** the default output (`setOutputDevice('default')`) when `outputDeviceId === 'default'`, for the analogous reason. Under the `context` routing this is `setSinkId('')`; under the `element` routing the context already follows the system default.
 4. **Toast** on a *new* `audioinput` group appearing (debounced 1s, deduped by `groupId` for 30s). Removals do not toast — the user already knows they unplugged it. Toast is informational ("AirPods Pro detected — choose it in Voice settings to switch") — never auto-switches; auto-switch would be a privacy/UX regression for users who deliberately keep a non-default device selected.
 
 ### Mic-track-loss recovery

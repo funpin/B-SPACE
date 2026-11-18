@@ -2,38 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useVoiceStore } from '../../../stores/voiceStore';
 import { AudioManager } from '../../../audio/AudioManager';
+import { platformSupportsOutputSelection } from '../../../audio/outputRouter';
 import { useAudioDevices } from '../../../hooks/useAudioDevices';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { SectionShell, DropdownItem } from './_shared/SettingsPickerPrimitives';
 
-/**
- * Feature-detect per-element output routing support. iOS Safari has zero
- * support for `HTMLMediaElement.setSinkId` (and likewise no AudioContext
- * variant); when both are absent, the OS routes audio (Bluetooth menu, etc.)
- * and an in-app picker would be non-functional.
- *
- * Cached at module level since support cannot change within a page lifetime.
- */
-let cachedPlatformSupportsSinkSelection: boolean | null = null;
-function platformSupportsSinkSelection(): boolean {
-  if (cachedPlatformSupportsSinkSelection !== null) return cachedPlatformSupportsSinkSelection;
-  if (typeof window === 'undefined' || typeof HTMLMediaElement === 'undefined') {
-    cachedPlatformSupportsSinkSelection = false;
-    return false;
-  }
-  const supported = 'setSinkId' in HTMLMediaElement.prototype;
-  cachedPlatformSupportsSinkSelection = supported;
-  return supported;
-}
-
 export function AudioOutputSection() {
-  // Hard gate: if the browser cannot route audio per-element at all (iOS
-  // Safari has zero support for HTMLMediaElement.setSinkId), hide the entire
-  // section. Users adjust output via OS controls (Bluetooth menu, etc.).
-  // This check is module-level cached; for a given page lifetime the function
-  // always returns the same value, so hook order downstream is stable.
-  if (!platformSupportsSinkSelection()) return null;
+  // Hard gate: if the engine can point neither an AudioContext nor a media
+  // element at a device (iOS Safari), hide the entire section. Users adjust
+  // output via OS controls (Bluetooth menu, etc.). The answer comes from the
+  // prototypes and cannot change within a page lifetime, so hook order
+  // downstream is stable.
+  if (!platformSupportsOutputSelection()) return null;
   return <AudioOutputSectionInner />;
 }
 
@@ -46,18 +27,6 @@ function AudioOutputSectionInner() {
   const { permState, outputs, outputLabels, requestPermission } = useAudioDevices();
 
   const [listOpen, setListOpen] = useState(false);
-  // Default to "supported" — only flip false if a real context exists and
-  // lacks setSinkId (Safari < 17). Pre-context users can still pick a device;
-  // AudioManager.setOutputDevice defers the actual setSinkId until the
-  // context exists (applyOutputDevice early-returns when ctx is null, and
-  // initContext re-applies the persisted ID on creation).
-  const [supportsSinkId, setSupportsSinkId] = useState(true);
-  // Bumped whenever AudioManager's AudioContext transitions to 'running'.
-  // Used as a dep on the supportsSinkId effect so the check re-evaluates
-  // when the user joins voice after opening Settings — without this, a
-  // user who opens Settings before joining voice would see an incorrect
-  // "browser doesn't support setSinkId" fallback that never recovers.
-  const [audioCtxGen, setAudioCtxGen] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Click-outside-to-close. Listens for both mousedown and touchstart so the
@@ -78,28 +47,6 @@ function AudioOutputSectionInner() {
     };
   }, [listOpen]);
 
-  // Listen for AudioContext resume events so the supportsSinkId check
-  // re-evaluates once the context first becomes available.
-  useEffect(() => {
-    if (permState !== 'granted') return;
-    const am = AudioManager.getInstance();
-    const unsubscribe = am.onResumed(() => setAudioCtxGen((g) => g + 1));
-    return () => { unsubscribe(); };
-  }, [permState]);
-
-  // Detect setSinkId support — Safari < 17 does not support it on AudioContext.
-  // Default state is "supported"; we only flip to false once we have a real
-  // context to inspect AND it lacks the API. This avoids hiding the picker
-  // from users who open Settings before joining voice (no context yet).
-  useEffect(() => {
-    const ctx = AudioManager.getInstance().getContext();
-    if (ctx && !('setSinkId' in ctx)) {
-      setSupportsSinkId(false);
-    } else {
-      setSupportsSinkId(true);
-    }
-  }, [permState, audioCtxGen]);
-
   if (permState === 'unknown') {
     return (
       <SectionShell title={t('voice.output.title')}>
@@ -111,15 +58,17 @@ function AudioOutputSectionInner() {
   // Output-device labels are gated behind microphone permission. If permission
   // is not granted we can still let the user adjust output volume + test the
   // current default, but the picker is hidden.
-  const showPicker = permState === 'granted' && supportsSinkId;
+  const showPicker = permState === 'granted';
   const systemDefaultLabel = t('voice.output.device.systemDefault');
   const selectedLabel = outputDeviceId === 'default'
     ? systemDefaultLabel
     : outputLabels.get(outputDeviceId) ?? systemDefaultLabel;
 
   const handleSelect = (id: string) => {
-    setOutputDevice(id);
+    // First, and straight from the click: an engine may accept a choice of
+    // speaker only inside the gesture that made it (outputRouter.ts).
     AudioManager.getInstance().setOutputDevice(id).catch(() => {});
+    setOutputDevice(id);
     setListOpen(false);
   };
 
@@ -157,10 +106,6 @@ function AudioOutputSectionInner() {
                 ))}
               </div>
             )}
-          </div>
-        ) : permState === 'granted' && !supportsSinkId ? (
-          <div className="text-xs text-txt-tertiary">
-            {t('voice.output.device.unsupported')}
           </div>
         ) : (
           <div className="space-y-2">

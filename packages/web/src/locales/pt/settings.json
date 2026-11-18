@@ -49,8 +49,7 @@
       "title": "Dispositivo de saída",
       "checkingAccess": "Verificando acesso ao áudio…",
       "device": {
-        "systemDefault": "Padrão do sistema",
-        "unsupported": "Este navegador não permite escolher um dispositivo de saída. O áudio é reproduzido no padrão do sistema."
+        "systemDefault": "Padrão do sistema"
       },
       "permissionPrompt": {
         "description": "Conceda permissão de microfone para listar os dispositivos de saída (os navegadores só mostram os nomes dos dispositivos de saída com acesso ao microfone).",

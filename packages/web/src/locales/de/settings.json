@@ -49,8 +49,7 @@
       "title": "Ausgabegerät",
       "checkingAccess": "Audiozugriff wird geprüft…",
       "device": {
-        "systemDefault": "Systemstandard",
-        "unsupported": "Dieser Browser unterstützt die Auswahl eines Ausgabegeräts nicht. Der Ton wird über den Systemstandard ausgegeben."
+        "systemDefault": "Systemstandard"
       },
       "permissionPrompt": {
         "description": "Erlaube den Mikrofonzugriff, um Ausgabegeräte aufzulisten (Browser zeigen Ausgabegerätenamen nur mit Mikrofonzugriff an).",
