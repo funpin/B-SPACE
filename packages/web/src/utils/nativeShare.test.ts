@@ -301,6 +301,32 @@ describe('a share the shell publishes', () => {
     expect(api.updateNativeScreenShare).toHaveBeenLastCalledWith({ audio: true });
   });
 
+  it('says once that the system does not draw the shared window', async () => {
+    const { say } = await live();
+    const told = () => useUIStore.getState().toasts.length;
+
+    say({ type: 'source-hidden', hidden: false });
+    expect(told()).toBe(0);
+    say({ type: 'source-hidden', hidden: true });
+    expect(told()).toBe(1);
+    // The user goes back and forth between that window and this app.
+    say({ type: 'source-hidden', hidden: false });
+    say({ type: 'source-hidden', hidden: true });
+    expect(told()).toBe(1);
+    expect(isNativeShareLive()).toBe(true);
+  });
+
+  it('says it at the start of a share of a window that is not drawn', async () => {
+    const { api, say } = shell();
+    api.startNativeScreenShare.mockResolvedValueOnce({ ok: true, width: 1152, height: 720, frameRate: 30, hidden: true });
+
+    expect(await publishNativeShare(room().room, staged, config, build())).toBe(true);
+
+    expect(useUIStore.getState().toasts).toHaveLength(1);
+    say({ type: 'source-hidden', hidden: true });
+    expect(useUIStore.getState().toasts).toHaveLength(1);
+  });
+
   it('keeps what the shell says it sends, for the connection panel', async () => {
     const { say } = await live();
     const stats = {

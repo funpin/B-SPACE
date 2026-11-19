@@ -12,6 +12,7 @@
  * pick and Start, and the calls. What a share does to the call's state is in
  * utils/nativeShare.ts.
  */
+import { create } from 'zustand';
 import { getElectronAPI } from '../platform';
 
 /**
@@ -32,6 +33,27 @@ export type StagedShare = MediaStream | NativeStagedShare;
 
 export function isNativeStagedShare(staged: StagedShare | null | undefined): staged is NativeStagedShare {
   return !!staged && (staged as NativeStagedShare).kind === 'native-share';
+}
+
+/**
+ * Whether the system draws the staged source now. A window in another of
+ * Stage Manager's sets or on another desktop is not drawn: the shell's
+ * preview of it has no picture, and a share of it shows viewers nothing
+ * until the window comes to the screen. The setup screen says so in words.
+ */
+export const useNativeStageStore = create<{ hidden: boolean }>(() => ({ hidden: false }));
+
+/** The one subscription that keeps `useNativeStageStore` true, made with the first stage. */
+let _hearsStage = false;
+
+function hearStage(): void {
+  if (_hearsStage) return;
+  const subscribe = getElectronAPI()?.onNativeScreenShareEvent;
+  if (!subscribe) return;
+  _hearsStage = true;
+  subscribe((event) => {
+    if (event.type === 'preview-hidden') useNativeStageStore.setState({ hidden: event.hidden });
+  });
 }
 
 /** Why the shell refused, as it said it (`reason` of a bridge answer). */
@@ -61,8 +83,13 @@ export function shellCanShare(): boolean {
 export async function stageNativeShare(sourceId: string): Promise<NativeStagedShare> {
   const start = getElectronAPI()?.startNativeSharePreview;
   if (!start) throw new NativeShareError('unsupported');
+  // Listening before the shell is asked: it may say the source is hidden
+  // before it answers, or a moment after.
+  hearStage();
+  useNativeStageStore.setState({ hidden: false });
   const answer = await start({ sourceId });
   if (!answer.ok) throw new NativeShareError(answer.reason);
+  if (answer.hidden) useNativeStageStore.setState({ hidden: true });
   return { kind: 'native-share', sourceId, width: answer.width, height: answer.height };
 }
 
@@ -71,6 +98,7 @@ export function dropNativeStage(): void {
   const api = getElectronAPI();
   api?.setNativeSharePreviewFrame?.(null);
   api?.stopNativeSharePreview?.();
+  useNativeStageStore.setState({ hidden: false });
 }
 
 /** Where the page's preview box is now; null hides the picture. */

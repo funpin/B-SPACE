@@ -350,7 +350,18 @@ interface NativeScreenShareUpdate {
 }
 
 type NativeScreenShareResult =
-  | { ok: true; width: number; height: number; frameRate: number }
+  | {
+      ok: true;
+      width: number;
+      height: number;
+      frameRate: number;
+      /**
+       * The system does not draw the source now (see `source-hidden`):
+       * viewers see a black picture until it does. Absent from a shell
+       * that does not say.
+       */
+      hidden?: boolean;
+    }
   | {
       ok: false;
       reason:
@@ -368,7 +379,8 @@ interface NativeSharePreviewFrame {
 }
 
 type NativeSharePreviewResult =
-  | { ok: true; width: number; height: number }
+  /** `hidden`: the system does not draw the source now, so the preview has no picture. */
+  | { ok: true; width: number; height: number; hidden?: boolean }
   | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'failed' };
 
 type NativeScreenShareEvent =
@@ -379,6 +391,15 @@ type NativeScreenShareEvent =
   | { type: 'audio-ended' }
   /** The preview's source ended by itself; not about a share. */
   | { type: 'preview-ended' }
+  /**
+   * The system stopped drawing the shared source, or draws it again: a
+   * window in another of Stage Manager's sets or on another desktop is
+   * not drawn, and its capture gives no frames. The share goes on;
+   * viewers keep the last picture they got.
+   */
+  | { type: 'source-hidden'; hidden: boolean }
+  /** The same about the source the setup screen previews. */
+  | { type: 'preview-hidden'; hidden: boolean }
   | {
       type: 'stats';
       /** Bits a second of video sent. */

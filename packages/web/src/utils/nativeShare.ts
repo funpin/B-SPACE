@@ -59,6 +59,8 @@ interface LiveShare {
   room: Room;
   quality: NativeShareQuality;
   unsubscribe: () => void;
+  /** The user was told once that the system does not draw the source. */
+  toldHidden: boolean;
 }
 
 let _live: LiveShare | null = null;
@@ -156,10 +158,24 @@ type ShareMessage =
   | 'voice:streamSettings.systemAudioEnded'
   | 'voice:streamSettings.systemAudioStartFailed'
   | 'voice:streamSettings.shareEndedSource'
-  | 'voice:streamSettings.shareEndedConnection';
+  | 'voice:streamSettings.shareEndedConnection'
+  | 'voice:streamSettings.shareSourceHidden';
 
 function toast(key: ShareMessage): void {
   useUIStore.getState().addToast(i18n.t(key), 'warning', 8000);
+}
+
+/**
+ * The system does not draw the shared source: a window in another of Stage
+ * Manager's sets or on another desktop. Viewers see nothing new until it
+ * is on the screen again, and the user, who is looking at this app and not
+ * at that window, would not know. Said once for a share: a user who goes
+ * back and forth between the two has been told.
+ */
+function tellHidden(live: LiveShare): void {
+  if (live.toldHidden) return;
+  live.toldHidden = true;
+  toast('voice:streamSettings.shareSourceHidden');
 }
 
 /** The share is over, however it ended: the call's state and everyone it is told to. */
@@ -188,6 +204,9 @@ function heard(live: LiveShare, event: NativeScreenShareEvent): void {
       // viewers then saw the share end. Those who were watching watch again.
       announce(live.room, 'stream_resume');
       return;
+    case 'source-hidden':
+      if (event.hidden) tellHidden(live);
+      return;
     case 'audio-ended':
       live.quality = { ...live.quality, audio: false };
       useVoiceStore.setState({ screenShareAudio: 'acquirable' });
@@ -201,7 +220,8 @@ function heard(live: LiveShare, event: NativeScreenShareEvent): void {
       return;
     default:
       // `resized` needs nothing from the page: viewers get the new size with
-      // the picture. `preview-ended` is the setup screen's.
+      // the picture. `preview-ended` and `preview-hidden` are the setup
+      // screen's.
       return;
   }
 }
@@ -236,9 +256,10 @@ export async function publishNativeShare(
     console.warn('[NativeShare] The shell did not start the share:', answer.reason);
     return false;
   }
-  const live: LiveShare = { room, quality, unsubscribe: () => { } };
+  const live: LiveShare = { room, quality, unsubscribe: () => { }, toldHidden: false };
   live.unsubscribe = onShellShareEvent((event) => heard(live, event));
   _live = live;
+  if (answer.hidden) tellHidden(live);
   useNativeShareStore.setState({ codec: quality.codec, stats: null, reconnecting: false });
   useVoiceStore.setState({
     isScreenSharing: true,

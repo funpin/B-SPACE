@@ -170,6 +170,25 @@ describe('a stream participant in the room', () => {
     expect(soundTrack.detach).toHaveBeenCalled();
   });
 
+  it('says the share is paused while its sharer\'s client has no picture to send', async () => {
+    const room = await viewerRoom();
+    joinOwner(room);
+    const stream = joinStream(room);
+    const video = publish(room, stream, Track.Source.ScreenShare, 'TR_V');
+    subscribe(room, stream, video, Track.Kind.Video);
+    expect(owner()?.screenSharePaused).toBe(false);
+
+    // The shell pauses the track while the system does not draw the shared window.
+    video.isMuted = true;
+    act(() => { room.emit(RoomEvent.TrackMuted, video as never, stream as never); });
+    expect(owner()).toMatchObject({ isScreenSharing: true, screenSharePaused: true, screenTrack: null });
+
+    video.isMuted = false;
+    act(() => { room.emit(RoomEvent.TrackUnmuted, video as never, stream as never); });
+    expect(owner()?.screenSharePaused).toBe(false);
+    expect(owner()?.screenTrack).not.toBeNull();
+  });
+
   it('is nobody on the list while its owner is not in the room', async () => {
     const room = await viewerRoom();
     const stream = joinStream(room);

@@ -17,7 +17,9 @@ import {
   canAddScreenShareAudioLater,
 } from '../../utils/screenShare';
 import { canCaptureNatively } from '../../platform/nativeCapture/nativeScreenCapture';
-import { isNativeStagedShare, onShellShareEvent, type StagedShare } from '../../platform/nativeShare/nativeScreenShare';
+import {
+  isNativeStagedShare, onShellShareEvent, useNativeStageStore, type StagedShare,
+} from '../../platform/nativeShare/nativeScreenShare';
 import { useNativeSharePreviewFrame } from '../../platform/nativeShare/useNativeSharePreviewFrame';
 import { canShareNativelyInThisCall } from '../../utils/nativeShare';
 import { StreamQualityControls, StreamSummary, StreamHostSubtitle } from './StreamQualityControls';
@@ -343,6 +345,9 @@ export function ScreenShareSetup() {
   // The shell's live preview, kept over the preview element wherever the
   // layout puts it, and out of sight while the quality drawer lies over it.
   const nativeStaged = isNativeStagedShare(staged);
+  // A window the system does not draw now has no picture to preview: the
+  // box stays black, and the words beside it say why.
+  const stagedHidden = useNativeStageStore((s) => s.hidden) && nativeStaged;
   useNativeSharePreviewFrame(previewRef, isOpen && nativeStaged && !starting, settingsOpen ? drawerRef : undefined);
 
   // The previewed source ended by itself (the window closed, the display
@@ -612,6 +617,9 @@ export function ScreenShareSetup() {
                       </div>
                       {audioNeedsRepick && (
                         <div className="text-2xs text-status-warn mt-1">{t('voice:screenPicker.audioNeedsRepick')}</div>
+                      )}
+                      {stagedHidden && (
+                        <div className="text-2xs text-status-warn mt-1" role="status">{t('voice:screenPicker.sourceHidden')}</div>
                       )}
                     </div>
                   </div>

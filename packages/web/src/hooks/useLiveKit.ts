@@ -116,6 +116,15 @@ export interface ParticipantInfo {
   isDeafened: boolean;
   isCameraOn: boolean;
   isScreenSharing: boolean;
+  /**
+   * The share is published and its sharer's client says it has no picture
+   * to send now: the native macOS shell pauses the track while the system
+   * does not draw the shared window (minimized, in another of Stage
+   * Manager's sets, on another desktop). The call's server keeps that, so
+   * someone who joins later is told too. The tile says it in words: an
+   * empty tile would read as a fault.
+   */
+  screenSharePaused?: boolean;
   isLocal: boolean;
   audioTrack: MediaStreamTrack | null;
   videoTrack: MediaStreamTrack | null;
@@ -459,10 +468,14 @@ export function useLiveKit() {
       let lkVideoTrack: Track | null = null;
       let lkScreenTrack: Track | null = null;
       let hasScreenSharePublication = false;
+      let screenSharePaused = false;
       let hasCameraPublication = false;
       p.trackPublications.forEach((pub) => {
         // Detect screen share publication even if unsubscribed
-        if (pub.source === Track.Source.ScreenShare) hasScreenSharePublication = true;
+        if (pub.source === Track.Source.ScreenShare) {
+          hasScreenSharePublication = true;
+          if (pub.isMuted) screenSharePaused = true;
+        }
         // Detect camera publication even if unsubscribed (for unwatched cameras)
         if (pub.source === Track.Source.Camera) hasCameraPublication = true;
 
@@ -485,7 +498,10 @@ export function useLiveKit() {
       // share is all that is taken from it.
       for (const carrier of streamParticipants.get(p.identity) ?? []) {
         carrier.trackPublications.forEach((pub) => {
-          if (pub.source === Track.Source.ScreenShare) hasScreenSharePublication = true;
+          if (pub.source === Track.Source.ScreenShare) {
+            hasScreenSharePublication = true;
+            if (pub.isMuted) screenSharePaused = true;
+          }
           const track = pub.track;
           if (!track || pub.isMuted || !pub.isSubscribed) return;
           const mt = track.mediaStreamTrack;
@@ -531,6 +547,7 @@ export function useLiveKit() {
         isScreenSharing: isLocal
           ? localShareLive || streamParticipants.has(p.identity) && hasScreenSharePublication
           : hasScreenSharePublication || (republish?.isBridging(p.identity) ?? false),
+        screenSharePaused,
         isLocal,
         audioTrack,
         videoTrack,

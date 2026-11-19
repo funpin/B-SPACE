@@ -435,6 +435,8 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
   }, [userId, participant.identity]);
 
   const hasVideo = liveScreenTrack !== null;
+  // The sharer's client has no picture to send now (ParticipantInfo.screenSharePaused).
+  const paused = participant.screenSharePaused === true && !hasVideo;
 
   return (
     <div
@@ -462,7 +464,16 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
               <p className={`text-txt-primary font-semibold ${large ? 'text-sm' : 'text-xs leading-tight line-clamp-2'}`}>
                 {t('voice:stream.isStreaming', { name: displayName })}
               </p>
-              {!isLocal && (
+              {paused && (
+                <p
+                  data-testid={isLocal ? 'stream-tile-paused-own' : 'stream-tile-paused'}
+                  role="status"
+                  className={`text-txt-secondary ${large ? 'text-sm mt-1' : 'text-2xs leading-tight mt-0.5 line-clamp-3'}`}
+                >
+                  {isLocal ? t('voice:stream.pausedOwn') : t('voice:stream.paused', { name: displayName })}
+                </p>
+              )}
+              {!isLocal && !(paused && isWatching) && (
                 <Button
                   variant="primary"
                   size={large ? 'md' : 'sm'}
