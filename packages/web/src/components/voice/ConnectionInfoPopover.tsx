@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useTrackStats, AudioTrackStat, VideoTrackStat } from '../../hooks/useTrackStats';
+import { useNativeShareStore } from '../../utils/nativeShare';
 import { getActiveRoom } from '../../hooks/useLiveKit';
 import { useFloatingPosition } from '../../hooks/useFloatingPosition';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
@@ -143,10 +144,14 @@ export function ConnectionInfoPopover({ open, onClose, anchorRef }: ConnectionIn
   const portalContainer = usePortalContainer();
   const stats = useTrackStats(open);
   const codecChoice = useVoiceStore((s) => s.screenShareConfig.codec);
+  // A share the native shell publishes was asked for in the shell's codec,
+  // which the page's own choice does not decide.
+  const shellCodec = useNativeShareStore((s) => s.codec);
   // Auto shows what it resolved to, e.g. "H264 (Auto)".
+  const resolvedCodec = (shellCodec ?? resolveScreenShareCodec(codecChoice)).toUpperCase();
   const requestedCodec = codecChoice === 'auto'
-    ? `${resolveScreenShareCodec('auto').toUpperCase()} (${t('voice:streamSettings.codecOption.auto')})`
-    : codecChoice.toUpperCase();
+    ? `${resolvedCodec} (${t('voice:streamSettings.codecOption.auto')})`
+    : resolvedCodec;
 
   const { style } = useFloatingPosition(anchorRef, popoverRef, {
     placement: 'top',

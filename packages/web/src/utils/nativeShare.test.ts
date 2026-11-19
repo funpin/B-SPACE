@@ -171,6 +171,8 @@ describe('going live through the shell', () => {
     expect(api.stopNativeSharePreview).toHaveBeenCalled();
     expect(isNativeShareLive()).toBe(true);
     expect(useVoiceStore.getState()).toMatchObject({ isScreenSharing: true, screenShareAudio: 'published' });
+    // What the connection panel names as the codec that was asked for.
+    expect(useNativeShareStore.getState().codec).toBe('h265');
   });
 
   it('asks for a direct call\'s token in a direct call', async () => {
@@ -257,6 +259,7 @@ describe('a share the shell publishes', () => {
     expect(api.startNativeScreenShare).toHaveBeenLastCalledWith(expect.objectContaining({ token: 'second-token', codec: 'h264' }));
     expect(isNativeShareLive()).toBe(true);
     expect(useVoiceStore.getState().isScreenSharing).toBe(true);
+    expect(useNativeShareStore.getState().codec).toBe('h264');
   });
 
   it('stops when the user stops it: viewers are told first, the call\'s state follows', async () => {
@@ -269,6 +272,7 @@ describe('a share the shell publishes', () => {
     expect(isNativeShareLive()).toBe(false);
     expect(listening()).toBe(false);
     expect(useVoiceStore.getState()).toMatchObject({ isScreenSharing: false, screenShareAudio: null });
+    expect(useNativeShareStore.getState().codec).toBeNull();
     expect(mocks.broadcast).toHaveBeenCalled();
   });
 

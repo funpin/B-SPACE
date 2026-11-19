@@ -46,12 +46,14 @@ export interface NativeShareQuality {
 export type NativeShareStats = Extract<NativeScreenShareEvent, { type: 'stats' }>;
 
 interface NativeShareState {
+  /** The codec the shell was asked to publish the live share in; null while there is none. */
+  codec: 'h264' | 'h265' | null;
   stats: NativeShareStats | null;
   /** The share's own connection is being restored; the share is kept. */
   reconnecting: boolean;
 }
 
-export const useNativeShareStore = create<NativeShareState>(() => ({ stats: null, reconnecting: false }));
+export const useNativeShareStore = create<NativeShareState>(() => ({ codec: null, stats: null, reconnecting: false }));
 
 interface LiveShare {
   room: Room;
@@ -165,7 +167,7 @@ function settle(live: LiveShare, announceStop: boolean): void {
   live.unsubscribe();
   if (_live === live) _live = null;
   if (announceStop) announce(live.room, 'stream_stop');
-  useNativeShareStore.setState({ stats: null, reconnecting: false });
+  useNativeShareStore.setState({ codec: null, stats: null, reconnecting: false });
   useVoiceStore.setState({ isScreenSharing: false, screenShareAudio: null });
   // `voice_status` carries isScreenSharing to people who are not in the room.
   broadcastVoiceStatus();
@@ -237,7 +239,7 @@ export async function publishNativeShare(
   const live: LiveShare = { room, quality, unsubscribe: () => { } };
   live.unsubscribe = onShellShareEvent((event) => heard(live, event));
   _live = live;
-  useNativeShareStore.setState({ stats: null, reconnecting: false });
+  useNativeShareStore.setState({ codec: quality.codec, stats: null, reconnecting: false });
   useVoiceStore.setState({
     isScreenSharing: true,
     screenShareAudio: quality.audio ? 'published' : 'acquirable',
@@ -306,6 +308,7 @@ async function restart(live: LiveShare, next: NativeShareQuality): Promise<void>
     return;
   }
   live.quality = next;
+  useNativeShareStore.setState({ codec: next.codec });
   useVoiceStore.setState({ screenShareAudio: next.audio ? 'published' : 'acquirable' });
 }
 
@@ -329,7 +332,7 @@ export function endNativeShareWithRoom(room: Room): void {
   stopShellShare();
   live.unsubscribe();
   _live = null;
-  useNativeShareStore.setState({ stats: null, reconnecting: false });
+  useNativeShareStore.setState({ codec: null, stats: null, reconnecting: false });
   useVoiceStore.setState({ isScreenSharing: false, screenShareAudio: null });
 }
 
@@ -347,5 +350,5 @@ export function resetNativeShareForTests(): void {
   _live?.unsubscribe();
   _live = null;
   _applying = Promise.resolve();
-  useNativeShareStore.setState({ stats: null, reconnecting: false });
+  useNativeShareStore.setState({ codec: null, stats: null, reconnecting: false });
 }
