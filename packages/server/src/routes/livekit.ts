@@ -5,6 +5,7 @@ import { sendError } from '../utils/httpErrors.js';
 import { config } from '../config.js';
 import { getChannelSpaceId, hasPermission, computePermissions, isDmMember, PermissionBits } from '../utils/permissions.js';
 import type { LiveKitTokenRequest, LiveKitTokenResponse } from '@backspace/shared';
+import { STREAM_OF_ATTRIBUTE, streamIdentityOf } from '@backspace/shared/src/streamParticipant.js';
 import { getDb, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 
@@ -40,15 +41,51 @@ export async function generateFederatedCallToken(
   return token.toJwt();
 }
 
+/**
+ * The token of a stream participant: the second participant a native client
+ * joins the room with to publish its screen share from the shell
+ * (docs/systems/voice.md, "The stream participant"). It can publish a screen
+ * share and the share's sound and nothing else: it hears and sees nobody,
+ * sends no data, and cannot change the attribute that says whose stream it
+ * is. The time to join with it is short, because it is asked for at the
+ * moment a share starts; LiveKit renews it for a participant that is in.
+ */
+export async function generateStreamToken(roomName: string, ownerIdentity: string): Promise<string> {
+  const token = new AccessToken(config.livekit.apiKey!, config.livekit.apiSecret!, {
+    identity: streamIdentityOf(ownerIdentity),
+    ttl: '10m',
+    attributes: { [STREAM_OF_ATTRIBUTE]: ownerIdentity },
+  });
+
+  token.addGrant({
+    room: roomName,
+    roomJoin: true,
+    canPublish: true,
+    canPublishSources: [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO],
+    canSubscribe: false,
+    canPublishData: false,
+    canUpdateOwnMetadata: false,
+  });
+
+  return token.toJwt();
+}
+
 export async function livekitRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: LiveKitTokenRequest & { dmChannelId?: string } }>('/api/livekit/token', {
+  app.post<{ Body: LiveKitTokenRequest }>('/api/livekit/token', {
     preHandler: authenticate,
   }, async (request, reply) => {
     if (!config.livekit.apiKey || !config.livekit.apiSecret) {
       return sendError(reply, 503, 'voice_disabled');
     }
 
-    const { channelId, dmChannelId } = request.body as { channelId?: string; dmChannelId?: string };
+    const { channelId, dmChannelId, purpose = 'voice' } = (request.body ?? {}) as {
+      channelId?: unknown;
+      dmChannelId?: unknown;
+      purpose?: unknown;
+    };
+    if (purpose !== 'voice' && purpose !== 'stream') {
+      return sendError(reply, 400, 'validation_failed');
+    }
 
     // Determine room name based on channel type
     let roomName: string;
@@ -91,6 +128,18 @@ export async function livekitRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const identity = `${request.userId}:${request.username}`;
+    const livekitUrl = config.livekit.url ?? '';
+
+    if (purpose === 'stream') {
+      if (!canStream) {
+        return sendError(reply, 403, 'voice_stream_forbidden');
+      }
+      const response: LiveKitTokenResponse = {
+        token: await generateStreamToken(roomName, identity),
+        url: livekitUrl,
+      };
+      return reply.code(200).send(response);
+    }
 
     const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
       identity,
@@ -118,11 +167,10 @@ export async function livekitRoutes(app: FastifyInstance): Promise<void> {
 
     const jwt = await token.toJwt();
 
-    const livekitUrl = config.livekit.url ?? '';
-
     const response: LiveKitTokenResponse = {
       token: jwt,
-      url: livekitUrl
+      url: livekitUrl,
+      streamTokens: true,
     };
     return reply.code(200).send(response);
   });

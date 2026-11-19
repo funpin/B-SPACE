@@ -66,7 +66,7 @@ and after the pass.
 | 22 | MUTE_MEMBERS | Space-mute others |
 | 23 | DEAFEN_MEMBERS | Space-deafen others |
 | 24 | MOVE_MEMBERS | Move between voice channels |
-| 25 | STREAM | Screen share |
+| 25 | STREAM | Screen share; also what a stream token is issued on (voice.md, "The stream participant") |
 | 26 | DISCONNECT_MEMBERS | Disconnect from voice |
 
 **Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM. MENTION_EVERYONE is not a default: it is granted per role.

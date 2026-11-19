@@ -359,9 +359,11 @@ Backend: Klipy API (requires `gifApiKey` in instance_settings)
 
 ## Voice (`routes/livekit.ts`) — auth required
 ```
-POST /livekit/token  { channelId | dmChannelId } → { token, url }
+POST /livekit/token  { channelId | dmChannelId, purpose?: 'voice' | 'stream' } → { token, url, streamTokens? }
 ```
 Permissions checked: CONNECT, SPEAK, STREAM (space channels). DM calls: always full grants.
+
+`purpose` defaults to `voice`: the user's own participant, as before; its answer carries `streamTokens: true`, which is how a client learns that this server issues stream tokens (a server that predates the field ignores `purpose` and answers with a voice token). `purpose: 'stream'` answers with the token of the user's **stream participant** (voice.md, "The stream participant"): same guards as the voice token, plus `403 voice_stream_forbidden` when the member has no STREAM in the channel. Any other `purpose` is `400 validation_failed`.
 
 ## Instance (`routes/instance.ts`) — public
 ```

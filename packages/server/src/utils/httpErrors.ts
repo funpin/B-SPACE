@@ -245,6 +245,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   // misc
   voice_disabled: 'Voice/video is not configured on this server',
   voice_connect_forbidden: 'Missing CONNECT permission',
+  voice_stream_forbidden: 'Missing STREAM permission',
   dm_call_in_progress: 'A call is already running in this conversation',
   dm_call_not_found: 'This call has already ended',
   file_not_found: 'File not found',

@@ -259,6 +259,7 @@ export const ERROR_CODES = [
   // misc
   'voice_disabled',
   'voice_connect_forbidden',
+  'voice_stream_forbidden',
   'dm_call_in_progress',
   'dm_call_not_found',
   'file_not_found',

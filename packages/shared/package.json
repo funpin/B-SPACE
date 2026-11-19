@@ -26,7 +26,9 @@
     "./src/mentions": "./src/mentions.ts",
     "./src/mentions.js": "./src/mentions.ts",
     "./src/voiceConnection": "./src/voiceConnection.ts",
-    "./src/voiceConnection.js": "./src/voiceConnection.ts"
+    "./src/voiceConnection.js": "./src/voiceConnection.ts",
+    "./src/streamParticipant": "./src/streamParticipant.ts",
+    "./src/streamParticipant.js": "./src/streamParticipant.ts"
   },
   "scripts": {
     "build": "tsc",
