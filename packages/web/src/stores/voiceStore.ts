@@ -112,6 +112,16 @@ export interface VoiceState {
    * call hosted elsewhere): its limits cannot be asked for. Not persisted.
    */
   livekitHostOrigin: string | null;
+  /**
+   * Where a stream token for the call the user is in can be asked for: the
+   * instance that issued the voice token, when its answer said it issues
+   * stream tokens (`streamTokens`), and what to ask it about. Null outside a
+   * call, for a server that predates stream tokens, and for a call whose
+   * token came by federation relay. A native shell publishes the share
+   * itself only when this is set. Recorded by `useLiveKit.connect`. Not
+   * persisted.
+   */
+  streamTokenSource: { origin: string; channelId: string; isDm: boolean; url: string } | null;
   /** System audio of the live share; null while not sharing. Not persisted. */
   screenShareAudio: ScreenShareAudioState | null;
   participants: ParticipantInfo[];
@@ -328,6 +338,7 @@ export const useVoiceStore = create<VoiceState>()(
       isScreenSharing: false,
       screenShareAudio: null,
       livekitHostOrigin: '',
+      streamTokenSource: null,
       micPermissionDenied: false,
       participants: [],
       speakingParticipantIds: new Set(),

@@ -17,6 +17,9 @@ import {
   canAddScreenShareAudioLater,
 } from '../../utils/screenShare';
 import { canCaptureNatively } from '../../platform/nativeCapture/nativeScreenCapture';
+import { isNativeStagedShare, onShellShareEvent, type StagedShare } from '../../platform/nativeShare/nativeScreenShare';
+import { useNativeSharePreviewFrame } from '../../platform/nativeShare/useNativeSharePreviewFrame';
+import { canShareNativelyInThisCall } from '../../utils/nativeShare';
 import { StreamQualityControls, StreamSummary, StreamHostSubtitle } from './StreamQualityControls';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
@@ -105,12 +108,12 @@ export function ScreenShareSetup() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Staged capture (all platforms)
-  const [staged, setStaged] = useState<MediaStream | null>(null);
+  const [staged, setStaged] = useState<StagedShare | null>(null);
   const [stagedShareAudio, setStagedShareAudio] = useState<boolean>(config.shareAudio);
   const [staging, setStaging] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<SetupError>(null);
-  const stagedRef = useRef<MediaStream | null>(null);
+  const stagedRef = useRef<StagedShare | null>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -154,7 +157,7 @@ export function ScreenShareSetup() {
     setPromptInFlight(value);
   }, []);
 
-  const replaceStaged = useCallback((next: MediaStream | null) => {
+  const replaceStaged = useCallback((next: StagedShare | null) => {
     if (stagedRef.current && stagedRef.current !== next) stopStagedCapture(stagedRef.current);
     stagedRef.current = next;
     setStaged(next);
@@ -217,7 +220,7 @@ export function ScreenShareSetup() {
     }
     setSelectedId(sourceId);
     const generation = ++stageGenerationRef.current;
-    if (canCaptureNatively()) {
+    if (canShareNativelyInThisCall() || canCaptureNatively()) {
       // The native macOS shell captures the source it is told to: there
       // is no request to arm a preselection for.
     } else if (api.preselectScreenSource) {
@@ -247,8 +250,13 @@ export function ScreenShareSetup() {
     if (!api?.getScreenSharePickerMode) { setPickerMode('app'); return; }
     let cancelled = false;
     // The native macOS shell lists sources itself only for a client that
-    // can take its capture; saying so is what turns the list on.
-    api.getScreenSharePickerMode(canCaptureNatively() ? { nativeCapture: true } : undefined)
+    // can have it publish the share, or can take its capture; saying so is
+    // what turns the list on.
+    const nativeShare = canShareNativelyInThisCall();
+    const nativeCapture = canCaptureNatively();
+    api.getScreenSharePickerMode(nativeShare || nativeCapture
+      ? { ...(nativeShare ? { nativeShare: true } : {}), ...(nativeCapture ? { nativeCapture: true } : {}) }
+      : undefined)
       .then((mode) => { if (!cancelled) setPickerMode(mode); })
       .catch(() => { if (!cancelled) setPickerMode('app'); });
     return () => { cancelled = true; };
@@ -324,14 +332,33 @@ export function ScreenShareSetup() {
   useEffect(() => {
     const el = previewRef.current;
     if (!el) return;
-    el.srcObject = staged;
-    if (staged) el.play().catch(() => {});
+    // A source the shell previews has no stream: its picture is the shell's
+    // own layer, put over this element (useNativeSharePreviewFrame below).
+    const stream = isNativeStagedShare(staged) ? null : staged;
+    el.srcObject = stream;
+    if (stream) el.play().catch(() => {});
     return () => { el.srcObject = null; };
   }, [staged]);
 
+  // The shell's live preview, kept over the preview element wherever the
+  // layout puts it, and out of sight while the quality drawer lies over it.
+  const nativeStaged = isNativeStagedShare(staged);
+  useNativeSharePreviewFrame(previewRef, isOpen && nativeStaged && !starting, settingsOpen ? drawerRef : undefined);
+
+  // The previewed source ended by itself (the window closed, the display
+  // unplugged): there is nothing staged any more.
+  useEffect(() => {
+    if (!nativeStaged) return;
+    return onShellShareEvent((event) => {
+      if (event.type !== 'preview-ended') return;
+      replaceStaged(null);
+      setSelectedId(null);
+    });
+  }, [nativeStaged, replaceStaged]);
+
   // Browser "Stop sharing" bar during staging ends the track: drop the preview
   useEffect(() => {
-    const track = staged?.getVideoTracks()[0];
+    const track = isNativeStagedShare(staged) ? undefined : staged?.getVideoTracks()[0];
     if (!track) return;
     const onEnded = () => { replaceStaged(null); setSelectedId(null); };
     track.addEventListener('ended', onEnded);

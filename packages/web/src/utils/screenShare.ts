@@ -15,6 +15,10 @@ import {
   type NativeCaptureLimits,
 } from '../platform/nativeCapture/nativeScreenCapture';
 import { acquireNativeSystemAudio, canCaptureSystemAudioNatively } from '../platform/nativeCapture/nativeSystemAudio';
+import {
+  dropNativeStage, isNativeStagedShare, stageNativeShare, type StagedShare,
+} from '../platform/nativeShare/nativeScreenShare';
+import { canShareNativelyInThisCall, isNativeShareLive, publishNativeShare, stopNativeShare } from './nativeShare';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import { startKeyframeWatchdog } from './keyframeWatchdog';
 import { isSoftwareH264Encoder, noteSoftwareH264, resolveScreenShareCodec, type ScreenShareCodec } from './screenShareCodec';
@@ -483,9 +487,12 @@ async function captureDisplayMedia(constraints: DisplayMediaStreamOptions): Prom
  *   one. The native macOS shell captures exactly that; everywhere else the
  *   source is the desktop app's preselection or the browser's prompt.
  */
-export async function stageScreenCapture(sourceId?: string | null): Promise<MediaStream> {
+export async function stageScreenCapture(sourceId?: string | null): Promise<StagedShare> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
+  // Where the shell publishes the share itself there is no stream to hold:
+  // the source is staged, and the shell previews it over the page.
+  if (sourceId && canShareNativelyInThisCall()) return stageNativeShare(sourceId);
   if (sourceId && canCaptureNatively()) {
     const stream = await acquireNativeScreenCapture(sourceId, nativeCaptureLimits(opts.capture));
     const video = stream.getVideoTracks()[0];
@@ -543,7 +550,9 @@ export async function stageScreenCapture(sourceId?: string | null): Promise<Medi
  * track is local only, so there is no SFU renegotiation. Lets the setup screen
  * reflect quality changes in the preview before anything is sent.
  */
-export async function applyStagedCaptureConfig(stream: MediaStream): Promise<void> {
+export async function applyStagedCaptureConfig(stream: StagedShare): Promise<void> {
+  // A source the shell previews is shown as it is; the quality is the share's.
+  if (isNativeStagedShare(stream)) return;
   const track = stream.getVideoTracks()[0];
   if (!track || track.readyState !== 'live') return;
   const config = useVoiceStore.getState().screenShareConfig;
@@ -556,7 +565,11 @@ export async function applyStagedCaptureConfig(stream: MediaStream): Promise<voi
   track.contentHint = opts.contentHint;
 }
 
-export function stopStagedCapture(stream: MediaStream | null | undefined): void {
+export function stopStagedCapture(stream: StagedShare | null | undefined): void {
+  if (isNativeStagedShare(stream)) {
+    dropNativeStage();
+    return;
+  }
   stream?.getTracks().forEach((t) => t.stop());
 }
 
@@ -615,11 +628,13 @@ export interface PublishScreenShareOptions {
 
 export async function publishScreenShare(
   room: Room,
-  stream: MediaStream,
+  stream: StagedShare,
   options: PublishScreenShareOptions = {},
 ): Promise<boolean> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
+  // The shell publishes it: the page hands over what was staged.
+  if (isNativeStagedShare(stream)) return publishNativeShare(room, stream, config, opts);
   const needsH264SdpPatch = opts.publish.videoCodec === 'h264';
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack || videoTrack.readyState !== 'live') return false;
@@ -1246,6 +1261,11 @@ function watchKeyframes(room: Room, trackId: string): void {
 // ---------------------------------------------------------------------------
 
 export async function stopScreenShare(room: Room): Promise<void> {
+  // A share the shell publishes has no publication of the page's to take down.
+  if (isNativeShareLive()) {
+    stopNativeShare();
+    return;
+  }
   // Sent first and not awaited: a stop must not wait on the data channel.
   // Viewers handle the message on either side of the removal.
   announceShare(room, 'stream_stop');

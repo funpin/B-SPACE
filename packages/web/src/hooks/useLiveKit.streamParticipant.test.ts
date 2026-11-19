@@ -322,3 +322,55 @@ describe('a share published by the participant itself', () => {
     expect(video.setSubscribed).toHaveBeenCalledWith(true);
   });
 });
+
+describe('this client\'s own share, published by its shell', () => {
+  const ME = 'me:Me';
+
+  async function sharingFromTheShell() {
+    const room = await viewerRoom();
+    (room.localParticipant as { identity: string }).identity = ME;
+    const stream = join(room, `stream.${ME}`, { streamOf: ME });
+    return { room, stream };
+  }
+
+  const me = () => useVoiceStore.getState().participants.find((p) => p.isLocal);
+
+  it('is the local participant\'s share, watched for the local tile', async () => {
+    const { room, stream } = await sharingFromTheShell();
+    expect(listed()).toEqual([]);
+    expect(me()?.isScreenSharing).toBe(false);
+
+    const video = publish(room, stream, Track.Source.ScreenShare, 'TR_V');
+
+    expect(listed()).toEqual([]);
+    expect(me()?.isScreenSharing).toBe(true);
+    expect(video.setSubscribed).toHaveBeenCalledWith(true);
+    expect(useVoiceStore.getState().watchingStreams.has('me')).toBe(true);
+
+    const track = subscribe(room, stream, video, Track.Kind.Video);
+    expect(me()?.screenTrack).toBe(track.mediaStreamTrack);
+  });
+
+  it('never has its sound fetched back', async () => {
+    const { room, stream } = await sharingFromTheShell();
+    publish(room, stream, Track.Source.ScreenShare, 'TR_V');
+    const sound = publish(room, stream, Track.Source.ScreenShareAudio, 'TR_A');
+    expect(sound.setSubscribed).not.toHaveBeenCalled();
+
+    setStreamSubscription(room, ME, true);
+    expect(sound.setSubscribed).not.toHaveBeenCalled();
+
+    // Letting go is never refused.
+    setStreamSubscription(room, ME, false);
+    expect(sound.setSubscribed).toHaveBeenCalledWith(false);
+  });
+
+  it('is unwatched when it is unpublished', async () => {
+    const { room, stream } = await sharingFromTheShell();
+    const video = publish(room, stream, Track.Source.ScreenShare, 'TR_V');
+    stream.trackPublications.delete(video.trackSid);
+    act(() => { room.emit(RoomEvent.TrackUnpublished, video as never, stream as never); });
+    expect(useVoiceStore.getState().watchingStreams.has('me')).toBe(false);
+  });
+});
+

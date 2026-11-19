@@ -136,7 +136,19 @@ Everything keyed by a sharer (the watcher set, pointers, the overlay flag, the r
 
 `dev-stream-viewer.html` is the workbench for this: it joins a real LiveKit room as a viewer with a pasted token and shows which participant is whose stream, what a watch by the owner's identity subscribes to, and what the engine is given (codec, size, frame rate, the sound's source). Measured with it on 2026-11-19 against the native package's `StreamProbe`: a Chromium viewer decodes the H.265 share a native client publishes at 2560x1440 and 59 frames a second, and receives its sound as `screen_share_audio`.
 
-Not built yet: the shell that joins with the token and the page that starts it, and stream tokens for federated DM calls, whose tokens travel in the call relay rather than through this route (docs/superpowers/plans/2026-11-16-macos-native-client.md, section 12). Not verified yet: a viewer that cannot decode H.265 (Firefox) getting the H.264 backup track.
+**The sharer's side (the native macOS shell).** `utils/nativeShare.ts` is the share as the call sees it from the page; `platform/nativeShare/` is the bridge. The page holds no stream: `stageScreenCapture` returns a `NativeStagedShare` (the source) where `canShareNativelyInThisCall()` says so, and `publishScreenShare`, `stopScreenShare` and the settings effect in `useLiveKit` hand over to `publishNativeShare`, `stopNativeShare` and `applyNativeShareConfig`.
+
+| Moment | What the page does |
+|---|---|
+| Joining a call | `useLiveKit.connect` records `voiceStore.streamTokenSource` when the voice token's answer said `streamTokens`. Null for a server without them and for a call whose token came by federation relay: a share there is the page's own (WebKit's capture) |
+| The setup screen | asks `getScreenSharePickerMode({ nativeShare: true })`; a picked tile starts the shell's live preview (`startNativeSharePreview`), and `useNativeSharePreviewFrame` keeps it over the preview box: measured once a frame, reported when it has come to rest, hidden while the box moves or the quality drawer lies over it |
+| Start | the stream token (`livekit.streamToken` / `dmStreamToken`), then `startNativeScreenShare` with the source and `nativeShareQuality(config)`: the size and rate of the user's settings, the bitrate ceiling of the matrix, a floor of a third of it (at most 3 Mbit/s, `nativeShareFloor`), H.265 unless the user chose H.264, the sound |
+| A setting changes | `nativeShareChange` says only what differs to `updateNativeScreenShare`; another codec is another publication, so the share is started again on the same source after a `stream_republish` |
+| The share's own tile | the local participant is folded like anyone: its stream participant's picture is subscribed to and watched (`TrackPublished`), so the sharer sees what viewers get. The sound is never fetched back |
+| The connection panel | `useNativeShareStore.stats`, from the shell's `stats` events, stands where a sent screen share's statistics do (`useTrackStats`); the share received back for the local tile is left out |
+| The share ends | by the user (`stream_stop` first, then the shell), by the shell (`ended`: a toast with the reason), with the call (`endNativeShareWithRoom`). `audio-ended` leaves the picture and turns the sound's state to `acquirable`. After a reconnect of either connection viewers are sent `stream_resume` |
+
+Not built yet: stream tokens for federated DM calls, whose tokens travel in the call relay rather than through this route (docs/superpowers/plans/2026-11-16-macos-native-client.md, section 12). Not verified yet: the sharer's side in the built app in a real call; a viewer that cannot decode H.265 (Firefox) getting the H.264 backup track.
 
 **Multi-tab:** Each user has one `voiceWs` binding. New tab → old socket gets `voice_disconnected { reason: 'displaced' }`
 

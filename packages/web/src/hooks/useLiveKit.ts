@@ -33,6 +33,9 @@ import {
 } from '../utils/voiceLink';
 import type { VoiceConnectFailureReason, VoiceConnectingEntry } from '@backspace/shared/src/voiceConnection';
 import { isStreamParticipant, shareCarriersOf, sharerIdentityOf, streamQualityKey } from '../utils/streamParticipant';
+import {
+  applyNativeShareConfig, endNativeShareWithRoom, isNativeShareLive, resumeNativeShareAfterReconnect,
+} from '../utils/nativeShare';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
 import { dmCallChannelId, dmCallOrigin, dmCallRoomKey, voiceSessionOrigin } from '../utils/dmCall';
 import { AudioManager } from '../audio/AudioManager';
@@ -71,6 +74,8 @@ const _resumeMemories = new WeakMap<Room, StreamResumeMemory>();
 
 /** Forget a room's per-sharer stream state: the room is being left. */
 function clearRoomStreamState(room: Room): void {
+  // A share the shell publishes into this call has no call to be in.
+  endNativeShareWithRoom(room);
   _republishTrackers.get(room)?.clear();
   _resumeMemories.get(room)?.clear();
   useStreamPointerStore.getState().reset();
@@ -174,9 +179,12 @@ export function deriveGridTiles(participants: ParticipantInfo[]): GridTile[] {
  */
 export function setStreamSubscription(room: Room | null, targetIdentity: string, subscribed: boolean) {
   if (!room) return;
+  // One's own share, published by the shell: the picture for the local
+  // tile, never the sound, which this machine is already playing.
+  const own = targetIdentity === room.localParticipant.identity;
   for (const carrier of shareCarriersOf(room.remoteParticipants.values(), targetIdentity)) {
     carrier.trackPublications.forEach((pub) => {
-      if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio) {
+      if (pub.source === Track.Source.ScreenShare || (pub.source === Track.Source.ScreenShareAudio && !(own && subscribed))) {
         (pub as RemoteTrackPublication).setSubscribed(subscribed);
       }
     });
@@ -916,6 +924,8 @@ export function useLiveKit() {
       // streaming limits are the ones a screen share here obeys. Null when the
       // token was relayed from a host this client has no session with.
       let hostOrigin: string | null;
+      // Whether that instance issues stream tokens, and for what.
+      let streamTokenSource: { origin: string; channelId: string; isDm: boolean; url: string } | null = null;
 
       // A call hosted on another instance connects with the credentials its
       // ring brought, once, and only for the call they came with.
@@ -934,10 +944,13 @@ export function useLiveKit() {
         const resp = isDm ? await client.livekit.dmToken(channelId) : await client.livekit.token(channelId);
         token = resp.token;
         url = resp.url;
+        if (resp.streamTokens === true) {
+          streamTokenSource = { origin: hostOrigin, channelId, isDm: isDm === true, url: resp.url };
+        }
       }
       if (gen !== _connectGeneration) return;
       stage = 'room';
-      useVoiceStore.setState({ livekitHostOrigin: hostOrigin });
+      useVoiceStore.setState({ livekitHostOrigin: hostOrigin, streamTokenSource });
       // Refreshed per join; home's document arrives with every home `ready`.
       if (hostOrigin) void refreshStreamHostLimits(hostOrigin);
       const newRoom = new Room({ adaptiveStream: true, dynacast: true, publishDefaults: { videoCodec: 'h264', simulcast: true } });
@@ -1125,6 +1138,15 @@ export function useLiveKit() {
           // A stream participant's token allows a share and nothing else;
           // anything else under its name is not a voice or a camera of anyone.
           if (!isStreamParticipant(participant)) publication.setSubscribed(true);
+        } else if (sharerIdentity === newRoom.localParticipant.identity) {
+          // This client's own share, published by its shell: the local tile
+          // shows what viewers get, so the picture is subscribed to like
+          // any share that is watched. Its sound is what this Mac already
+          // plays, and is not fetched back.
+          if (publication.source === Track.Source.ScreenShare) {
+            useVoiceStore.getState().watchStream(resolveParticipantUserId(sharerIdentity));
+            publication.setSubscribed(true);
+          }
         } else if (publication.source === Track.Source.ScreenShareAudio) {
           // Stream tracks follow the watch state, and the watch click only
           // subscribed what was published then. System Audio can be turned on
@@ -1207,6 +1229,9 @@ export function useLiveKit() {
             // A full reconnect republished every local track: the share goes
             // on if its publication came back, and ends here if not.
             settleScreenShareAfterReconnect(newRoom);
+            // A share the shell publishes never stopped, and viewers for whom
+            // this participant left saw it end: they are told it is back.
+            if (fullReconnect) resumeNativeShareAfterReconnect(newRoom);
             // Viewers kept while the room was not Connected stay only if they
             // are here. A signal resume counts too: its signal is live again
             // (SignalResumed) before the room is Connected (Resumed, after the
@@ -1232,6 +1257,7 @@ export function useLiveKit() {
       newRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
         // A full reconnect that gave up: a share it had withdrawn ends here.
         settleScreenShareAfterReconnect(newRoom);
+        endNativeShareWithRoom(newRoom);
         if (roomRef.current !== newRoom) return;
         republish.clear();
         resume.clear();
@@ -1383,7 +1409,11 @@ export function useLiveKit() {
     let superseded = false;
     const updateActiveTracks = async () => {
       if (superseded) return;
-      if (isScreenSharing) {
+      if (isScreenSharing && isNativeShareLive()) {
+        // The shell publishes this share: it is told what changed, and the
+        // page has no track to touch.
+        await applyNativeShareConfig(screenShareConfig, buildScreenShareOptions(screenShareConfig));
+      } else if (isScreenSharing) {
         // System Audio first: a toggle change publishes or withdraws only the
         // audio track, never the video.
         await syncScreenShareAudio(room);
