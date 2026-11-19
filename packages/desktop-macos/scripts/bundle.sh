@@ -24,7 +24,10 @@
 #
 # Signing is scripts/sign.sh: with MAC_SIGN_P12 and MAC_SIGN_P12_PASSWORD in
 # the environment the bundle is signed with that certificate, otherwise ad hoc;
-# MAC_SIGN_REQUIRED=1 refuses the ad hoc fallback.
+# MAC_SIGN_REQUIRED=1 refuses the ad hoc fallback. A development build with
+# neither set is signed with this machine's own development identity when
+# scripts/dev-identity.sh has made one, so that macOS keeps the build's
+# permissions from one rebuild to the next.
 
 set -euo pipefail
 # Resolved before the cd below: $0 may be relative to the caller's directory.
@@ -43,7 +46,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run) RUN=true ;;
     --help|-h)
-      sed -n '2,27p' "$SELF" | sed 's/^# \{0,1\}//'
+      sed -n '2,30p' "$SELF" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -190,6 +193,19 @@ ${PERMISSION_XML}
 </plist>
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >&2
+
+# A development build takes this machine's development identity, if one was
+# made and the caller names no certificate. A release identity never does:
+# signed with a certificate of one machine it could not be updated by a
+# build from anywhere else.
+if [[ "$IDENTITY" == "dev" && -z "${MAC_SIGN_P12:-}" && -z "${MAC_SIGN_P12_PASSWORD:-}" ]]; then
+  DEV_IDENTITY="$("$(dirname "$SELF")/dev-identity.sh" --where)"
+  if [[ -s "$DEV_IDENTITY/identity.p12" && -s "$DEV_IDENTITY/password" ]]; then
+    MAC_SIGN_P12="$(base64 < "$DEV_IDENTITY/identity.p12")"
+    MAC_SIGN_P12_PASSWORD="$(cat "$DEV_IDENTITY/password")"
+    export MAC_SIGN_P12 MAC_SIGN_P12_PASSWORD
+  fi
+fi
 
 # Signed last, over the finished bundle, so the Info.plist and the resources
 # are bound to the signature.

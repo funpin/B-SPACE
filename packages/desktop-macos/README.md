@@ -64,8 +64,28 @@ script fails unless the designated requirement then names the certificate's
 hash; that requirement is what keeps macOS permissions across updates (see
 "Stable signing identity" in
 [desktop-security.md](../../docs/systems/desktop-security.md)). Without them
-the signature is ad hoc, which is right for a development build.
-`MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+the signature is ad hoc. `MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+
+An ad hoc build is a new application to macOS every time it is rebuilt: the
+system tells it by the hash of its code, so the microphone, Screen Recording
+and Input Monitoring grants of the build before are refused to it while the
+privacy lists still show them switched on, and each has to be removed and
+given again. To work on the client without that,
+
+```bash
+scripts/dev-identity.sh
+```
+
+makes a self-signed code-signing certificate of this machine's own, once, in
+`~/Library/Application Support/Backspace-Dev-Signing` (readable by its owner
+alone, outside the repository). `bundle.sh` signs a development build with it
+whenever it is there and no certificate is named in the environment; a
+release identity never takes it. The first build signed with it is one more
+new application: clear the entries of the builds before with
+`tccutil reset All com.backspace.desktop.dev`, give the grants once, and
+they stay. `scripts/dev-identity.sh --remove` deletes the certificate.
+Whoever can read that folder can sign code macOS takes for the development
+build, with its grants; it has nothing to do with the project's certificate.
 
 `scripts/sign-selftest.sh` checks the certificate path without the project's
 certificate: it makes a throwaway one, builds the bundle signed with it,
