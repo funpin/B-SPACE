@@ -95,6 +95,12 @@
       "several": "Mehrere Personen schreiben"
     }
   },
+  "fileDrop": {
+    "title": "Zum Anhängen loslassen",
+    "hint": "Die Dateien werden deiner Nachricht in {{name}} angehängt",
+    "deniedTitle": "Hier können keine Dateien angehängt werden",
+    "deniedHint": "Du hast keine Berechtigung, in {{name}} Dateien anzuhängen"
+  },
   "menu": {
     "saveImage": "Bild speichern",
     "copyImage": "Bild kopieren",

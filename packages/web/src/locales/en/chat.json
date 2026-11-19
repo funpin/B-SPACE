@@ -95,6 +95,12 @@
       "several": "Several people are typing"
     }
   },
+  "fileDrop": {
+    "title": "Drop to attach",
+    "hint": "Files will be added to your message in {{name}}",
+    "deniedTitle": "Can't attach files here",
+    "deniedHint": "You don't have permission to attach files in {{name}}"
+  },
   "menu": {
     "saveImage": "Save Image",
     "copyImage": "Copy Image",

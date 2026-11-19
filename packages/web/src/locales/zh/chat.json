@@ -92,6 +92,12 @@
       "several": "多人正在输入"
     }
   },
+  "fileDrop": {
+    "title": "松开以添加附件",
+    "hint": "文件将添加到你在 {{name}} 的消息中",
+    "deniedTitle": "无法在此处添加附件",
+    "deniedHint": "你没有在 {{name}} 中添加附件的权限"
+  },
   "menu": {
     "saveImage": "保存图片",
     "copyImage": "复制图片",

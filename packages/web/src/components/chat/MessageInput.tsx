@@ -19,6 +19,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useComposerStore } from '../../stores/composerStore';
 import { useTransferStore, type Transfer } from '../../stores/transferStore';
 import { usePendingMessageStore } from '../../stores/pendingMessageStore';
+import { useFileDropStore } from '../../stores/fileDropStore';
 import { putHandle, supportsFsHandles, supportsDnDHandles } from '../../utils/idbHandles';
 import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
@@ -448,9 +449,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
   };
 
-  const handleDrop = (e: React.DragEvent): void => {
-    e.preventDefault();
-    const items = e.dataTransfer.items;
+  // Files dropped anywhere in the window land here (useWindowFileDrop). Reads
+  // the DataTransfer synchronously: its items are emptied once the drop
+  // event returns.
+  const attachDropped = (dataTransfer: DataTransfer): void => {
+    const items = dataTransfer.items;
     const useDndHandles = supportsDnDHandles();
 
     if (useDndHandles && items && items.length > 0) {
@@ -486,15 +489,31 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
 
     // Fallback: plain Files list (Firefox/Safari)
-    const droppedFiles = Array.from(e.dataTransfer.files);
+    const droppedFiles = Array.from(dataTransfer.files);
     for (const file of droppedFiles) {
       void enqueueFile({ file });
     }
   };
 
-  const handleDragOver = (e: React.DragEvent): void => {
-    e.preventDefault();
-  };
+  // Register this composer as the window's file drop target. The callback
+  // goes through a ref so the registration only changes when the channel,
+  // its label or the permission does, not on every render.
+  const attachDroppedRef = useRef(attachDropped);
+  attachDroppedRef.current = attachDropped;
+  const registerFileDrop = useFileDropStore((s) => s.register);
+  const dropLabel = channelName.startsWith('@') ? channelName : `#${channelName}`;
+  useEffect(() => {
+    return registerFileDrop({
+      key: `composer-${channelId}-${Math.random().toString(36).slice(2, 10)}`,
+      channelId,
+      label: dropLabel,
+      canAttach: canAttachFiles,
+      accept: (dataTransfer) => {
+        attachDroppedRef.current(dataTransfer);
+        textareaRef.current?.focus();
+      },
+    });
+  }, [registerFileDrop, channelId, dropLabel, canAttachFiles]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     updateMention(e);
@@ -800,8 +819,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       )}
       <div
         className={`relative ${chatReplyTo ? 'rounded-b-xl' : ''} overflow-visible`}
-        onDrop={canAttachFiles ? handleDrop : undefined}
-        onDragOver={canAttachFiles ? handleDragOver : undefined}
       >
         {/* Mention autocomplete popover */}
         {mentionState && mentionMatches.length > 0 && (

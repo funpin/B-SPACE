@@ -52,6 +52,7 @@ export function StickerUploadPreview({
             disabled={busy}
             onClick={() => openPicker('replace')}
             aria-label={t('stickers.chooseImage')}
+            data-file-drop-zone=""
             onDragOver={event => {
               event.preventDefault();
               event.stopPropagation();
@@ -82,6 +83,7 @@ export function StickerUploadPreview({
               disabled={busy}
               onClick={() => openPicker('replace')}
               aria-label={t('stickers.replace')}
+              data-file-drop-zone=""
               onDragOver={event => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -216,6 +218,7 @@ export function StickerUploadPreview({
                   openPicker('append');
                 }
               }}
+              data-file-drop-zone=""
               onDragOver={event => {
                 event.preventDefault();
                 event.stopPropagation();
