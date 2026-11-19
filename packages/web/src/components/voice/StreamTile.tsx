@@ -10,6 +10,7 @@ import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextM
 import { getActiveRoom, setStreamSubscription } from '../../hooks/useLiveKit';
 import { stopScreenShare, changeScreenShare, effectiveScreenShareConfig } from '../../utils/screenShare';
 import { useStreamHostLimits } from '../../utils/streamHostLimits';
+import { streamQualityKey } from '../../utils/streamParticipant';
 import { DEFAULT_STREAMING_LIMITS } from '../../stores/settingsStore';
 import { handleViewerWatchToggle } from '../../utils/voiceTileActions';
 import { ScreenShareSettingsPopover } from './ScreenShareSettingsPopover';
@@ -203,7 +204,11 @@ export function StreamTile({ tile, large, compact, dense, stats }: StreamTilePro
   const isWatching = watchingStreams.has(userId);
   const voiceConnectionStatus = useVoiceStore((s) => s.voiceConnectionStatus);
   const localConnectionQuality = useVoiceStore((s) => s.connectionQuality);
-  const publisherConnectionQuality = useVoiceStore((s) => s.connectionQualities.get(participant.identity) ?? 'unknown');
+  // The share's own connection when a stream participant carries it, else its sharer's.
+  const publisherConnectionQuality = useVoiceStore((s) =>
+    s.connectionQualities.get(streamQualityKey(participant.identity))
+    ?? s.connectionQualities.get(participant.identity)
+    ?? 'unknown');
 
   const liveScreenTrack = tile.screenTrack?.readyState === 'live' ? tile.screenTrack : null;
   const liveLkScreenTrack = liveScreenTrack ? tile.lkScreenTrack : null;

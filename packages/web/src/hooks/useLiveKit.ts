@@ -32,6 +32,7 @@ import {
   type ConnectStage,
 } from '../utils/voiceLink';
 import type { VoiceConnectFailureReason, VoiceConnectingEntry } from '@backspace/shared/src/voiceConnection';
+import { isStreamParticipant, shareCarriersOf, sharerIdentityOf, streamQualityKey } from '../utils/streamParticipant';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
 import { dmCallChannelId, dmCallOrigin, dmCallRoomKey, voiceSessionOrigin } from '../utils/dmCall';
 import { AudioManager } from '../audio/AudioManager';
@@ -166,15 +167,26 @@ export function deriveGridTiles(participants: ParticipantInfo[]): GridTile[] {
   return tiles;
 }
 
+/**
+ * Subscribes to, or lets go of, the screen share of the user with
+ * `targetIdentity`, wherever it is published: by the user's own participant
+ * or by the user's stream participant (utils/streamParticipant).
+ */
 export function setStreamSubscription(room: Room | null, targetIdentity: string, subscribed: boolean) {
   if (!room) return;
-  const rp = room.remoteParticipants.get(targetIdentity);
-  if (!rp) return;
-  rp.trackPublications.forEach((pub) => {
-    if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio) {
-      (pub as RemoteTrackPublication).setSubscribed(subscribed);
-    }
-  });
+  for (const carrier of shareCarriersOf(room.remoteParticipants.values(), targetIdentity)) {
+    carrier.trackPublications.forEach((pub) => {
+      if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio) {
+        (pub as RemoteTrackPublication).setSubscribed(subscribed);
+      }
+    });
+  }
+}
+
+/** Whether the screen share of the user with `identity` is published now, by whichever participant carries it. */
+function isSharePublished(room: Room, identity: string): boolean {
+  return shareCarriersOf(room.remoteParticipants.values(), identity)
+    .some((carrier) => [...carrier.trackPublications.values()].some((pub) => pub.source === Track.Source.ScreenShare));
 }
 
 export function setCameraSubscription(room: Room | null, targetIdentity: string, subscribed: boolean) {
@@ -246,10 +258,7 @@ function resumeRemoteStream(room: Room, identity: string, stream: RememberedStre
 
 /** Resume the remembered share of `identity` when it is published now. */
 function resumeIfPublished(room: Room, memory: StreamResumeMemory, identity: string): void {
-  const participant = room.remoteParticipants.get(identity);
-  if (!participant) return;
-  const published = [...participant.trackPublications.values()].some((pub) => pub.source === Track.Source.ScreenShare);
-  if (!published) return;
+  if (!isSharePublished(room, identity)) return;
   const stream = memory.takeOnPublication(identity);
   if (stream) resumeRemoteStream(room, identity, stream);
 }
@@ -402,6 +411,15 @@ export function useLiveKit() {
       prevCacheMap.set(prev.identity, prev.cachedUser);
     }
 
+    // A stream participant is never listed: its share is its owner's share
+    // (utils/streamParticipant). One without its owner in the room is nobody.
+    const streamParticipants = new Map<string, RemoteParticipant[]>();
+    r.remoteParticipants.forEach((p) => {
+      if (!isStreamParticipant(p)) return;
+      const ownerIdentity = sharerIdentityOf(p);
+      streamParticipants.set(ownerIdentity, [...(streamParticipants.get(ownerIdentity) ?? []), p]);
+    });
+
     const allParticipants: ParticipantInfo[] = [];
     const processParticipant = (p: Participant, isLocal: boolean) => {
       if (!p.identity) return;
@@ -454,6 +472,20 @@ export function useLiveKit() {
         else if (pub.source === Track.Source.ScreenShare) { screenTrack = mt; lkScreenTrack = track; }
         else if (pub.source === Track.Source.ScreenShareAudio) screenAudioTrack = mt;
       });
+      // The share its stream participant publishes. It is a remote
+      // participant for everyone, its owner's own client included, and a
+      // share is all that is taken from it.
+      for (const carrier of streamParticipants.get(p.identity) ?? []) {
+        carrier.trackPublications.forEach((pub) => {
+          if (pub.source === Track.Source.ScreenShare) hasScreenSharePublication = true;
+          const track = pub.track;
+          if (!track || pub.isMuted || !pub.isSubscribed) return;
+          const mt = track.mediaStreamTrack;
+          if (!mt || mt.readyState !== 'live') return;
+          if (pub.source === Track.Source.ScreenShare) { screenTrack = mt; lkScreenTrack = track; }
+          else if (pub.source === Track.Source.ScreenShareAudio) screenAudioTrack = mt;
+        });
+      }
 
       const userState = useVoiceStore.getState().voiceUserStates.get(userId);
       let isPartDeafened = false;
@@ -489,7 +521,7 @@ export function useLiveKit() {
         // is live while published (even unsubscribed) or bridged by its
         // sharer's announcement; our own is the lifecycle screenShare keeps.
         isScreenSharing: isLocal
-          ? localShareLive
+          ? localShareLive || streamParticipants.has(p.identity) && hasScreenSharePublication
           : hasScreenSharePublication || (republish?.isBridging(p.identity) ?? false),
         isLocal,
         audioTrack,
@@ -501,7 +533,7 @@ export function useLiveKit() {
       });
     };
     processParticipant(r.localParticipant, true);
-    r.remoteParticipants.forEach((p) => processParticipant(p, false));
+    r.remoteParticipants.forEach((p) => { if (!isStreamParticipant(p)) processParticipant(p, false); });
     useVoiceStore.getState().setParticipants(allParticipants);
     SpeakingDetector.getInstance().syncTracks(allParticipants);
   }, []);
@@ -513,6 +545,9 @@ export function useLiveKit() {
     republish: StreamRepublishTracker,
     resume: StreamResumeMemory,
   ) => {
+    // A stream participant's token lets it send no data, and nothing it might
+    // say is meant for a viewer: its owner's page speaks for the share.
+    if (participant && isStreamParticipant(participant)) return;
     // Try the stream_watch protocol first (typed parser; returns null on non-matches).
     if (participant) {
       const sw = parseStreamWatch(payload);
@@ -928,6 +963,8 @@ export function useLiveKit() {
       const guardedUpdate = () => { if (isCurrent()) updateParticipants(); };
       newRoom.on(RoomEvent.ParticipantConnected, (participant) => {
         guardedUpdate();
+        // A stream participant hears nothing: there is nobody to tell.
+        if (isStreamParticipant(participant)) return;
         announceWatchesTo(newRoom, participant.identity);
         // Notify new participant of our effective deafen state
         const vsConn = useVoiceStore.getState();
@@ -947,8 +984,20 @@ export function useLiveKit() {
       });
       newRoom.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
         // Left between a republish's two publications: its share ends with it.
-        const bridgedShareEnded = republish.cancel(participant.identity);
+        const sharerIdentity = sharerIdentityOf(participant);
+        const bridgedShareEnded = republish.cancel(sharerIdentity);
         if (!isCurrent()) return;
+        if (isStreamParticipant(participant)) {
+          // Not a person leaving: no viewer, no pointer and no voice status
+          // goes with it. Its publications ended the share as they were
+          // removed; only a share bridged across a republish is left to end.
+          if (bridgedShareEnded) {
+            rememberWatchedShare(resume, sharerIdentity);
+            endRemoteStream(sharerIdentity);
+          }
+          updateParticipants();
+          return;
+        }
         // While the room is not Connected the leave may be this room's own
         // full reconnect dropping every participant (Room.handleRestarting),
         // so a viewer stays in the watcher set. Every return to Connected
@@ -960,7 +1009,10 @@ export function useLiveKit() {
         useStreamPointerStore.getState().clearSender(participant.identity);
         // A sharer who left takes its overlay state with it.
         useStreamPointerStore.getState().setOverlayCaptured(participant.identity, false);
-        if (bridgedShareEnded) {
+        // A share its stream participant goes on publishing has no owner on
+        // the list any more: for this viewer it is over, like a share that
+        // left with its sharer.
+        if (bridgedShareEnded || isSharePublished(newRoom, participant.identity)) {
           rememberWatchedShare(resume, participant.identity);
           endRemoteStream(participant.identity);
         }
@@ -1064,29 +1116,33 @@ export function useLiveKit() {
       newRoom.on(RoomEvent.ParticipantMetadataChanged, guardedUpdate);
       newRoom.on(RoomEvent.TrackPublished, (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
         if (!isCurrent()) return;
+        // The share is its owner's, whoever publishes it.
+        const sharerIdentity = sharerIdentityOf(participant);
         if (
           publication.source !== Track.Source.ScreenShare &&
           publication.source !== Track.Source.ScreenShareAudio
         ) {
-          publication.setSubscribed(true);
+          // A stream participant's token allows a share and nothing else;
+          // anything else under its name is not a voice or a camera of anyone.
+          if (!isStreamParticipant(participant)) publication.setSubscribed(true);
         } else if (publication.source === Track.Source.ScreenShareAudio) {
           // Stream tracks follow the watch state, and the watch click only
           // subscribed what was published then. System Audio can be turned on
           // mid-stream, so audio arriving for a stream being watched joins it.
-          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(participant.identity))) {
+          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(sharerIdentity))) {
             publication.setSubscribed(true);
           }
-        } else if (republish.completeWithPublication(participant.identity)) {
+        } else if (republish.completeWithPublication(sharerIdentity)) {
           // The new track of an announced republish: a viewer who was watching
           // keeps watching without clicking Watch again. Its audio, published
           // after the video, is picked up by the branch above.
-          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(participant.identity))) {
+          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(sharerIdentity))) {
             publication.setSubscribed(true);
           }
         } else {
           // A share this viewer watched before a full reconnect, back.
-          const stream = resume.takeOnPublication(participant.identity);
-          if (stream) resumeRemoteStream(newRoom, participant.identity, stream);
+          const stream = resume.takeOnPublication(sharerIdentity);
+          if (stream) resumeRemoteStream(newRoom, sharerIdentity, stream);
         }
         updateParticipants();
       });
@@ -1094,12 +1150,13 @@ export function useLiveKit() {
         if (!isCurrent()) return;
         // An announced republish keeps the watch and the stream's audio
         // settings for the next publication; anything else ends the share.
+        const sharerIdentity = sharerIdentityOf(participant);
         if (
           publication.source === Track.Source.ScreenShare
-          && !republish.bridgeRemoval(participant.identity)
+          && !republish.bridgeRemoval(sharerIdentity)
         ) {
-          rememberWatchedShare(resume, participant.identity);
-          endRemoteStream(participant.identity);
+          rememberWatchedShare(resume, sharerIdentity);
+          endRemoteStream(sharerIdentity);
         }
         updateParticipants();
       });
@@ -1108,7 +1165,12 @@ export function useLiveKit() {
       });
       newRoom.on(RoomEvent.ConnectionQualityChanged, (quality: ConnectionQuality, participant: Participant) => {
         const normalizedQuality = toVoiceConnectionQuality(quality);
-        useVoiceStore.getState().setConnectionQuality(normalizedQuality, participant.identity);
+        // A stream participant's connection is the share's, kept next to its
+        // owner's own, which is the voice's.
+        const qualityKey = isStreamParticipant(participant)
+          ? streamQualityKey(sharerIdentityOf(participant))
+          : participant.identity;
+        useVoiceStore.getState().setConnectionQuality(normalizedQuality, qualityKey);
         if (participant.identity === newRoom.localParticipant.identity) {
           useVoiceStore.getState().setConnectionQuality(normalizedQuality);
         }
@@ -1221,6 +1283,7 @@ export function useLiveKit() {
 
       // Subscribe to non-screen-share tracks from existing participants (safety net)
       newRoom.remoteParticipants.forEach((rp) => {
+        if (isStreamParticipant(rp)) return;
         rp.trackPublications.forEach((pub) => {
           if (
             pub.source !== Track.Source.ScreenShare &&

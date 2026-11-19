@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Track } from 'livekit-client';
 import { getActiveRoom } from './useLiveKit';
 import { discoverPeerConnections } from '../utils/livekitInternals';
+import { sharerIdentityOf } from '../utils/streamParticipant';
 
 // ── Types ──
 
@@ -252,14 +253,16 @@ export function useTrackStats(enabled: boolean): TrackStatsSnapshot | null {
 
       // Remote tracks
       for (const [, rp] of room.remoteParticipants) {
-        const name = parseUsername(rp.identity);
+        // A stream participant's tracks are its owner's share (utils/streamParticipant).
+        const identity = sharerIdentityOf(rp);
+        const name = parseUsername(identity);
         for (const pub of rp.trackPublications.values()) {
           const mst = pub.track?.mediaStreamTrack;
           if (mst) {
             identityMap.set(mst.id, {
               source: mapSource(pub.source),
               direction: 'recv',
-              participantIdentity: rp.identity,
+              participantIdentity: identity,
               participantName: name,
             });
           }

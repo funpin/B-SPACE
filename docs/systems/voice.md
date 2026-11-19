@@ -102,6 +102,42 @@ UI affordances:
 
 **Identity format:** `{userId}:{username}`, TTL: 1 hour, Room: `{channelId}` or `dm-{dmChannelId}`
 
+### The stream participant
+
+A native client that publishes its screen share from the shell (one hardware encode, no second encode in the page) joins the room a second time, as the user's **stream participant**. LiveKit admits an identity once per room, so the stream participant has a token of its own: `POST /livekit/token` with `purpose: 'stream'` (`generateStreamToken` in `routes/livekit.ts`).
+
+| | Voice token | Stream token |
+|---|---|---|
+| Identity | `{userId}:{username}` | `stream.{userId}:{username}` (`streamIdentityOf`) |
+| Attributes | none | `streamOf`: the owner's identity (`STREAM_OF_ATTRIBUTE`) |
+| May publish | per SPEAK and STREAM | `SCREEN_SHARE`, `SCREEN_SHARE_AUDIO` only |
+| May subscribe, send data | yes | no |
+| May change its own metadata and attributes | no | no |
+| Time to join | 1 hour | 10 minutes (asked for when a share starts; LiveKit renews it for a participant that is in) |
+| Guards | membership, CONNECT | the same, and STREAM (`403 voice_stream_forbidden`) |
+
+The shared helpers are in `packages/shared/src/streamParticipant.ts`. `streamOwnerOf(attributes)` is the one way a client tells whose stream a participant is: the attribute is signed into the token by the server and no token lets a participant change its attributes, so it cannot be forged; the identity prefix is there only to keep the two identities apart and is not what a client trusts. A client that does not know about stream participants sees one more participant, named after the user, with a screen share.
+
+A voice token's answer carries `streamTokens: true`; a client offers the shell's own share only when the server that issued its voice token said so.
+
+**The viewer's side (every client).** Nothing in the client shows a stream participant: its share is its owner's share. `utils/streamParticipant.ts` is the one place that says so, and everything that goes from a participant to a share or back goes through it:
+
+| Where | What it does with a stream participant |
+|---|---|
+| `updateParticipants` (`useLiveKit`) | never lists it; its `ScreenShare` and `ScreenShareAudio` publications become its owner's `isScreenSharing`, `screenTrack`, `lkScreenTrack` and `screenAudioTrack`. One whose owner is not in the room is nobody. The owner's own client is folded the same way (its stream participant is a remote participant to its page too) |
+| `setStreamSubscription(room, identity, …)` | subscribes to the share of `identity` on every participant that can carry it (`shareCarriersOf`): the user's own and the user's stream participant |
+| `TrackPublished`, `TrackUnpublished` | the share's lifecycle (sound joining a watched share, the republish bridge, the resume memory, the end of a share) runs under the owner's identity (`sharerIdentityOf`). Anything but a share from a stream participant is never subscribed to |
+| `ParticipantConnected`, `ParticipantDisconnected` | it is not a person: no watch announcement and no deafen notice go to it, and its leaving evicts no viewer, pointer or voice status. An owner who leaves while the stream participant still publishes ends the share for the viewer |
+| `DataReceived` | ignored from it (its token sends none): the owner's page speaks for the share |
+| `ConnectionQualityChanged` | kept under `streamQualityKey(owner)`, next to the owner's own; `StreamTile` shows the share's connection when there is one |
+| `useTrackStats` | a received track of it is listed under its owner |
+
+Everything keyed by a sharer (the watcher set, pointers, the overlay flag, the resume memory, the republish tracker) stays keyed by the owner's identity. That is also the identity data messages are addressed to and come from, because recipients are taken from the folded participant list: a pointer on a native client's share goes to the owner's page, never to the stream participant, and no protocol changed.
+
+`dev-stream-viewer.html` is the workbench for this: it joins a real LiveKit room as a viewer with a pasted token and shows which participant is whose stream, what a watch by the owner's identity subscribes to, and what the engine is given (codec, size, frame rate, the sound's source). Measured with it on 2026-11-19 against the native package's `StreamProbe`: a Chromium viewer decodes the H.265 share a native client publishes at 2560x1440 and 59 frames a second, and receives its sound as `screen_share_audio`.
+
+Not built yet: the shell that joins with the token and the page that starts it, and stream tokens for federated DM calls, whose tokens travel in the call relay rather than through this route (docs/superpowers/plans/2026-11-16-macos-native-client.md, section 12). Not verified yet: a viewer that cannot decode H.265 (Firefox) getting the H.264 backup track.
+
 **Multi-tab:** Each user has one `voiceWs` binding. New tab → old socket gets `voice_disconnected { reason: 'displaced' }`
 
 **Transient reconnects:** Closing the voice-owning WebSocket starts a 60-second

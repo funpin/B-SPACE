@@ -27,6 +27,9 @@ data/
 !.env.example
 
 # Credentials / private keys (defense-in-depth; none should ever be committed)
+# A token minted by hand for a workbench page (dev-stream-viewer.html reads
+# packages/web/public/dev-stream-viewer.local.token)
+*.local.token
 *.pem
 *.key
 *.p12
