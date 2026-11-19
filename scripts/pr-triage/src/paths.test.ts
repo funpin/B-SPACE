@@ -59,6 +59,7 @@ describe('classifyPaths', () => {
       'packages/desktop/electron-builder.yml',
       'packages/desktop/scripts/afterPack.js',
       'packages/desktop-macos/Package.swift',
+      'packages/desktop-macos/Package.resolved',
       'packages/desktop-macos/scripts/bundle.sh',
       'packages/desktop-macos/scripts/sign.sh',
     ];

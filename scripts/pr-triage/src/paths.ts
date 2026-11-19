@@ -44,10 +44,13 @@ const RULES: Array<{ area: PipelineArea; test: (path: string) => boolean }> = [
       p === 'packages/desktop/electron-builder.yml' ||
       p.startsWith('packages/desktop/scripts/') ||
       // The native macOS client: its SwiftPM manifest is code the runner
-      // executes before anything is compiled, and its scripts build, sign and
-      // check the bundle. Its Swift sources are application source, like the
-      // TypeScript of every other package.
+      // executes before anything is compiled, its lock file says which
+      // commit of each dependency (LiveKit's library, from the project's
+      // fork, and the binary frameworks it brings) the build fetches, and
+      // its scripts build, sign and check the bundle. Its Swift sources are
+      // application source, like the TypeScript of every other package.
       p === 'packages/desktop-macos/Package.swift' ||
+      p === 'packages/desktop-macos/Package.resolved' ||
       p.startsWith('packages/desktop-macos/scripts/'),
   },
   {
