@@ -7,6 +7,8 @@ class FakeTrack extends EventTarget {
   kind = 'video';
   stopped = 0;
   stop() { this.stopped += 1; }
+  /** As a track made in a worker answers: what it is, and nothing of its size. */
+  getSettings(): MediaTrackSettings { return { deviceId: 'generated' }; }
 }
 
 class FakeStream {
@@ -85,6 +87,30 @@ describe('native screen capture', () => {
     (window as unknown as { backspace?: unknown }).backspace = shell.api;
     vi.stubGlobal('Worker', undefined);
     expect(capture.canCaptureNatively()).toBe(false);
+  });
+
+  it('makes the track say the size and rate of what the shell sends', async () => {
+    const capture = await load();
+    const { worker, track } = fakeWorker();
+    await capture.acquireNativeScreenCapture('screen:1:0', { frameRate: 60 }, { createWorker: () => worker });
+    expect(track.getSettings()).toEqual({ deviceId: 'generated', width: 1670, height: 1080, frameRate: 60 });
+
+    // Another size behind the same track: the track follows.
+    shell.api.startNativeScreenCapture.mockResolvedValueOnce({
+      ok: true, id: 'capture-2', url: 'wss://127.0.0.1:50002/', token: 'token-2', width: 1114, height: 720, frameRate: 30,
+    });
+    await capture.reconfigureNativeScreenCapture(
+      track as unknown as MediaStreamTrack, { maxWidth: 1280, maxHeight: 720, frameRate: 30 },
+    );
+    expect(track.getSettings()).toEqual({ deviceId: 'generated', width: 1114, height: 720, frameRate: 30 });
+  });
+
+  it('follows the size of a video that changes by itself', async () => {
+    const capture = await load();
+    const { worker, track, say } = fakeWorker();
+    await capture.acquireNativeScreenCapture('window:7:0', { frameRate: 60 }, { createWorker: () => worker });
+    say({ type: 'format', width: 1440, height: 960 });
+    expect(track.getSettings()).toMatchObject({ width: 1440, height: 960, frameRate: 60 });
   });
 
   it('starts a capture of the source and returns the worker\'s track', async () => {

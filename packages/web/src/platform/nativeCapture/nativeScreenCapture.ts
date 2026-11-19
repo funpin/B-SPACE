@@ -45,6 +45,8 @@ interface Capture {
   id: string;
   readonly sourceId: string;
   limits: NativeCaptureLimits;
+  /** The size and rate of the video the shell sends now. */
+  shape: { width: number; height: number; frameRate: number };
   readonly worker: ReaderWorker;
   readonly track: MediaStreamTrack;
   /** The track's own `stop`, before this module put its own in its place. */
@@ -105,6 +107,7 @@ export async function acquireNativeScreenCapture(
     id: answer.id,
     sourceId,
     limits,
+    shape: { width: answer.width, height: answer.height, frameRate: answer.frameRate },
     worker,
     track,
     stopTrack: track.stop.bind(track),
@@ -116,9 +119,20 @@ export async function acquireNativeScreenCapture(
   // Whoever stops the track stops the capture: the setup screen dropping a
   // preview, the share ending, LiveKit unpublishing.
   track.stop = () => end(capture, false);
+  // A track made in a worker does not know the size of its own picture,
+  // and whoever publishes it asks: LiveKit falls back to made-up dimensions
+  // ("could not determine track dimensions"), and the bitrate of a share at
+  // the source's own size is worked out from them. The shell said what it
+  // sends, so the track says it too.
+  const settingsOfTrack = track.getSettings.bind(track);
+  track.getSettings = () => ({ ...settingsOfTrack(), ...capture.shape });
   // The channel closing under a running capture is the capture ending.
   worker.onmessage = (event) => {
-    if (event.data.type === 'closed') end(capture, true);
+    const message = event.data;
+    if (message.type === 'closed') end(capture, true);
+    // The video changed its size without being asked to: the window that
+    // is shared was resized. The track says the new size.
+    else if (message.type === 'format') capture.shape = { ...capture.shape, width: message.width, height: message.height };
   };
   listenForEndedCaptures();
   return new MediaStream([track]);
@@ -147,6 +161,7 @@ export function reconfigureNativeScreenCapture(track: MediaStreamTrack, limits: 
     const previous = capture.id;
     capture.id = answer.id;
     capture.limits = limits;
+    capture.shape = { width: answer.width, height: answer.height, frameRate: answer.frameRate };
     capture.worker.postMessage({ type: 'connect', url: answer.url, token: answer.token });
     api.stopNativeScreenCapture?.(previous);
   });

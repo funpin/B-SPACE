@@ -13,6 +13,8 @@
  *   { type: 'close' }                 stop
  * Messages to the page:
  *   { type: 'track', track }          once, with the track transferred
+ *   { type: 'format', width, height } the size of the video, at the start and
+ *                                     whenever it changes (a window resized)
  *   { type: 'failed', reason }        the worker cannot do its work here
  *   { type: 'closed' }                the channel closed without being asked to
  */
@@ -35,6 +37,7 @@ export type ReaderRequest =
 
 export type ReaderEvent =
   | { type: 'track'; track: MediaStreamTrack }
+  | { type: 'format'; width: number; height: number }
   | { type: 'failed'; reason: string }
   | { type: 'closed' };
 
@@ -58,6 +61,7 @@ const frames: FrameDecoder = {
       description: format.description,
       optimizeForLatency: true,
     });
+    scope.postMessage({ type: 'format', width: format.width, height: format.height });
   },
   decode(frame: EncodedFrame) {
     decoder?.decode(new EncodedVideoChunk({
