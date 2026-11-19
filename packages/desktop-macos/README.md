@@ -12,7 +12,7 @@ and the measuring harness of stage 0.
 |--------|------------|
 | `BSpaceCore` | Logic with no AppKit or WebKit in it: navigation policy, the saved instance address, the bridge contract, the page-side bridge script, the router. Covered by `swift test` |
 | `BSpaceShell` | The window, the `WKWebView` and the native half of the bridge |
-| `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app` |
+| `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app`, or `B-SPACE Dev.app` for a development build |
 | `ContractCheck` | Drives `BSpaceShell` through the bridge contract check, or opens a live instance in it |
 | `WebKitProbe`, `ProbeSupport` | The measuring harness of stage 0 |
 | `CaptureProbe` | The stage 4 experiment: does a system audio capture that excludes an application leave out what its web view plays |
@@ -41,7 +41,7 @@ swift test
 scripts/bundle.sh --run
 ```
 
-builds `.build/app/dev/B-SPACE.app` and starts it. A development build has its
+builds `.build/app/dev/B-SPACE Dev.app` and starts it (a release identity builds `.build/app/release/B-SPACE.app`). A development build has its
 own bundle identifier (`com.backspace.desktop.dev`) and its own settings
 folder (`~/Library/Application Support/Backspace-Dev`), and does not claim the
 `backspace://` scheme: it runs beside the installed app without touching that

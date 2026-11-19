@@ -58,6 +58,7 @@ case "$IDENTITY" in
   dev)
     BUNDLE_ID="com.backspace.desktop.dev"
     BUNDLE_NAME="B-SPACE Dev"
+    APP_FILE="B-SPACE Dev.app"
     DISPLAY_NAME="B:SPACE Dev"
     USER_DATA_XML="<key>BSpaceUserDataDirectory</key><string>Backspace-Dev</string>"
     URL_SCHEME_XML=""
@@ -65,6 +66,7 @@ case "$IDENTITY" in
   release)
     BUNDLE_ID="com.backspace.desktop"
     BUNDLE_NAME="B-SPACE"
+    APP_FILE="B-SPACE.app"
     DISPLAY_NAME="B:SPACE"
     USER_DATA_XML=""
     URL_SCHEME_XML="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>B:SPACE</string><key>CFBundleTypeRole</key><string>Editor</string><key>CFBundleURLSchemes</key><array><string>backspace</string></array></dict></array>"
@@ -90,8 +92,12 @@ source "$(dirname "$SELF")/toolchain.sh"
 swift build -c release --product BSpaceApp >&2
 
 EXECUTABLE="B-SPACE"
-APP=".build/app/${IDENTITY}/B-SPACE.app"
-rm -rf "$APP"
+# The file is named as the bundle is, so that a development build is told
+# from the installed app wherever only the file's name shows: in the
+# system's privacy lists, in the Dock, in a file dialog.
+APP=".build/app/${IDENTITY}/${APP_FILE}"
+# A build from before the file had its own name: one bundle per identity.
+rm -rf ".build/app/${IDENTITY}"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/BSpaceApp "$APP/Contents/MacOS/$EXECUTABLE"
 # LiveKit's library comes as two dynamic frameworks (WebRTC and its own
