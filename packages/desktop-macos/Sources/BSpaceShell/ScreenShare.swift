@@ -50,6 +50,13 @@ public protocol ScreenSharePublisher: AnyObject {
     /// on a queue of the capturer's own.
     func send(frame: CVPixelBuffer)
 
+    /// Tells the call that there is no picture now, or that there is one
+    /// again. The call itself tells viewers, those who join later
+    /// included, and nothing of the video is sent meanwhile. Asked before
+    /// the video is published, it takes effect when it is. Called on the
+    /// main queue.
+    func setVideoPaused(_ paused: Bool)
+
     /// Gives the published video another bitrate ceiling and floor and
     /// another frame rate ceiling, without publishing it again. Answers on
     /// the main queue.
@@ -100,6 +107,13 @@ final class ShareSession {
     private var feedsMade = 0
     /// Whether samples go to the call: the sound's track is published.
     private var soundFlows = false
+    /// Whether the capture that feeds the call has given it a picture.
+    private var feedHasPicture = false
+    /// One frame at a time is handed to the call: the capture's on its
+    /// queue, and the black one of a source that is not drawn on the main.
+    private let sendLock = NSLock()
+    /// Whether the system does not draw the source now.
+    private var sourceIsHidden = false
 
     /// How long a window has to keep a new size before the video takes it.
     static let patienceForASize: TimeInterval = 0.3
@@ -186,7 +200,7 @@ final class ShareSession {
                             return
                         }
                         self.phase = .running
-                        completion(.running(width: self.size.width, height: self.size.height, framesPerSecond: self.request.capture.framesPerSecond))
+                        completion(self.runs)
                         // The sound is the share's, and the share is not its:
                         // a sound that would not start is said as one that ended.
                         if self.request.audio { self.startSound { _ in } }
@@ -194,6 +208,14 @@ final class ShareSession {
                 }
             }
         }
+    }
+
+    /// The answer of a share that runs.
+    private var runs: ScreenShareReply {
+        .running(
+            width: size.width, height: size.height,
+            framesPerSecond: request.capture.framesPerSecond, hidden: sourceIsHidden
+        )
     }
 
     private var publication: SharePublication {
@@ -233,8 +255,12 @@ final class ShareSession {
             guard let self else { return }
             self.feedLock.lock()
             let isCurrent = self.feeding == feed.number
+            if isCurrent { self.feedHasPicture = true }
             self.feedLock.unlock()
-            if isCurrent { publisher.send(frame: frame) }
+            guard isCurrent else { return }
+            self.sendLock.lock()
+            publisher.send(frame: frame)
+            self.sendLock.unlock()
         }, completion: { [weak self] began in
             guard let self, began, self.phase != .over else {
                 feed.capturer.stop()
@@ -244,17 +270,53 @@ final class ShareSession {
             let before = self.capturer
             self.feedLock.lock()
             self.feeding = feed.number
+            self.feedHasPicture = false
             self.feedLock.unlock()
             before?.onEnded = nil
             before?.onSourceResized = nil
+            before?.onHidden = nil
             before?.stop()
             self.capturer = feed.capturer
             self.size = (feed.width, feed.height)
             self.resizing?.cancel()
             feed.capturer.onEnded = { [weak self] in self?.end(.sourceEnded) }
             feed.capturer.onSourceResized = { [weak self] width, height in self?.sourceBecame(width: width, height: height) }
+            feed.capturer.onHidden = { [weak self] hidden in self?.sourceIs(hidden: hidden) }
+            // The capture may have said so before anyone listened.
+            self.sourceIs(hidden: feed.capturer.isHidden)
             completion(true)
         })
+    }
+
+    /// The system stopped drawing the source, or draws it again.
+    ///
+    /// A capture that has given the call no picture yet and will give none
+    /// while its source is hidden hands over a black one of its size: the
+    /// call's track takes its size from its first frame and is not
+    /// published without one, so a share of a window in another of Stage
+    /// Manager's sets would not start; and after a change of source,
+    /// viewers would go on seeing the source before.
+    ///
+    /// Viewers are not left to take a black or a standing picture for a
+    /// fault: the video is paused in the call for as long as the source is
+    /// hidden, which every viewer's client is told and shows in words.
+    private func sourceIs(hidden: Bool) {
+        guard phase != .idle, phase != .over else { return }
+        if hidden {
+            feedLock.lock()
+            let needsPicture = !feedHasPicture
+            feedLock.unlock()
+            if needsPicture, let blank = BlankFrame.make(width: size.width, height: size.height) {
+                sendLock.lock()
+                publisher.send(frame: blank)
+                sendLock.unlock()
+            }
+        }
+        guard hidden != sourceIsHidden else { return }
+        sourceIsHidden = hidden
+        publisher.setVideoPaused(hidden)
+        // While it starts, the start's own answer says it.
+        if phase == .running || phase == .changing { onEvent?(.sourceHidden(hidden)) }
     }
 
     /// The shared window has another size. A window that is being dragged
@@ -296,7 +358,7 @@ final class ShareSession {
             } else if self.phase == .over {
                 completion(.refused(.notRunning))
             } else {
-                completion(.running(width: self.size.width, height: self.size.height, framesPerSecond: self.request.capture.framesPerSecond))
+                completion(self.runs)
             }
         }
         guard !changes.isEmpty else {
@@ -483,6 +545,7 @@ final class ShareSession {
         feedLock.unlock()
         capturer?.onEnded = nil
         capturer?.onSourceResized = nil
+        capturer?.onHidden = nil
         capturer?.stop()
         capturer = nil
         sound?.onEnded = nil

@@ -1807,6 +1807,14 @@ func checkVideoPipe(size: String, sink: String, noiseEvery: Int) -> Never {
 final class CheckScreenCapturer: ScreenCapturer {
     var onEnded: (() -> Void)?
     var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
+    var onHidden: ((Bool) -> Void)?
+    private(set) var isHidden = false
+    /// A source the system does not draw when the capture begins, as a
+    /// window in another of Stage Manager's sets: it gives no frame and
+    /// says so a moment after it began, until `show()`.
+    private let startsHidden: Bool
+    /// Whether frames are held back; read by the timer on its own queue.
+    private var holdsFrames = false
     private(set) var request: ScreenCaptureRequest?
     private(set) var isStopped = false
     /// The sizes the video was changed to after it started.
@@ -1821,9 +1829,25 @@ final class CheckScreenCapturer: ScreenCapturer {
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "check-screen")
 
-    init(movingFrames: Int, noiseEvery: Int = 32) {
+    init(movingFrames: Int, noiseEvery: Int = 32, hidden: Bool = false) {
         self.movingFrames = movingFrames
         self.noiseEvery = noiseEvery
+        startsHidden = hidden
+        holdsFrames = hidden
+    }
+
+    /// The system draws the source again.
+    func show() { say(hidden: false) }
+
+    /// The system stops drawing the source.
+    func hide() { say(hidden: true) }
+
+    private func say(hidden: Bool) {
+        sourceLock.lock()
+        holdsFrames = hidden
+        sourceLock.unlock()
+        isHidden = hidden
+        onHidden?(hidden)
     }
 
     func prepare(
@@ -1852,7 +1876,9 @@ final class CheckScreenCapturer: ScreenCapturer {
             guard let self else { return }
             self.sourceLock.lock()
             let source = self.source
+            let held = self.holdsFrames
             self.sourceLock.unlock()
+            if held { return }
             guard sent < movingFrames, let picture = source?.frame(sent) else {
                 timer.cancel()
                 return
@@ -1862,7 +1888,15 @@ final class CheckScreenCapturer: ScreenCapturer {
         }
         self.timer = timer
         timer.resume()
-        DispatchQueue.main.async { completion(true) }
+        DispatchQueue.main.async { [weak self] in
+            completion(true)
+            // After the answer, as the system may: whoever waits for a
+            // first frame is already waiting.
+            DispatchQueue.main.async {
+                guard let self, self.startsHidden, !self.isStopped else { return }
+                self.say(hidden: true)
+            }
+        }
     }
 
     func resize(width: Int, height: Int) {
@@ -2964,14 +2998,25 @@ final class CheckSharePublisher: ScreenSharePublisher {
     private(set) var audioPublished = 0
     private(set) var audioUnpublished = 0
     private(set) var isDisconnected = false
+    /// Every time the call was told the video is paused, or is not.
+    private(set) var pauses: [Bool] = []
 
     /// What the frames' and the samples' queues write.
     private let lock = NSLock()
     private var frames = 0
     private var lastFrame = ""
+    private var firstIsBlack: Bool?
+    private var blacks = 0
     private var samples = 0
 
+    /// How long a track waits for its first frame before it is not
+    /// published. The library waits ten seconds.
+    static let patienceForAFrame: TimeInterval = 2
+
     var framesSent: Int { lock.lock(); defer { lock.unlock() }; return frames }
+    /// Whether the first frame handed over was a black one; nil before it.
+    var firstFrameIsBlack: Bool? { lock.lock(); defer { lock.unlock() }; return firstIsBlack }
+    var blackFramesSent: Int { lock.lock(); defer { lock.unlock() }; return blacks }
     var lastFrameSize: String { lock.lock(); defer { lock.unlock() }; return lastFrame }
     var samplesSent: Int { lock.lock(); defer { lock.unlock() }; return samples }
 
@@ -2980,16 +3025,50 @@ final class CheckSharePublisher: ScreenSharePublisher {
         DispatchQueue.main.async { [connects] in completion(connects) }
     }
 
+    /// As the library does: a track takes its size from its first frame
+    /// and is not published until one came, or at all when none does.
     func publishVideo(width: Int, height: Int, settings: SharePublication, completion: @escaping (Bool) -> Void) {
-        if publishes { published.append((width, height, settings)) }
-        DispatchQueue.main.async { [publishes] in completion(publishes) }
+        guard publishes else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        let givesUp = Date().addingTimeInterval(Self.patienceForAFrame)
+        func look() {
+            if framesSent > 0 {
+                published.append((width, height, settings))
+                completion(true)
+            } else if Date() > givesUp {
+                completion(false)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { look() }
+            }
+        }
+        DispatchQueue.main.async { look() }
     }
 
     func send(frame: CVPixelBuffer) {
+        var black = false
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        if let luma = CVPixelBufferGetBaseAddressOfPlane(frame, 0) {
+            let row = CVPixelBufferGetBytesPerRowOfPlane(frame, 0)
+            let width = CVPixelBufferGetWidth(frame)
+            let height = CVPixelBufferGetHeight(frame)
+            let bytes = luma.assumingMemoryBound(to: UInt8.self)
+            // A made-up picture is bright in most of these places.
+            let spots = (1 ... 15).map { (width * $0 / 16, height * $0 / 16) }
+            black = spots.allSatisfy { bytes[$0.1 * row + $0.0] <= 20 }
+        }
+        CVPixelBufferUnlockBaseAddress(frame, .readOnly)
         lock.lock()
+        if frames == 0 { firstIsBlack = black }
+        if black { blacks += 1 }
         frames += 1
         lastFrame = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
         lock.unlock()
+    }
+
+    func setVideoPaused(_ paused: Bool) {
+        pauses.append(paused)
     }
 
     func setEncoding(maxBitrate: Int, minBitrate: Int, framesPerSecond: Int, completion: @escaping (Bool) -> Void) {
@@ -3070,6 +3149,8 @@ func checkShare() -> Never {
     var publishers: [CheckSharePublisher] = []
     var connects = true
     var publishes = true
+    /// Whether the next capture is of a source the system does not draw.
+    var sourceIsHidden = false
     let preview = CheckSharePreview()
     let shell: MainWindowController
     let server: LocalPageServer
@@ -3079,7 +3160,7 @@ func checkShare() -> Never {
             environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
             loginItem: CheckLoginItem(), notifications: nil,
             screenCapturer: {
-                let capturer = CheckScreenCapturer(movingFrames: 100_000)
+                let capturer = CheckScreenCapturer(movingFrames: 100_000, hidden: sourceIsHidden)
                 capturers.append(capturer)
                 return capturer
             },
@@ -3127,10 +3208,15 @@ func checkShare() -> Never {
     func update(_ options: String) -> [String: Any] {
         page("return await window.backspace.updateNativeScreenShare(\(options));") as? [String: Any] ?? [:]
     }
+    /// Forgets what the page heard so far. One listener for a page, however
+    /// often this is called: two would write every event down twice.
     func listen() {
         _ = page("""
             window.events = [];
-            window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+            if (!window.listens) {
+              window.listens = true;
+              window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+            }
             return true;
             """)
     }
@@ -3417,10 +3503,64 @@ func checkShare() -> Never {
     _ = page("window.backspace.setNativeSharePreviewFrame({ x: 0, y: 0, width: 320, height: 200 }); return true;")
     _ = wait(5, until: { preview.shown != nil })
     load(address)
+    listen()
     if !wait(5, until: { orphan?.isDisconnected == true && orphanCapture?.isStopped == true && sounds.last?.isStopped == true })
         || orphanPreview?.isStopped != true || preview.shown != nil {
         problems.append("after the window showed another page the share's connection was \(orphan?.isDisconnected == true ? "closed" : "left open"), its capture \(orphanCapture?.isStopped == true ? "stopped" : "left running"), the preview's capture \(orphanPreview?.isStopped == true ? "stopped" : "left running")")
     }
+
+    // 22. A source the system does not draw, as a window in another of
+    //     Stage Manager's sets: its capture gives no frame. The share
+    //     starts all the same, with a black picture of the source's
+    //     size for the track to be published with, the call is told the
+    //     video is paused, so that viewers are, and the page is told the
+    //     source is hidden; when the system draws it, the call and the
+    //     page are told that too and its frames go to the call.
+    listen()
+    sourceIsHidden = true
+    let unseen = start(good)
+    let unseenCall = publishers.last
+    let unseenCapture = capturers.last
+    if unseen["ok"] as? Bool != true || unseen["hidden"] as? Bool != true
+        || unseenCall?.framesSent != 1 || unseenCall?.firstFrameIsBlack != true || unseenCall?.lastFrameSize != "1152x720"
+        || unseenCall?.pauses != [true] {
+        problems.append("a share of a source that is not drawn was answered \(unseen); the call was handed \(unseenCall?.framesSent ?? -1) frame(s), the first \(unseenCall?.firstFrameIsBlack == true ? "black" : "not black"), of \(unseenCall?.lastFrameSize ?? "no size"), expected one black frame of 1152x720; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true]")
+    }
+    unseenCapture?.show()
+    let seen = wait(5, until: { (unseenCall?.framesSent ?? 0) > 5 && !events("source-hidden").isEmpty })
+    if !seen || events("source-hidden").map({ $0["hidden"] as? Bool }) != [false] || unseenCall?.pauses != [true, false] {
+        problems.append("after the source was drawn the call had \(unseenCall?.framesSent ?? -1) frame(s) and the page heard \(events("source-hidden")), expected frames and one source-hidden with hidden false; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true, false]")
+    }
+    //     A source that is hidden while it is shared: the call and the
+    //     page are told, and no black picture is sent.
+    listen()
+    unseenCapture?.hide()
+    let toldHidden = wait(5, until: { !events("source-hidden").isEmpty })
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let framesWhenHidden = unseenCall?.framesSent ?? -1
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    if !toldHidden || events("source-hidden").map({ $0["hidden"] as? Bool }) != [true]
+        || unseenCall?.framesSent != framesWhenHidden || unseenCall?.blackFramesSent != 1
+        || unseenCall?.pauses != [true, false, true] {
+        problems.append("after a shared source was hidden the page heard \(events("source-hidden")), the call got \((unseenCall?.framesSent ?? -1) - framesWhenHidden) more frame(s) and \(unseenCall?.blackFramesSent ?? -1) black one(s) in all, expected one source-hidden with hidden true, no more frames and the one black frame of the start; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true, false, true]")
+    }
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    _ = wait(5, until: { unseenCall?.isDisconnected == true })
+
+    // 23. The preview of such a source: it starts, the page is told there
+    //     is no picture of it, and told again when there is one.
+    listen()
+    let unseenPreview = startPreview("{ sourceId: 'screen:1:0' }")
+    let unseenPreviewCapture = capturers.last
+    let previewToldHidden = wait(5, until: { !events("preview-hidden").isEmpty })
+    unseenPreviewCapture?.show()
+    let previewToldShown = wait(5, until: { events("preview-hidden").count == 2 })
+    if unseenPreview["ok"] as? Bool != true || !previewToldHidden || !previewToldShown
+        || events("preview-hidden").map({ $0["hidden"] as? Bool }) != [true, false] || !events("source-hidden").isEmpty {
+        problems.append("a preview of a source that is not drawn was answered \(unseenPreview); the page heard preview-hidden \(events("preview-hidden")) and \(events("source-hidden").count) source-hidden, expected hidden true and then false")
+    }
+    sourceIsHidden = false
+    _ = page("window.backspace.stopNativeSharePreview(); return true;")
 
     for problem in problems {
         FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
@@ -3439,6 +3579,12 @@ func checkShare() -> Never {
 /// the middle, and prints what the connection reports once a second.
 ///
 ///   --check share-live --url wss://… --token-file <stream token> [--seconds 20] [--codec h265]
+///                      [--hidden-from 8 --hidden-until 14] [--starts-hidden yes]
+///
+/// With `--hidden-from` and `--hidden-until` the made-up source is one the
+/// system stops drawing between those seconds, and with `--starts-hidden yes`
+/// one it does not draw until the fifth second: the video is paused in
+/// the call meanwhile, which a viewer in the room sees.
 ///
 /// Run by hand, with a token minted for a test room; watch the room with
 /// `StreamProbe --watch` to see what arrives.
@@ -3451,6 +3597,10 @@ func checkShareLive() -> Never {
     }
     let seconds = Int(arguments["seconds"] ?? "") ?? 20
     let codec = arguments["codec"] ?? "h265"
+    let hiddenFrom = Int(arguments["hidden-from"] ?? "")
+    let hiddenUntil = Int(arguments["hidden-until"] ?? "")
+    let startsHidden = arguments["starts-hidden"] != nil
+    var liveCapturers: [CheckScreenCapturer] = []
 
     let shell: MainWindowController
     let server: LocalPageServer
@@ -3462,7 +3612,11 @@ func checkShareLive() -> Never {
             // A picture that moves and can be compressed: a busy one makes the
             // encoder drop frames to keep the bitrate, which says nothing of
             // the share.
-            screenCapturer: { CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000) },
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000, hidden: startsHidden)
+                liveCapturers.append(capturer)
+                return capturer
+            },
             systemAudioCapturer: { CheckSystemAudioCapturer() },
             sharePublisher: { LiveKitSharePublisher() }
         )
@@ -3527,6 +3681,18 @@ func checkShareLive() -> Never {
     for second in 1 ... seconds {
         RunLoop.main.run(until: Date().addingTimeInterval(1))
         report()
+        if startsHidden, second == 5 {
+            liveCapturers.last?.show()
+            print("  -- the source is drawn")
+        }
+        if second == hiddenFrom {
+            liveCapturers.last?.hide()
+            print("  -- the source is hidden")
+        }
+        if second == hiddenUntil {
+            liveCapturers.last?.show()
+            print("  -- the source is drawn again")
+        }
         if second == seconds / 2 {
             let changed = page("return await window.backspace.updateNativeScreenShare({ maxBitrate: 2000000, minBitrate: 0 });") as? [String: Any] ?? [:]
             print("  -- a ceiling of 2000 kbit/s was answered \(changed)")

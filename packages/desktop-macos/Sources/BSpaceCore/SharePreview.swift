@@ -70,9 +70,11 @@ public enum SharePreview {
         return ScreenCaptureRequest(source: source, maxWidth: maxWidth, maxHeight: maxHeight, framesPerSecond: framesPerSecond)
     }
 
-    /// What the page is told when it asks for a preview.
-    public static func started(width: Int, height: Int) -> [String: Any] {
-        ["ok": true, "width": width, "height": height]
+    /// What the page is told when it asks for a preview. `hidden` when the
+    /// system does not draw the source now, so there is no picture of it
+    /// to show; `ScreenShareEvent.previewHidden` says when that changes.
+    public static func started(width: Int, height: Int, hidden: Bool) -> [String: Any] {
+        ["ok": true, "width": width, "height": height, "hidden": hidden]
     }
 
     public static func refused(_ failure: ScreenCaptureFailure) -> [String: Any] {

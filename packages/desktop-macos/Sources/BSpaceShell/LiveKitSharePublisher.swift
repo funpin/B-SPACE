@@ -31,6 +31,12 @@ public final class LiveKitSharePublisher: NSObject, ScreenSharePublisher, RoomDe
     private var audioMeter = BitrateMeter()
     /// Asked to leave: what the room says after that is not news.
     private var isLeaving = false
+    /// Whether the video is to be paused in the call, whether it is, and
+    /// whether a change of that is on its way: one at a time, and the last
+    /// one asked for wins.
+    private var wantsVideoPaused = false
+    private var isVideoPaused = false
+    private var isChangingPause = false
     private var wasReconnecting = false
 
     /// What the capture's and the sound's queues read.
@@ -113,11 +119,45 @@ public final class LiveKitSharePublisher: NSObject, ScreenSharePublisher, RoomDe
                     }
                     self.videoPublication = publication
                     self.startStatistics()
+                    // A source that was hidden before there was a track to pause.
+                    self.applyVideoPause()
                     completion(true)
                 }
             } catch {
                 NSLog("[share] the video was not published: %@", String(describing: error))
                 await MainActor.run { completion(false) }
+            }
+        }
+    }
+
+    public func setVideoPaused(_ paused: Bool) {
+        wantsVideoPaused = paused
+        applyVideoPause()
+    }
+
+    /// The library's mute of a track: the call's server is told and tells
+    /// every viewer, the track sends nothing, and the picture comes back
+    /// with a whole frame when it is undone.
+    private func applyVideoPause() {
+        guard let publication = videoPublication, !isLeaving, !isChangingPause else { return }
+        let paused = wantsVideoPaused
+        guard paused != isVideoPaused else { return }
+        isChangingPause = true
+        Task {
+            let changed: Bool
+            do {
+                if paused { try await publication.mute() } else { try await publication.unmute() }
+                changed = true
+            } catch {
+                changed = false
+                NSLog("[share] the video was not %@: %@", paused ? "paused" : "resumed", String(describing: error))
+            }
+            await MainActor.run {
+                self.isChangingPause = false
+                guard changed else { return }
+                self.isVideoPaused = paused
+                // Asked for the other way round meanwhile.
+                self.applyVideoPause()
             }
         }
     }

@@ -1038,6 +1038,7 @@ public final class MainWindowController: NSObject {
             return
         }
         previewCapturer?.onEnded = nil
+        previewCapturer?.onHidden = nil
         previewCapturer?.stop()
         var request = asked
         if case .display(let id) = request.source {
@@ -1066,6 +1067,12 @@ public final class MainWindowController: NSObject {
                 self.stopSharePreview()
                 self.bridge.emit("native-screen-share-event", payload: ScreenShareEvent.previewEnded.bridgeValue)
             }
+            // A source the system does not draw has no picture to show:
+            // the page says so in words beside its empty box.
+            capturer.onHidden = { [weak self] hidden in
+                guard let self, self.previewCapturer === capturer else { return }
+                self.bridge.emit("native-screen-share-event", payload: ScreenShareEvent.previewHidden(hidden).bridgeValue)
+            }
             capturer.begin(frame: { frame, time, _ in
                 sharePreview.draw(frame, at: time)
             }, completion: { [weak self] began in
@@ -1079,13 +1086,14 @@ public final class MainWindowController: NSObject {
                     reply(SharePreview.refused(.failed))
                     return
                 }
-                reply(SharePreview.started(width: size.width, height: size.height))
+                reply(SharePreview.started(width: size.width, height: size.height, hidden: capturer.isHidden))
             })
         }
     }
 
     private func stopSharePreview() {
         previewCapturer?.onEnded = nil
+        previewCapturer?.onHidden = nil
         previewCapturer?.stop()
         previewCapturer = nil
         sharePreview?.clear()

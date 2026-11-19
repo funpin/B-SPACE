@@ -904,6 +904,46 @@ is over it. Clicks go through to the page. The preview ends with
 `stopNativeSharePreview`, with its source (`preview-ended` on the share's
 event channel) and with its page.
 
+### A source the system does not draw
+
+A window in another of Stage Manager's sets, or on another desktop, is
+listed as on screen and is not drawn: ScreenCaptureKit answers a capture of
+it with one sample whose status is `suspended` and no picture, and nothing
+more until the window comes to the screen. (Not every such window: one
+that goes on drawing, a video playing in it, gives frames all the same.
+The system's status is what is gone by, not a guess from the window
+list.) The first share of such a window in a real call did not start: the
+library takes a track's size from its first frame, waited ten seconds for
+one and gave up.
+
+`ScreenCapturer.onHidden` says when the system stops drawing the source
+and when it draws it again, and `isHidden` what it last said.
+`ShareSession` hands the call a black picture of the source's size
+(`BlankFrame`) for a capture that is hidden before it gave any, so the
+share is published and in the call when the user switches to the window;
+the same after a change of source, so that viewers do not go on seeing
+the source before.
+
+Viewers are not left to take a black or a standing picture for a fault.
+For as long as the source is hidden the video is paused in the call
+(`ScreenSharePublisher.setVideoPaused`, the library's mute of the track):
+the call's server tells every viewer's client, those who join later
+included, nothing of the video is sent, and the stream tile says that the
+sharer minimized or hid the window (`ParticipantInfo.screenSharePaused`
+in the web client). The sound goes on. The picture is back about a
+second after the window is drawn again. The page is told in
+the start's answer (`hidden`) and by `source-hidden` afterwards, and for
+the preview by `hidden` and `preview-hidden`: the setup screen says in
+words that the window is not open on the screen, and a share says it
+once in a toast.
+
+`--check share` covers it with a made-up source that gives no frames, and
+its made-up connection now waits for a first frame as the library does.
+`--check share-live` with `--hidden-from`, `--hidden-until` or
+`--starts-hidden yes` does the same through the real library into a real
+room; watched from `StreamProbe --watch` on 2026-11-20, the viewer got no
+frames while the source was hidden and 60 a second again a second after.
+
 Checks: `--check share` covers the preview through the bridge with a
 presenter that only remembers where it was put; `--check
 share-preview-system` (by hand) puts the real layer in a small window on the

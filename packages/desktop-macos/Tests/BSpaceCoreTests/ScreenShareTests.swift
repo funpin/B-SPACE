@@ -157,11 +157,15 @@ private func asking(_ changes: [String: Any?]) -> BridgeArguments {
 
 @Suite struct ScreenShareAnswersTests {
     @Test func aStartedShareSaysTheSizeOfItsVideo() {
-        let value = ScreenShareReply.running(width: 2560, height: 1440, framesPerSecond: 60).bridgeValue
+        let value = ScreenShareReply.running(width: 2560, height: 1440, framesPerSecond: 60, hidden: false).bridgeValue
         #expect(value["ok"] as? Bool == true)
         #expect(value["width"] as? Int == 2560)
         #expect(value["height"] as? Int == 1440)
         #expect(value["frameRate"] as? Int == 60)
+        #expect(value["hidden"] as? Bool == false)
+        let unseen = ScreenShareReply.running(width: 1152, height: 720, framesPerSecond: 30, hidden: true).bridgeValue
+        #expect(unseen["ok"] as? Bool == true)
+        #expect(unseen["hidden"] as? Bool == true)
     }
 
     @Test func aRefusalSaysWhy() {
@@ -180,6 +184,9 @@ private func asking(_ changes: [String: Any?]) -> BridgeArguments {
         #expect(ScreenShareEvent.resized(width: 1440, height: 900).bridgeValue as NSDictionary == ["type": "resized", "width": 1440, "height": 900])
         #expect(ScreenShareEvent.audioEnded.bridgeValue as NSDictionary == ["type": "audio-ended"])
         #expect(ScreenShareEvent.previewEnded.bridgeValue as NSDictionary == ["type": "preview-ended"])
+        #expect(ScreenShareEvent.sourceHidden(true).bridgeValue as NSDictionary == ["type": "source-hidden", "hidden": true])
+        #expect(ScreenShareEvent.sourceHidden(false).bridgeValue as NSDictionary == ["type": "source-hidden", "hidden": false])
+        #expect(ScreenShareEvent.previewHidden(true).bridgeValue as NSDictionary == ["type": "preview-hidden", "hidden": true])
     }
 
     @Test func statisticsCarryWhatTheConnectionPanelShows() {
@@ -263,7 +270,9 @@ private func asking(_ changes: [String: Any?]) -> BridgeArguments {
     }
 
     @Test func theAnswerSaysTheSizeOrWhyNot() {
-        #expect(SharePreview.started(width: 1280, height: 800) as NSDictionary == ["ok": true, "width": 1280, "height": 800])
+        #expect(SharePreview.started(width: 1280, height: 800, hidden: false) as NSDictionary
+            == ["ok": true, "width": 1280, "height": 800, "hidden": false])
+        #expect(SharePreview.started(width: 640, height: 400, hidden: true)["hidden"] as? Bool == true)
         #expect(SharePreview.refused(.noPermission) as NSDictionary == ["ok": false, "reason": "no-permission"])
     }
 }

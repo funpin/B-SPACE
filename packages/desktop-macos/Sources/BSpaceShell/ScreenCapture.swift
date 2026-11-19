@@ -19,6 +19,17 @@ public protocol ScreenCapturer: AnyObject {
     /// system reports it shrunk. Not called for a display.
     var onSourceResized: ((_ width: Int, _ height: Int) -> Void)? { get set }
 
+    /// Called on the main queue when the system stops drawing the source
+    /// (true) and when it draws it again (false). A window is not drawn
+    /// while it is in another of Stage Manager's sets or on another
+    /// desktop: the capture goes on and gives no frames meanwhile, not
+    /// even a first one.
+    var onHidden: ((Bool) -> Void)? { get set }
+
+    /// What `onHidden` last said; false for a capture that has said
+    /// nothing. Read on the main queue.
+    var isHidden: Bool { get }
+
     /// Finds the source and decides the size of the video. Answers on the
     /// main queue.
     func prepare(
@@ -55,9 +66,13 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
     public var pacesFrames = true
     /// Read and written on the stream's queue alone.
     private var pacer: FramePacer?
+    /// What the system last said of the source, on the stream's queue.
+    private var isSuspended = false
 
     public var onEnded: (() -> Void)?
     public var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
+    public var onHidden: ((Bool) -> Void)?
+    public private(set) var isHidden = false
 
     private let queue = DispatchQueue(label: "screen-capture", qos: .userInteractive)
     /// The size of the window being captured as the session was last
@@ -199,14 +214,20 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
     }
 
     public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return
-        }
+        guard type == .screen, sampleBuffer.isValid else { return }
         // The system also sends a sample when nothing changed on screen, and
         // while it is starting; only a whole new picture is a frame.
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
             as? [[SCStreamFrameInfo: Any]]
-        guard let raw = attachments?.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
+        guard let raw = attachments?.first?[.status] as? Int, let status = SCFrameStatus(rawValue: raw) else { return }
+        // A source the system does not draw: one sample that says so and
+        // has no picture, and nothing more until it is drawn again.
+        if status == .suspended {
+            say(hidden: true)
+            return
+        }
+        guard status == .complete, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        say(hidden: false)
         if let known = windowSize, let now = Self.sourceSize(attachments?.first), !VideoShape.isSameSource(known, now) {
             windowSize = now
             DispatchQueue.main.async { [weak self] in
@@ -222,6 +243,18 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
         if pacer?.takes(at: time.seconds) == false { return }
         let age = CACurrentMediaTime() - time.seconds
         frame?(pixelBuffer, time, (Date().timeIntervalSince1970 - age) * 1000)
+    }
+
+    /// On the stream's queue: tells the main queue when what the system
+    /// says of the source is not what it said before.
+    private func say(hidden: Bool) {
+        guard hidden != isSuspended else { return }
+        isSuspended = hidden
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isStopped else { return }
+            self.isHidden = hidden
+            self.onHidden?(hidden)
+        }
     }
 
     /// The size of the captured window in its own pixels, from what the

@@ -214,14 +214,16 @@ public enum ScreenShareFailure: String, Error, Equatable {
 
 /// What the page is told when it starts or changes a share.
 public enum ScreenShareReply: Equatable {
-    /// The share runs, with video of this size and rate.
-    case running(width: Int, height: Int, framesPerSecond: Int)
+    /// The share runs, with video of this size and rate. `hidden` when the
+    /// system does not draw the source now (`ScreenShareEvent.sourceHidden`):
+    /// viewers see a black picture until it does.
+    case running(width: Int, height: Int, framesPerSecond: Int, hidden: Bool)
     case refused(ScreenShareFailure)
 
     public var bridgeValue: [String: Any] {
         switch self {
-        case .running(let width, let height, let framesPerSecond):
-            return ["ok": true, "width": width, "height": height, "frameRate": framesPerSecond]
+        case .running(let width, let height, let framesPerSecond, let hidden):
+            return ["ok": true, "width": width, "height": height, "frameRate": framesPerSecond, "hidden": hidden]
         case .refused(let failure):
             return ["ok": false, "reason": failure.rawValue]
         }
@@ -286,6 +288,13 @@ public enum ScreenShareEvent: Equatable {
     case resized(width: Int, height: Int)
     /// The system's sound ended by itself; the picture goes on.
     case audioEnded
+    /// The system stopped drawing the shared source, or draws it again. A
+    /// window is not drawn while it is in another of Stage Manager's sets
+    /// or on another desktop: the capture of it gives no frames, viewers
+    /// keep the last picture they got, and the share goes on.
+    case sourceHidden(Bool)
+    /// The same about the source the setup screen previews.
+    case previewHidden(Bool)
     /// The preview of a source ended by itself: the window was closed, the
     /// display unplugged, the permission taken away. Not a share's event,
     /// and told on the same channel: the setup screen listens there.
@@ -304,6 +313,10 @@ public enum ScreenShareEvent: Equatable {
             return ["type": "resized", "width": width, "height": height]
         case .audioEnded:
             return ["type": "audio-ended"]
+        case .sourceHidden(let hidden):
+            return ["type": "source-hidden", "hidden": hidden]
+        case .previewHidden(let hidden):
+            return ["type": "preview-hidden", "hidden": hidden]
         case .previewEnded:
             return ["type": "preview-ended"]
         case .stats(let stats):
