@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { sendError } from '../utils/httpErrors.js';
+import { PUBLIC_FILE_RATE_LIMIT } from '../utils/httpRateLimit.js';
 import { getDb, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import fs from 'fs';
@@ -23,8 +24,12 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
     fs.mkdirSync(config.uploadDir, { recursive: true });
   }
 
-  // GET /api/uploads/:filename - Serve uploaded file
-  app.get<{ Params: { filename: string } }>('/api/uploads/:filename', async (request, reply) => {
+  // GET /api/uploads/:filename - Serve uploaded file. Counted under the public
+  // file budget, not the global one: a channel's attachments and avatars are
+  // asked for all at once and must not compete with the API for requests.
+  app.get<{ Params: { filename: string } }>('/api/uploads/:filename', {
+    config: { rateLimit: PUBLIC_FILE_RATE_LIMIT },
+  }, async (request, reply) => {
     const { filename } = request.params;
 
     // Prevent directory traversal

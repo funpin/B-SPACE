@@ -10,6 +10,7 @@ import {
 } from '@backspace/shared/src/stickers.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
+import { PUBLIC_FILE_RATE_LIMIT } from '../utils/httpRateLimit.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
 import { stickerAssetPath as assetPath } from '../utils/stickerAssets.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -190,8 +191,11 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     return { id: request.params.id, name, token: tokenFor(request.params.id) } satisfies PersonalSticker;
   });
 
-  // Same public-link access policy as existing uploads. Never accept a filesystem path or remote URL.
-  app.get<{ Params: { filename: string } }>('/api/stickers/assets/:filename', async (request, reply) => {
+  // Same public-link access policy as existing uploads, and the same budget of
+  // its own in place of the global one. Never accept a filesystem path or remote URL.
+  app.get<{ Params: { filename: string } }>('/api/stickers/assets/:filename', {
+    config: { rateLimit: PUBLIC_FILE_RATE_LIMIT },
+  }, async (request, reply) => {
     const id = request.params.filename.replace(/\.webp$/, '');
     if (!STICKER_ID_PATTERN.test(id) || request.params.filename !== `${id}.webp`) {
       return sendError(reply, 404, 'sticker_not_found');

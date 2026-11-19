@@ -7,11 +7,13 @@ Source files: `packages/server/src/routes/*.ts`
 
 ## Rate limiting
 
-Every request passes a limit: the global **200 per minute** registered in
-`packages/server/src/index.ts`, or the route's own where it declares one. A
+Every API request passes a limit: the global **200 per minute**
+(`GLOBAL_RATE_LIMIT` in `packages/server/src/utils/httpRateLimit.ts`,
+registered from `index.ts`), or the route's own where it declares one. A
 route with `config.rateLimit` **replaces** the global limit for itself rather
-than sitting under it, so a route that allows 100 per minute allows 100 per
-minute even though the global number is smaller. Read the per-route numbers
+than sitting under it, and is counted on its own, so a route that allows 100
+per minute allows 100 per minute even though the global number is smaller,
+and its requests take nothing from the global 200. Read the per-route numbers
 below as the whole budget for that route, not as a second gate. **The key is
 the client address and nothing else.** The limiter runs on Fastify's `onRequest` hook while `authenticate` is
 a route `preHandler`, so no user is attached to the request yet when the key is
@@ -20,6 +22,36 @@ the app are the two hand-written upload limits in `routes/files.ts` (30 upload
 creates and 1000 PATCHes per minute per user), which run inside the tus handler
 after auth, and the sticker upload limit in `routes/stickers.ts` (30 per minute
 per account, also counted after auth).
+
+**What the global limit does not count.** Two groups of requests are kept out
+of the 200, because one screen of the client asks for many of them at once and
+they are not API calls:
+
+- **The built web client's own files** (`index.html`, `/assets/*`, fonts,
+  icons, sounds, `sw.js` and the Workbox runtime) are **not limited at all**.
+  `@fastify/rate-limit` only covers routes registered after it, and
+  `registerClientFilesThenRateLimit` registers `@fastify/static` first; the
+  two are one call so the order cannot drift (`@fastify/static` takes no route
+  config, so there is no other way to give its routes a different budget).
+  These routes answer a fixed set of files from disk and read nothing else.
+  The SPA fallback, a not-found handler that serves `index.html`, was never
+  limited either.
+- **The two public file routes**, `GET /api/uploads/:filename` and
+  `GET /api/stickers/assets/:filename`, each carry
+  `PUBLIC_FILE_RATE_LIMIT`: **1000 per minute** per address, each route on a
+  count of its own. They stay limited because each request reads the database
+  and the disk without authentication. Both answer `immutable`, so a browser
+  asks for a given file once.
+
+Why: a first launch of the client in a fresh browser profile fetches about 160
+client files within a minute, the page's own 41 and then all 117 precache
+entries for the service worker, which is registered after sign-in and so runs
+in the same minute as the first channel load (measured on a production build,
+2026-11-16). With those counted against the 200, about 40 requests were left
+for the API and the channel's images, and the tail of that minute, stickers,
+sticker reactions and attachments, was refused with 429 and shown as broken
+images. `utils/httpRateLimit.test.ts` holds both halves: a cold start of client
+files and images is not refused, and the API is still refused on request 201.
 
 The address comes from Fastify's `trustProxy`, which is a **count of trusted
 hops**: the `TRUSTED_PROXY_HOPS` environment variable, default 1, read in
@@ -36,11 +68,12 @@ or a household on CGNAT counts as a single client, and a busy client there can
 spend the minute's 200 for everybody at that address. The countermeasure is not
 in the app: give such a deployment its own address, or raise the limit.
 
-Routes may tighten the limit for themselves with `config.rateLimit`; those
-overrides sit with their routes (`routes/auth.ts`, `routes/directory.ts`,
-`routes/explore.ts`, `routes/messages.ts`, `routes/dm.ts`, `routes/gif.ts`,
-`routes/users.ts`, `routes/social.ts`), and they are keyed the same way, per
-address, for the same reason. The WebSocket `dm_message_create` event applies
+Routes may set the limit for themselves with `config.rateLimit`; those
+overrides sit with their routes (tighter in `routes/auth.ts`,
+`routes/directory.ts`, `routes/explore.ts`, `routes/messages.ts`,
+`routes/dm.ts`, `routes/gif.ts`, `routes/users.ts`, `routes/social.ts`; the
+larger public file budget in `routes/uploads.ts` and `routes/stickers.ts`),
+and they are keyed the same way, per address, for the same reason. The WebSocket `dm_message_create` event applies
 the DM create route's limit to the socket's address in a counter of its own
 (websocket.md, "DM Messages"). `DISABLE_RATE_LIMITS=1` or `=true`
 switches every limit off and exists for test harnesses that share the loopback
@@ -334,6 +367,8 @@ The final PATCH that completes an upload returns the `Attachment` JSON in its re
 ```
 GET  /uploads/:filename  (public, supports Range) → file stream
 ```
+Limited to 1000 per minute per address on its own count, not the global 200 ("Rate limiting" above).
+
 Served `Cache-Control: public, max-age=31536000, immutable`: a stored file's name is the snowflake it was given at upload and its bytes are never rewritten, so the name identifies one immutable file for good. The sandboxing headers on the same response (`default-src 'none'` CSP, `nosniff`, `X-Frame-Options: DENY`, `Content-Disposition: attachment` for SVG and non-media) are in [uploads.md](uploads.md) and [web-security.md](web-security.md).
 
 ## Personal stickers (`routes/stickers.ts`)
