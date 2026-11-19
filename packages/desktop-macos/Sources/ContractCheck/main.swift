@@ -3022,6 +3022,40 @@ final class CheckSharePublisher: ScreenSharePublisher {
     }
 }
 
+/// A preview of a source that draws nothing: it remembers where it was put
+/// and how many frames it was given.
+final class CheckSharePreview: SharePreviewPresenter {
+    var view: NSView? { nil }
+    private(set) var shown: (frame: NSRect, cornerRadius: CGFloat)?
+    private(set) var cleared = 0
+    private let lock = NSLock()
+    private var frames = 0
+    private var lastFrame = ""
+
+    var framesDrawn: Int { lock.lock(); defer { lock.unlock() }; return frames }
+    var lastFrameSize: String { lock.lock(); defer { lock.unlock() }; return lastFrame }
+
+    func show(in frame: NSRect, cornerRadius: CGFloat) {
+        shown = (frame, cornerRadius)
+    }
+
+    func hide() {
+        shown = nil
+    }
+
+    func draw(_ frame: CVPixelBuffer, at _: CMTime) {
+        lock.lock()
+        frames += 1
+        lastFrame = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.unlock()
+    }
+
+    func clear() {
+        shown = nil
+        cleared += 1
+    }
+}
+
 /// The shell's own share through the bridge, as the web client will start
 /// one: a screen and a system the check makes up, and a connection to a call
 /// that goes nowhere. What is checked is the share's own conduct: what it
@@ -3036,6 +3070,7 @@ func checkShare() -> Never {
     var publishers: [CheckSharePublisher] = []
     var connects = true
     var publishes = true
+    let preview = CheckSharePreview()
     let shell: MainWindowController
     let server: LocalPageServer
     do {
@@ -3059,7 +3094,8 @@ func checkShare() -> Never {
                 publisher.publishes = publishes
                 publishers.append(publisher)
                 return publisher
-            }
+            },
+            sharePreview: preview
         )
     } catch {
         fail(String(describing: error))
@@ -3303,21 +3339,94 @@ func checkShare() -> Never {
         problems.append("a share started after one that ended was answered \(again); after its connection was lost the page heard \(events("ended")), and its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running")")
     }
 
-    // 17. The window shows another page: the share of the page before goes
-    //     with it.
+    // 17. The live preview of a source, before any share: what is no
+    //     source is refused; a source is captured at a preview's size and
+    //     its frames are drawn, and nothing is shown until the page says
+    //     where its box is.
+    func startPreview(_ options: String) -> [String: Any] {
+        page("return await window.backspace.startNativeSharePreview(\(options));") as? [String: Any] ?? [:]
+    }
+    listen()
+    let noPreview = [startPreview("{}"), startPreview("{ sourceId: 'tab:1:0' }")]
+    let previewOfNothing = startPreview("{ sourceId: 'screen:77:0' }")
+    if !noPreview.allSatisfy({ refused($0, "bad-request") }) || !refused(previewOfNothing, "no-source") || preview.shown != nil {
+        problems.append("previews of no source were answered \(noPreview), one of a source that is gone \(previewOfNothing)")
+    }
+    let previewing = startPreview("{ sourceId: 'screen:1:0', maxWidth: 8000, frameRate: 60 }")
+    let previewCapture = capturers.last
+    if previewing["ok"] as? Bool != true || previewing["width"] as? Int != 1280 || previewing["height"] as? Int != 800
+        || previewCapture?.request?.framesPerSecond != 30
+        || !wait(5, until: { preview.framesDrawn >= 10 }) || preview.lastFrameSize != "1280x800" || preview.shown != nil {
+        problems.append("a preview was answered \(previewing); \(preview.framesDrawn) frame(s) were drawn, the last \(preview.lastFrameSize), and it was \(preview.shown == nil ? "not shown" : "shown") before the page said where")
+    }
+
+    // 18. The page's box: the picture is put over it, with its corners,
+    //     and taken away when the page says it has no box to show it in.
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 100, y: 60, width: 640, height: 400, radius: 10 }); return true;")
+    if !wait(5, until: { preview.shown != nil }) || preview.shown?.frame != NSRect(x: 100, y: 60, width: 640, height: 400)
+        || preview.shown?.cornerRadius != 10 {
+        problems.append("the preview was put at \(String(describing: preview.shown)), expected the page's box")
+    }
+    _ = page("window.backspace.setNativeSharePreviewFrame(null); return true;")
+    let drawnWhenHidden = preview.framesDrawn
+    if !wait(5, until: { preview.shown == nil }) || previewCapture?.isStopped != false
+        || !wait(5, until: { preview.framesDrawn >= drawnWhenHidden + 5 }) {
+        problems.append("a box of null left the preview \(preview.shown == nil ? "hidden" : "shown"), its capture \(previewCapture?.isStopped == false ? "running" : "stopped")")
+    }
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 100, y: 60, width: 640, height: 400 }); return true;")
+    _ = wait(5, until: { preview.shown != nil })
+
+    // 19. A share starts and stops beside the preview, each with a capture
+    //     of its own; a preview of another source replaces the one before.
+    let beside = start(good)
+    let besideCapture = capturers.last
+    if beside["ok"] as? Bool != true || besideCapture === previewCapture || previewCapture?.isStopped != false {
+        problems.append("a share beside a preview was answered \(beside); the preview's capture was \(previewCapture?.isStopped == false ? "kept" : "stopped")")
+    }
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    if !wait(5, until: { besideCapture?.isStopped == true }) || previewCapture?.isStopped != false || preview.shown == nil {
+        problems.append("stopping the share left the preview's capture \(previewCapture?.isStopped == false ? "running" : "stopped")")
+    }
+    let replaced = startPreview("{ sourceId: 'screen:1:0' }")
+    let secondPreview = capturers.last
+    if replaced["ok"] as? Bool != true || previewCapture?.isStopped != true || secondPreview?.isStopped != false {
+        problems.append("a second preview was answered \(replaced); the first one's capture was \(previewCapture?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    // 20. A previewed source that ends by itself: the page is told, and
+    //     the picture is gone. A preview the page stops is not news.
+    secondPreview?.endByItself()
+    if !wait(5, until: { !events("preview-ended").isEmpty }) || preview.shown != nil || !events("ended").isEmpty {
+        problems.append("after a previewed source ended by itself the page heard \(events("preview-ended").count) preview-ended and \(events("ended").count) ended; the picture was \(preview.shown == nil ? "gone" : "left")")
+    }
+    listen()
+    _ = startPreview("{ sourceId: 'screen:1:0' }")
+    let stoppedPreview = capturers.last
+    _ = page("window.backspace.stopNativeSharePreview(); return true;")
+    if !wait(5, until: { stoppedPreview?.isStopped == true }) || !events("preview-ended").isEmpty {
+        problems.append("a preview the page stopped left its capture \(stoppedPreview?.isStopped == true ? "stopped" : "running") and the page heard \(events("preview-ended").count) preview-ended")
+    }
+
+    // 21. The window shows another page: the share and the preview of the
+    //     page before go with it.
     _ = start(good)
     let orphan = publishers.last
     let orphanCapture = capturers.last
+    _ = startPreview("{ sourceId: 'screen:1:0' }")
+    let orphanPreview = capturers.last
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 0, y: 0, width: 320, height: 200 }); return true;")
+    _ = wait(5, until: { preview.shown != nil })
     load(address)
-    if !wait(5, until: { orphan?.isDisconnected == true && orphanCapture?.isStopped == true && sounds.last?.isStopped == true }) {
-        problems.append("after the window showed another page the share's connection was \(orphan?.isDisconnected == true ? "closed" : "left open"), its capture \(orphanCapture?.isStopped == true ? "stopped" : "left running")")
+    if !wait(5, until: { orphan?.isDisconnected == true && orphanCapture?.isStopped == true && sounds.last?.isStopped == true })
+        || orphanPreview?.isStopped != true || preview.shown != nil {
+        problems.append("after the window showed another page the share's connection was \(orphan?.isDisconnected == true ? "closed" : "left open"), its capture \(orphanCapture?.isStopped == true ? "stopped" : "left running"), the preview's capture \(orphanPreview?.isStopped == true ? "stopped" : "left running")")
     }
 
     for problem in problems {
         FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
     }
     print(problems.isEmpty
-        ? "the shell's own share: refused, started, changed and ended as it should be, through the bridge"
+        ? "the shell's own share: refused, started, changed and ended as it should be, with a live preview put where the page says, through the bridge"
         : "the shell's own share: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
 }
@@ -3442,6 +3551,114 @@ func checkShareLive() -> Never {
     print(problems.isEmpty
         ? "the shell's own share into a real call: joined, published in hardware, changed and left"
         : "the shell's own share into a real call: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real layer of the live preview, on the screen: is a frame handed to
+/// it a picture a person sees. A small window of the check's own appears ON
+/// THE SCREEN for a few seconds with the preview in it, fed with frames the
+/// check makes up (the real screen is not previewed); the window is then
+/// captured through ScreenCaptureKit, which shows the system's recording
+/// indicator, and the brightness of what was captured is measured. A layer
+/// that draws nothing is one flat colour. Nothing captured is kept.
+///
+/// Run by hand; it is not part of contract-check.sh.
+func checkSharePreviewSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 240, y: 320, width: 520, height: 340),
+        styleMask: [.titled], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: the live preview's layer"
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 340))
+    content.wantsLayer = true
+    content.layer?.backgroundColor = NSColor(white: 0.07, alpha: 1).cgColor
+    window.contentView = content
+    let preview = SystemSharePreview()
+    guard let surface = preview.view else { fail("the preview has no view") }
+    content.addSubview(surface)
+    let box = NSRect(x: 20, y: 20, width: 480, height: 300)
+    preview.show(in: box, cornerRadius: 12)
+    window.orderFrontRegardless()
+
+    let source = CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000)
+    var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    source.prepare(ScreenCaptureRequest(
+        source: .display(1), maxWidth: SharePreview.maxWidth, maxHeight: SharePreview.maxHeight,
+        framesPerSecond: SharePreview.framesPerSecond
+    )) { prepared = $0 }
+    guard wait(5, until: { prepared != nil }), case .success? = prepared else { fail("the made-up source did not start") }
+    var drawn = 0
+    var fed: Bool?
+    source.begin(frame: { frame, time, _ in
+        preview.draw(frame, at: time)
+        drawn += 1
+    }, completion: { fed = $0 })
+    guard wait(5, until: { fed != nil }), fed == true else { fail("the made-up source gave no frames") }
+    RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+
+    // What a person sees of the window, by capturing it.
+    let capturer = SystemScreenCapturer()
+    var seen: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    capturer.prepare(ScreenCaptureRequest(
+        source: .window(UInt32(window.windowNumber)), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30
+    )) { seen = $0 }
+    guard wait(10, until: { seen != nil }), case .success(let size)? = seen else {
+        if case .failure(let failure)? = seen { fail("the window could not be captured: \(failure.rawValue)") }
+        fail("the capture did not answer")
+    }
+    let lock = NSLock()
+    var darkest = 255
+    var brightest = 0
+    var measured = 0
+    var began: Bool?
+    capturer.begin(frame: { frame, _, _ in
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(frame, 0) else { return }
+        let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(frame, 0)
+        let width = CVPixelBufferGetWidthOfPlane(frame, 0)
+        let height = CVPixelBufferGetHeightOfPlane(frame, 0)
+        // The middle of the window, where the preview is: away from the
+        // title bar and the margins around the box.
+        var low = 255
+        var high = 0
+        for y in Swift.stride(from: height * 2 / 5, to: height * 4 / 5, by: 3) {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+            for x in Swift.stride(from: width / 4, to: width * 3 / 4, by: 3) {
+                let value = Int(row[x])
+                low = min(low, value)
+                high = max(high, value)
+            }
+        }
+        lock.lock()
+        darkest = min(darkest, low)
+        brightest = max(brightest, high)
+        measured += 1
+        lock.unlock()
+    }, completion: { began = $0 })
+    guard wait(10, until: { began != nil }), began == true else { fail("the capture did not begin") }
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    capturer.stop()
+    source.stop()
+    preview.clear()
+    window.orderOut(nil)
+
+    lock.lock()
+    let (low, high, frames) = (darkest, brightest, measured)
+    lock.unlock()
+    print("the window was captured at \(size.width)x\(size.height); \(drawn) frame(s) were handed to the preview; over \(frames) captured frame(s) the middle of the window went from \(low) to \(high) of 255 in brightness")
+    var problems: [String] = []
+    if drawn < 20 { problems.append("the preview was handed too few frames") }
+    if frames < 3 { problems.append("too few frames of the window were captured to tell") }
+    if high - low < 60 { problems.append("the preview's box is one flat colour: the layer drew no picture") }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the live preview, the real layer: the frames it is handed are a picture on the screen"
+        : "the live preview, the real layer: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
 }
 
@@ -4950,6 +5167,8 @@ case "share":
     checkShare()
 case "share-live":
     checkShareLive()
+case "share-preview-system":
+    checkSharePreviewSystem()
 case "system-audio":
     checkSystemAudio()
 case "system-audio-system":
@@ -4987,7 +5206,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, share, share-live, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, share, share-live, share-preview-system, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
 }
 
 let contract: BridgeContract

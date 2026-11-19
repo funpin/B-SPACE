@@ -179,6 +179,7 @@ private func asking(_ changes: [String: Any?]) -> BridgeArguments {
         #expect(ScreenShareEvent.reconnected.bridgeValue as NSDictionary == ["type": "reconnected"])
         #expect(ScreenShareEvent.resized(width: 1440, height: 900).bridgeValue as NSDictionary == ["type": "resized", "width": 1440, "height": 900])
         #expect(ScreenShareEvent.audioEnded.bridgeValue as NSDictionary == ["type": "audio-ended"])
+        #expect(ScreenShareEvent.previewEnded.bridgeValue as NSDictionary == ["type": "preview-ended"])
     }
 
     @Test func statisticsCarryWhatTheConnectionPanelShows() {
@@ -230,3 +231,40 @@ private func asking(_ changes: [String: Any?]) -> BridgeArguments {
         #expect(meter.rate(bytes: 200, at: 1) == 0)
     }
 }
+
+@Suite struct SharePreviewTests {
+    @Test func aBoxIsReadAsThePageMeasuresIt() {
+        let frame = SharePreviewFrame(arguments: arguments(["x": 120.5, "y": 80, "width": 640, "height": 400, "radius": 10]))
+        #expect(frame == SharePreviewFrame(x: 120.5, y: 80, width: 640, height: 400, cornerRadius: 10))
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 10, "height": 10]))?.cornerRadius == 0)
+    }
+
+    @Test func whatIsNotABoxWithASizeShowsNothing() {
+        #expect(SharePreviewFrame(arguments: BridgeArguments([])) == nil)
+        #expect(SharePreviewFrame(arguments: BridgeArguments([NSNull()])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 0, "height": 100])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 100])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": Double.nan, "y": 0, "width": 100, "height": 100])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": true, "y": 0, "width": 100, "height": 100])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 99_999, "height": 100])) == nil)
+        #expect(SharePreviewFrame(arguments: arguments(["x": 1e9, "y": 0, "width": 100, "height": 100])) == nil)
+    }
+
+    @Test func cornersAreNoRounderThanTheBoxAllows() {
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 100, "height": 40, "radius": 500]))?.cornerRadius == 20)
+        #expect(SharePreviewFrame(arguments: arguments(["x": 0, "y": 0, "width": 100, "height": 40, "radius": -3]))?.cornerRadius == 0)
+    }
+
+    @Test func aPreviewIsACaptureOfTheSourceAtAPreviewsSize() {
+        let capture = SharePreview.capture(arguments: arguments(["sourceId": "window:7:0", "maxWidth": 8000, "frameRate": 60]))
+        #expect(capture == ScreenCaptureRequest(source: .window(7), maxWidth: 1280, maxHeight: 800, framesPerSecond: 30))
+        #expect(SharePreview.capture(arguments: arguments(["sourceId": "tab:1:0"])) == nil)
+        #expect(SharePreview.capture(arguments: BridgeArguments([])) == nil)
+    }
+
+    @Test func theAnswerSaysTheSizeOrWhyNot() {
+        #expect(SharePreview.started(width: 1280, height: 800) as NSDictionary == ["ok": true, "width": 1280, "height": 800])
+        #expect(SharePreview.refused(.noPermission) as NSDictionary == ["ok": false, "reason": "no-permission"])
+    }
+}
+

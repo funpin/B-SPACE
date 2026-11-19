@@ -810,7 +810,9 @@ call.
 | `LiveKitSharePublisher` | `BSpaceShell/LiveKitSharePublisher.swift` | The real connection, through the fork of LiveKit's library (below). The library's mode without devices, so nothing opens a microphone; H.265 keeps an H.264 backup track; sound at 128 kbit/s; WebRTC's adaptation switched off (it reads the hardware encoder's latency as load and cuts 60 frames a second to 40) |
 
 Bridge members: `startNativeScreenShare`, `updateNativeScreenShare`,
-`stopNativeScreenShare`, `onNativeScreenShareEvent`, all `nativeOnly`;
+`stopNativeScreenShare`, `onNativeScreenShareEvent`, and for the preview
+`startNativeSharePreview`, `setNativeSharePreviewFrame`,
+`stopNativeSharePreview`, all `nativeOnly`;
 `docs/systems/desktop.md` has their arguments and answers. One share per
 window. `getScreenSharePickerMode({ nativeShare: true })` answers `app` when
 the shell can publish.
@@ -835,6 +837,32 @@ The app bundle carries the library's two frameworks in
 `scripts/toolchain.sh` makes `bundle.sh` and `contract-check.sh` build with
 Xcode's toolchain: built by the Command Line Tools the library compiles and
 then crashes when a share joins a call.
+
+### The live preview of a source
+
+Before a share starts, the stream setup screen shows the picked source live.
+The shell draws it: a capture at a preview's size (`SharePreview`, at most
+1280 by 800 at 30 frames a second) whose frames are handed, as they are, to
+an `AVSampleBufferDisplayLayer` in a view over the web view
+(`SystemSharePreview`). No encoder, no copy, and nothing of it passes through
+the page, so it does not stutter when the page is busy, which the preview of
+the capture path did.
+
+The page says which source (`startNativeSharePreview`) and where its preview
+box is (`setNativeSharePreviewFrame`, viewport coordinates and a corner
+radius; `SharePreviewFrame` reads and bounds it). The view lies over the
+page: what the page draws over its box would be covered, so the page hides
+the picture (a frame of `null`) while the box moves or something of its own
+is over it. Clicks go through to the page. The preview ends with
+`stopNativeSharePreview`, with its source (`preview-ended` on the share's
+event channel) and with its page.
+
+Checks: `--check share` covers the preview through the bridge with a
+presenter that only remembers where it was put; `--check
+share-preview-system` (by hand) puts the real layer in a small window on the
+screen, feeds it made-up frames, captures the window and measures that a
+picture is there (16 to 234 of 255 in brightness on 2026-11-19; a layer that
+draws nothing is one flat colour).
 
 ### The system's sound
 

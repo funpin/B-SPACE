@@ -286,6 +286,10 @@ public enum ScreenShareEvent: Equatable {
     case resized(width: Int, height: Int)
     /// The system's sound ended by itself; the picture goes on.
     case audioEnded
+    /// The preview of a source ended by itself: the window was closed, the
+    /// display unplugged, the permission taken away. Not a share's event,
+    /// and told on the same channel: the setup screen listens there.
+    case previewEnded
     case stats(ScreenShareStats)
 
     public var bridgeValue: [String: Any] {
@@ -300,6 +304,8 @@ public enum ScreenShareEvent: Equatable {
             return ["type": "resized", "width": width, "height": height]
         case .audioEnded:
             return ["type": "audio-ended"]
+        case .previewEnded:
+            return ["type": "preview-ended"]
         case .stats(let stats):
             var value: [String: Any] = [
                 "type": "stats", "bitrate": stats.bitrate, "frameRate": stats.framesPerSecond,

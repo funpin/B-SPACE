@@ -18,6 +18,9 @@ final class StayView: NSView {
 /// view the views that keep everything but the page's title bar a page.
 final class ShellContentView: NSView {
     private(set) var stayViews: [StayView] = []
+    /// Views of the shell's own that lie over the page whichever web view
+    /// shows it: the preview of a source.
+    private var overlays: [NSView] = []
     /// Called when the view's size changes.
     var onResize: (() -> Void)?
 
@@ -27,12 +30,18 @@ final class ShellContentView: NSView {
     /// Puts a web view under the views that keep the page a page, in place of
     /// the one that was there.
     func show(_ webView: NSView) {
-        for view in subviews where !(view is StayView) {
+        for view in subviews where !(view is StayView) && !overlays.contains(where: { $0 === view }) {
             view.removeFromSuperview()
         }
         webView.frame = bounds
         webView.autoresizingMask = [.width, .height]
         addSubview(webView, positioned: .below, relativeTo: nil)
+    }
+
+    /// Lays a view of the shell's own over the page. It places itself.
+    func addOverlay(_ view: NSView) {
+        overlays.append(view)
+        addSubview(view)
     }
 
     /// Lays a view over each rectangle, reusing the views there are.
@@ -222,6 +231,10 @@ public final class MainWindowController: NSObject {
     private var share: ShareSession?
     /// What the pointers' target knows the share by.
     private static let shareID = "share"
+    /// What shows the live preview of a source over the page; nil shows none.
+    private let sharePreview: SharePreviewPresenter?
+    /// The capture the preview shows, while there is one.
+    private var previewCapturer: ScreenCapturer?
     /// Writes the page's warnings and errors to a file, in a development
     /// build.
     private var pageLog: PageLog?
@@ -289,6 +302,10 @@ public final class MainWindowController: NSObject {
     ///     publishes none. The app passes one that joins the call through
     ///     LiveKit's library, a test run one that only remembers what it
     ///     was handed.
+    ///   - sharePreview: what shows the live preview of a source over the
+    ///     page's preview box; nil shows none. The app passes one with a
+    ///     layer the frames are handed to, a test run one that only
+    ///     remembers where it was put and how many frames it was given.
     ///   - pointerOverlay: what draws viewers' pointers over the display
     ///     being shared; nil draws none. The app passes one that puts a
     ///     transparent panel over the display, a test run one that only
@@ -311,6 +328,7 @@ public final class MainWindowController: NSObject {
         screenCapturer: (() -> ScreenCapturer)? = nil,
         systemAudioCapturer: (() -> SystemAudioCapturer)? = nil,
         sharePublisher: (() -> ScreenSharePublisher)? = nil,
+        sharePreview: SharePreviewPresenter? = nil,
         pointerOverlay: PointerOverlayPresenter? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
@@ -320,6 +338,7 @@ public final class MainWindowController: NSObject {
         makeScreenCapturer = screenCapturer
         makeSystemAudioCapturer = systemAudioCapturer
         makeSharePublisher = sharePublisher
+        self.sharePreview = sharePreview
         self.pointerOverlay = pointerOverlay
         self.environment = environment
         self.showsWindow = showsWindow
@@ -392,6 +411,7 @@ public final class MainWindowController: NSObject {
         window.isMovableByWindowBackground = true
         contentView = ShellContentView(frame: contentRect)
         contentView.show(firstWebView)
+        if let preview = sharePreview?.view { contentView.addOverlay(preview) }
         window.contentView = contentView
         window.center()
 
@@ -820,6 +840,7 @@ public final class MainWindowController: NSObject {
     }
 
     private func closeMediaChannels() {
+        stopSharePreview()
         stopScreenShare()
         stopScreenCaptures()
         stopSystemAudioCaptures()
@@ -1004,6 +1025,70 @@ public final class MainWindowController: NSObject {
         session.stop()
         pointerTarget.stopped(Self.shareID)
         drawPointers()
+    }
+
+    // MARK: The preview of a source
+
+    /// Starts the live preview of a source, in place of the one before:
+    /// a capture at a preview's size whose frames go straight to the layer
+    /// over the page. Where the layer is, the page says apart.
+    private func startSharePreview(_ asked: ScreenCaptureRequest, reply: @escaping ([String: Any]) -> Void) {
+        guard let makeScreenCapturer, let sharePreview else {
+            reply(SharePreview.refused(.unsupported))
+            return
+        }
+        previewCapturer?.onEnded = nil
+        previewCapturer?.stop()
+        var request = asked
+        if case .display(let id) = request.source {
+            request.excludedWindows = pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+        }
+        let capturer = makeScreenCapturer()
+        previewCapturer = capturer
+        capturer.prepare(request) { [weak self] result in
+            // Another source was asked for meanwhile, or the preview stopped.
+            guard let self, self.previewCapturer === capturer else {
+                capturer.stop()
+                reply(SharePreview.refused(.failed))
+                return
+            }
+            let size: (width: Int, height: Int)
+            switch result {
+            case .success(let made):
+                size = made
+            case .failure(let failure):
+                self.stopSharePreview()
+                reply(SharePreview.refused(failure))
+                return
+            }
+            capturer.onEnded = { [weak self] in
+                guard let self, self.previewCapturer === capturer else { return }
+                self.stopSharePreview()
+                self.bridge.emit("native-screen-share-event", payload: ScreenShareEvent.previewEnded.bridgeValue)
+            }
+            capturer.begin(frame: { frame, time, _ in
+                sharePreview.draw(frame, at: time)
+            }, completion: { [weak self] began in
+                guard let self, self.previewCapturer === capturer else {
+                    capturer.stop()
+                    reply(SharePreview.refused(.failed))
+                    return
+                }
+                guard began else {
+                    self.stopSharePreview()
+                    reply(SharePreview.refused(.failed))
+                    return
+                }
+                reply(SharePreview.started(width: size.width, height: size.height))
+            })
+        }
+    }
+
+    private func stopSharePreview() {
+        previewCapturer?.onEnded = nil
+        previewCapturer?.stop()
+        previewCapturer = nil
+        sharePreview?.clear()
     }
 
     // MARK: System audio
@@ -1346,6 +1431,32 @@ public final class MainWindowController: NSObject {
         }
         router.onFire("native-screen-share-stop") { [weak self] _ in
             self?.stopScreenShare()
+        }
+        router.onInvoke("native-share-preview-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = SharePreview.capture(arguments: arguments) else {
+                reply(.value(SharePreview.refused(.badRequest)))
+                return
+            }
+            self.startSharePreview(request) { answer in
+                reply(.value(answer))
+            }
+        }
+        // Where the page's preview box is now. Anything that is not a box
+        // hides the picture: the page sends that whenever it draws over it.
+        router.onFire("native-share-preview-frame") { [weak self] arguments in
+            guard let self, let sharePreview = self.sharePreview else { return }
+            guard self.previewCapturer != nil, let frame = SharePreviewFrame(arguments: arguments) else {
+                sharePreview.hide()
+                return
+            }
+            sharePreview.show(
+                in: NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height),
+                cornerRadius: CGFloat(frame.cornerRadius)
+            )
+        }
+        router.onFire("native-share-preview-stop") { [weak self] _ in
+            self?.stopSharePreview()
         }
         router.onInvoke("native-screen-capture-start") { [weak self] arguments, reply in
             guard let self else { return }

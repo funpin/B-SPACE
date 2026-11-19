@@ -168,7 +168,7 @@ interface BackspaceElectronAPI {
   // The argument is for the native macOS shell: a client that can take a
   // native capture says so and is shown the app's own list of sources; one
   // that says nothing is told 'system'. Electron ignores it.
-  getScreenSharePickerMode?: (client?: { nativeCapture?: boolean }) => Promise<'app' | 'system'>;
+  getScreenSharePickerMode?: (client?: { nativeCapture?: boolean; nativeShare?: boolean }) => Promise<'app' | 'system'>;
   /** System-picker captures carry no preselection; this tells main whether to add loopback audio. */
   setScreenShareAudioPreference?: (shareAudio: boolean) => void;
   /**
@@ -288,6 +288,16 @@ interface BackspaceElectronAPI {
   // connection is being restored, its window changed size, its sound
   // ended, and once a second what it sends.
   onNativeScreenShareEvent?: (cb: (event: NativeScreenShareEvent) => void) => () => void;
+  // Native macOS shell only. The live preview of a source on the stream
+  // setup screen: the shell captures the source and draws it itself, in a
+  // layer over the page, where the page says its preview box is. It lies
+  // over the page, so the page hides it (a frame of `null`) whenever it
+  // draws something of its own over that box. One preview at a time; a
+  // start for another source replaces it.
+  startNativeSharePreview?: (options: { sourceId: string }) => Promise<NativeSharePreviewResult>;
+  // The box in viewport coordinates, as `getBoundingClientRect()` gives it.
+  setNativeSharePreviewFrame?: (frame: NativeSharePreviewFrame | null) => void;
+  stopNativeSharePreview?: () => void;
 }
 
 interface NativeScreenCaptureOptions {
@@ -348,12 +358,27 @@ type NativeScreenShareResult =
         | 'connect-failed' | 'publish-failed' | 'not-running' | 'failed';
     };
 
+interface NativeSharePreviewFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The radius of the box's corners, in the same points. */
+  radius?: number;
+}
+
+type NativeSharePreviewResult =
+  | { ok: true; width: number; height: number }
+  | { ok: false; reason: 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'failed' };
+
 type NativeScreenShareEvent =
   | { type: 'ended'; reason: 'source-ended' | 'disconnected' | 'failed' }
   | { type: 'reconnecting' }
   | { type: 'reconnected' }
   | { type: 'resized'; width: number; height: number }
   | { type: 'audio-ended' }
+  /** The preview's source ended by itself; not about a share. */
+  | { type: 'preview-ended' }
   | {
       type: 'stats';
       /** Bits a second of video sent. */
