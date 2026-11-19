@@ -66,7 +66,11 @@
     { "name": "onNativeScreenCaptureEnded", "kind": "subscribe", "channel": "native-screen-capture-ended", "unsubscribe": true, "nativeOnly": true },
     { "name": "startNativeSystemAudio", "kind": "invoke", "channel": "native-system-audio-start", "nativeOnly": true },
     { "name": "stopNativeSystemAudio", "kind": "fire", "channel": "native-system-audio-stop", "nativeOnly": true },
-    { "name": "onNativeSystemAudioEnded", "kind": "subscribe", "channel": "native-system-audio-ended", "unsubscribe": true, "nativeOnly": true }
+    { "name": "onNativeSystemAudioEnded", "kind": "subscribe", "channel": "native-system-audio-ended", "unsubscribe": true, "nativeOnly": true },
+    { "name": "startNativeScreenShare", "kind": "invoke", "channel": "native-screen-share-start", "nativeOnly": true },
+    { "name": "updateNativeScreenShare", "kind": "invoke", "channel": "native-screen-share-update", "nativeOnly": true },
+    { "name": "stopNativeScreenShare", "kind": "fire", "channel": "native-screen-share-stop", "nativeOnly": true },
+    { "name": "onNativeScreenShareEvent", "kind": "subscribe", "channel": "native-screen-share-event", "unsubscribe": true, "nativeOnly": true }
   ],
   "bspaceUpdate": [
     { "name": "getState", "kind": "invoke", "channel": "update-window:get" },

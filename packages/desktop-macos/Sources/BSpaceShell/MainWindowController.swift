@@ -215,6 +215,13 @@ public final class MainWindowController: NSObject {
     private let makeSystemAudioCapturer: (() -> SystemAudioCapturer)?
     /// The captures of the system's sound that run now, as `captures`.
     private var audioCaptures: [String: (session: SystemAudioSession, channel: LocalMediaChannel)] = [:]
+    /// Makes a share's connection to a call; nil when the shell does not
+    /// publish shares itself.
+    private let makeSharePublisher: (() -> ScreenSharePublisher)?
+    /// The share the shell publishes for the page the window shows.
+    private var share: ShareSession?
+    /// What the pointers' target knows the share by.
+    private static let shareID = "share"
     /// Writes the page's warnings and errors to a file, in a development
     /// build.
     private var pageLog: PageLog?
@@ -278,6 +285,10 @@ public final class MainWindowController: NSObject {
     ///   - systemAudioCapturer: makes what captures the system's sound for
     ///     one share; nil captures none. The app passes one that captures
     ///     through the system, a test run one that plays a tone of its own.
+    ///   - sharePublisher: makes a share's connection to a call; nil
+    ///     publishes none. The app passes one that joins the call through
+    ///     LiveKit's library, a test run one that only remembers what it
+    ///     was handed.
     ///   - pointerOverlay: what draws viewers' pointers over the display
     ///     being shared; nil draws none. The app passes one that puts a
     ///     transparent panel over the display, a test run one that only
@@ -299,6 +310,7 @@ public final class MainWindowController: NSObject {
         screenSources: ScreenSourceLister? = nil,
         screenCapturer: (() -> ScreenCapturer)? = nil,
         systemAudioCapturer: (() -> SystemAudioCapturer)? = nil,
+        sharePublisher: (() -> ScreenSharePublisher)? = nil,
         pointerOverlay: PointerOverlayPresenter? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
@@ -307,6 +319,7 @@ public final class MainWindowController: NSObject {
         self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
         makeScreenCapturer = screenCapturer
         makeSystemAudioCapturer = systemAudioCapturer
+        makeSharePublisher = sharePublisher
         self.pointerOverlay = pointerOverlay
         self.environment = environment
         self.showsWindow = showsWindow
@@ -807,6 +820,7 @@ public final class MainWindowController: NSObject {
     }
 
     private func closeMediaChannels() {
+        stopScreenShare()
         stopScreenCaptures()
         stopSystemAudioCaptures()
         // The page that sent the pointers is gone.
@@ -906,6 +920,90 @@ public final class MainWindowController: NSObject {
         for id in Array(captures.keys) {
             stopScreenCapture(id)
         }
+    }
+
+    // MARK: The shell's own share
+
+    /// Whether this shell can publish a share itself: something captures
+    /// the screen for it and something connects it to a call.
+    private var canPublishShare: Bool {
+        makeScreenCapturer != nil && makeSharePublisher != nil
+    }
+
+    /// Starts the page's share: a capture, a connection to the call, a
+    /// published track. One at a time: the stream setup screen previews
+    /// a source without a share of it.
+    private func startScreenShare(_ request: ScreenShareRequest, reply: @escaping (ScreenShareReply) -> Void) {
+        guard canPublishShare, let makeScreenCapturer, let makeSharePublisher else {
+            reply(.refused(.unsupported))
+            return
+        }
+        guard share == nil else {
+            reply(.refused(.busy))
+            return
+        }
+        let session = ShareSession(
+            request: request,
+            publisher: makeSharePublisher(),
+            makeCapturer: makeScreenCapturer,
+            makeSoundCapturer: makeSystemAudioCapturer,
+            // A capture of a display leaves out the window that draws
+            // viewers' pointers over it: they see their pointers on the
+            // stream tile already, and would see each one twice.
+            excludedWindows: { [weak self] source in
+                guard case .display(let id) = source else { return [] }
+                return self?.pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+            }
+        )
+        share = session
+        session.onEvent = { [weak self, weak session] event in
+            guard let self, let session, self.share === session else { return }
+            if case .ended = event {
+                self.share = nil
+                self.pointerTarget.stopped(Self.shareID)
+                self.drawPointers()
+            }
+            self.bridge.emit("native-screen-share-event", payload: event.bridgeValue)
+        }
+        session.start { [weak self, weak session] answer in
+            guard let self, let session, self.share === session else {
+                // The page stopped it, or the window shows another page.
+                reply(.refused(.failed))
+                return
+            }
+            if case .refused = answer {
+                self.share = nil
+            } else {
+                self.pointerTarget.started(Self.shareID, display: session.display)
+                self.drawPointers()
+            }
+            reply(answer)
+        }
+    }
+
+    private func updateScreenShare(_ update: ScreenShareUpdate, reply: @escaping (ScreenShareReply) -> Void) {
+        guard let session = share else {
+            reply(.refused(.notRunning))
+            return
+        }
+        session.update(update) { [weak self, weak session] answer in
+            if let self, let session, self.share === session, case .running = answer {
+                // Another source may be another display, or none.
+                self.pointerTarget.stopped(Self.shareID)
+                self.pointerTarget.started(Self.shareID, display: session.display)
+                self.drawPointers()
+            }
+            reply(answer)
+        }
+    }
+
+    private func stopScreenShare() {
+        guard let session = share else { return }
+        share = nil
+        session.onEvent = nil
+        session.stop()
+        pointerTarget.stopped(Self.shareID)
+        drawPointers()
     }
 
     // MARK: System audio
@@ -1222,9 +1320,33 @@ public final class MainWindowController: NSObject {
         // gets WebKit's picker.
         router.onInvoke("get-screen-share-picker-mode", answering: { [weak self] arguments in
             .value(ScreenSharePickerMode.answer(
-                arguments: arguments, shellCanCapture: self?.canCaptureScreen ?? false
+                arguments: arguments, shellCanCapture: self?.canCaptureScreen ?? false,
+                shellCanPublish: self?.canPublishShare ?? false
             ).rawValue)
         })
+        router.onInvoke("native-screen-share-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = ScreenShareRequest(arguments: arguments) else {
+                reply(.value(ScreenShareReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.startScreenShare(request) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onInvoke("native-screen-share-update") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let update = ScreenShareUpdate(arguments: arguments) else {
+                reply(.value(ScreenShareReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.updateScreenShare(update) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-screen-share-stop") { [weak self] _ in
+            self?.stopScreenShare()
+        }
         router.onInvoke("native-screen-capture-start") { [weak self] arguments, reply in
             guard let self else { return }
             guard let request = ScreenCaptureRequest(arguments: arguments) else {

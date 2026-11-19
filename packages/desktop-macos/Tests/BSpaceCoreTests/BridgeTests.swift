@@ -33,14 +33,15 @@ private let small = """
 @Suite struct BridgeContractTests {
     @Test func readsTheRepositoryContract() throws {
         let contract = try BridgeContract(data: repositoryContractData())
-        #expect(contract.members(of: .backspace).count == 67)
+        #expect(contract.members(of: .backspace).count == 71)
         #expect(contract.members(of: .backspace).filter { $0.nativeOnly == true }.map(\.name) == [
             "setDragRegions", "openKeybindPermissionSettings",
             "startNativeScreenCapture", "stopNativeScreenCapture", "onNativeScreenCaptureEnded",
             "startNativeSystemAudio", "stopNativeSystemAudio", "onNativeSystemAudioEnded",
+            "startNativeScreenShare", "updateNativeScreenShare", "stopNativeScreenShare", "onNativeScreenShareEvent",
         ])
         #expect(contract.callChannels(of: .backspace)["set-drag-regions"] == .fire)
-        #expect(contract.eventChannels(of: .backspace).count == 19)
+        #expect(contract.eventChannels(of: .backspace).count == 20)
         #expect(contract.members(of: .bspaceUpdate).count == 6)
         #expect(contract.callChannels(of: .backspace)["get-app-version"] == .invoke)
         #expect(contract.callChannels(of: .backspace)["minimize-window"] == .fire)
@@ -215,6 +216,7 @@ private let small = """
         "open-keybind-permission-settings", "get-screen-sources", "get-screen-share-picker-mode",
         "native-screen-capture-start", "native-screen-capture-stop",
         "get-system-audio-capability", "native-system-audio-start", "native-system-audio-stop",
+        "native-screen-share-start", "native-screen-share-update", "native-screen-share-stop",
         "stream-pointer-overlay", "stream-pointer-overlay-end",
     ]
 

@@ -11,7 +11,8 @@
 # (--check tray), game detection (--check activity), the global keybinds
 # (--check keybinds), the list of what can be shared (--check sources), the
 # local media channel (--check media-channel), a share started through the
-# bridge (--check capture), the system's sound for it
+# bridge (--check capture), the shell's own share (--check share), the
+# system's sound for a capture
 # (--check system-audio) and viewers' pointers on it
 # (--check pointer-overlay).
 #
@@ -49,6 +50,8 @@ done
 cd "$(dirname "$SELF")/.."
 DESKTOP="$(cd ../desktop && pwd)"
 
+# shellcheck source=toolchain.sh
+source "$(dirname "$SELF")/toolchain.sh"
 swift build -c release --product ContractCheck >&2
 
 # The shell's window, on this machine's displays: restored from
@@ -166,6 +169,15 @@ swift build -c release --product ContractCheck >&2
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --check capture >&2
+
+# The shell's own share through the bridge: a screen, a system and a call
+# the check makes up. Nothing real is captured and no call is joined.
+.build/release/ContractCheck \
+  --contract "$DESKTOP/src/bridgeContract.json" \
+  --picker "$DESKTOP/resources/instance-picker.html" \
+  --strings "$DESKTOP/src/desktopStrings.json" \
+  --recovery "$DESKTOP/resources/recovery.html" \
+  --check share >&2
 
 # The system's sound through the bridge, with a system the check makes up:
 # nothing real is captured.

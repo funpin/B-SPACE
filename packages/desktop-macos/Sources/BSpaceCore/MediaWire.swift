@@ -119,6 +119,27 @@ public enum VideoShape {
         return (even(Double(width) * scale), even(Double(height) * scale))
     }
 
+    /// The size of a captured window in its own pixels, from what the system
+    /// says of one frame: how large the content is inside the frame (in
+    /// points), by how much it was scaled to fit there, and how many pixels
+    /// the display has to a point. Nil when the numbers make no size.
+    public static func sourceSize(
+        contentWidth: Double, contentHeight: Double, contentScale: Double, pixelsPerPoint: Double
+    ) -> (width: Int, height: Int)? {
+        guard contentWidth > 0, contentHeight > 0, contentScale > 0, pixelsPerPoint > 0,
+              contentWidth.isFinite, contentHeight.isFinite, contentScale.isFinite, pixelsPerPoint.isFinite else { return nil }
+        let width = (contentWidth / contentScale * pixelsPerPoint).rounded()
+        let height = (contentHeight / contentScale * pixelsPerPoint).rounded()
+        guard width >= 1, height >= 1, width < 100_000, height < 100_000 else { return nil }
+        return (Int(width), Int(height))
+    }
+
+    /// Whether two sizes are one size of the source: a pixel or two apart
+    /// is rounding, not a window that was resized.
+    public static func isSameSource(_ one: (width: Int, height: Int), _ other: (width: Int, height: Int)) -> Bool {
+        abs(one.width - other.width) <= 2 && abs(one.height - other.height) <= 2
+    }
+
     /// The bitrate of the local stream. The page decodes it and the browser
     /// encodes it again for the call, so this one is kept well above what
     /// the call will carry: its losses would be paid twice. About 0.12 bits a

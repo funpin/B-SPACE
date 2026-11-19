@@ -16,6 +16,7 @@ and the measuring harness of stage 0.
 | `ContractCheck` | Drives `BSpaceShell` through the bridge contract check, or opens a live instance in it |
 | `WebKitProbe`, `ProbeSupport` | The measuring harness of stage 0 |
 | `CaptureProbe` | The stage 4 experiment: does a system audio capture that excludes an application leave out what its web view plays |
+| `StreamProbe` | The stage 4 experiment of plan section 12: publish a screen share into a LiveKit room from the shell's own capture, and print what WebRTC says about it |
 
 ## Requirements
 
@@ -790,6 +791,51 @@ Not done: a share in a real call (through LiveKit, watched from another
 client), processor load and the comparison with the Electron build are
 not measured.
 
+### The shell's own share
+
+The share the app is meant to have (plan section 12): the shell joins the
+call itself, as the user's stream participant, and publishes what it captures
+with one hardware encode. The page decides (which call, with which stream
+token, what to share, at what quality) and the shell does it; nothing of the
+share passes through the page. It replaces the path above, where the picture
+went to the page over the local channel and was encoded a second time there;
+that path is still in the tree and goes once the new one has been through a
+call.
+
+| Piece | Where | What it is |
+|---|---|---|
+| `ScreenShareRequest`, `ScreenShareUpdate`, `ScreenShareReply`, `ScreenShareEvent`, `ScreenShareStats` | `BSpaceCore/ScreenShare.swift` | What the page and the shell say to each other, with the bounds a request is brought into. A call server is a `wss://` address, or `ws://` to this machine only |
+| `ScreenSharePublisher` | `BSpaceShell/ScreenShare.swift` | A share's connection to a call, as a protocol: join, publish video, take frames, change the encoding, publish and unpublish sound, leave |
+| `ShareSession` | the same file | One share: the capture, the sound, the publisher, and their order. The capture is prepared first, so a missing permission or a source that is gone is said before the call hears of anything. A change of source, size or rate starts a new capturer whose frames take over when it runs, and the track is not published again. A window that changes size is followed, as in the capture path |
+| `LiveKitSharePublisher` | `BSpaceShell/LiveKitSharePublisher.swift` | The real connection, through the fork of LiveKit's library (below). The library's mode without devices, so nothing opens a microphone; H.265 keeps an H.264 backup track; sound at 128 kbit/s; WebRTC's adaptation switched off (it reads the hardware encoder's latency as load and cuts 60 frames a second to 40) |
+
+Bridge members: `startNativeScreenShare`, `updateNativeScreenShare`,
+`stopNativeScreenShare`, `onNativeScreenShareEvent`, all `nativeOnly`;
+`docs/systems/desktop.md` has their arguments and answers. One share per
+window. `getScreenSharePickerMode({ nativeShare: true })` answers `app` when
+the shell can publish.
+
+Checks:
+
+- `--check share` (in `contract-check.sh`): the session through the bridge
+  with a screen, a system and a call the check makes up. What is refused
+  and before what is made for it, what the call is handed, what each change
+  touches and leaves, every way a share ends, and that it goes with its page.
+- `--check share-live --url wss://… --token-file <stream token> [--seconds 20]
+  [--codec h265]` (by hand): the same start through the bridge with the real
+  publisher into a real room, a made-up screen and sound, a change of bitrate
+  in the middle; prints what the connection reports. Watch the room with
+  `StreamProbe --watch`. Measured on 2026-11-19: 1920 by 1200 at 60 frames a
+  second for 70 seconds, hardware H.265, the viewer at 60 to 61 with no
+  freeze, sound at 128 kbit/s as screen share audio.
+
+The app bundle carries the library's two frameworks in
+`Contents/Frameworks` (`bundle.sh` copies them and adds the search path,
+`sign.sh` signs them before the app); the bundle is 46 MB with them.
+`scripts/toolchain.sh` makes `bundle.sh` and `contract-check.sh` build with
+Xcode's toolchain: built by the Command Line Tools the library compiles and
+then crashes when a share joins a call.
+
 ### The system's sound
 
 A share can carry what the Mac plays: everything except this app, so that
@@ -1257,3 +1303,70 @@ Not answered by this run:
 One thing about the page: a short file played on a loop is not a reliable
 tone. The element started it up to thirteen seconds late or sat at zero while
 reporting that it played; a file longer than the run plays from the start.
+
+## StreamProbe
+
+The experiment behind section 12 of the plan: can the shell publish a screen
+share into a call by itself, through LiveKit's Swift library, with one
+hardware encode. It joins a room with a token read from a file, publishes a
+video track fed with frames of its own (made up, or a real display through
+`SystemScreenCapturer`) and, when asked, a sound track fed with ready
+samples, and prints once a second the encoder, the frame rate, the bitrate,
+the network path and the process's CPU as WebRTC reports them. Started with
+`--watch` and a viewer's token it joins the same room as a viewer, in a
+process of its own, and prints what arrives.
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build --product StreamProbe
+.build/debug/StreamProbe --url wss://<livekit> --token-file <publisher token> \
+    --width 2560 --height 1440 --fps 60 --codec h265 --audio tone
+.build/debug/StreamProbe --url wss://<livekit> --token-file <viewer token> --watch
+```
+
+`--degradation resolution|framerate|balanced|disabled` is what WebRTC may
+give up when it thinks the encoder is overloaded. Run for more than 40
+seconds to see it: with the default (`resolution`) WebRTC cuts 60 frames a
+second to 40 at about that point, "limited by cpu", taking the hardware
+encoder's 39 ms a frame of latency for load while the process uses a few
+percent of a core; with `disabled` the share stays at 60. The shell
+publishes with it disabled.
+
+`--floor <kbit/s>` gives the encoding a bitrate floor, `--rebitrate <kbit/s>`
+changes the ceiling in the middle of the run on the same track, and the
+sound is published as screen share audio: all three come from the fork
+below.
+
+Build it with Xcode's toolchain: the same sources built with Command Line
+Tools (Swift 6.1.2) crash when joining a room. `--source display` shows the
+system's recording indicator and sends the main display to the room;
+`--audio tone` feeds a made-up tone to the room only, nothing is played on
+the machine; `--change` halves the frame rate and then the frame size in the
+middle of the run. The tokens are minted by hand on a test server, and the
+run is by hand too: nothing here is part of the app or of
+`contract-check.sh`. What it measured is in the plan, section 12.11.
+
+## The LiveKit library
+
+The package depends on the project's fork of LiveKit's Swift SDK,
+`funpin/client-sdk-swift`, pinned in `Package.swift` to a commit of its
+`b-space` branch: upstream release 2.19.0 plus three additions the shell's
+screen share needs, which upstream's public API does not have.
+
+| Addition | Why |
+|---|---|
+| `LocalAudioTrack.createTrack(name:source:options:reportStatistics:)` | Upstream labels every local audio track `microphone`. The stream participant's token allows only `screen_share` and `screen_share_audio`, and viewers have to tell a share's sound from a voice |
+| `VideoEncoding.minBitrate` | A floor the encoder keeps while the bandwidth estimate is lower. Without it an estimate that starts low makes the encoder drop frames for seconds (measured: 2 to 30 frames a second instead of 60, in about one start of seven) |
+| `LocalTrackPublication.set(videoEncoding:)` | A new bitrate ceiling, floor and frame rate ceiling for a published track without publishing it again, for the quality controls during a share |
+
+The fork's `FORK.md` says the same in the library's terms and how the first
+addition relates to upstream's own draft. To move to a newer upstream
+release: rebase `b-space` onto its tag, run the library's
+`VideoEncodingsTests`, build this package with Xcode's toolchain, run
+`StreamProbe` against a LiveKit server with a token that allows only the two
+screen share sources (sound, `--floor`, `--rebitrate`), and only then change
+the revision in `Package.swift`. `Package.resolved` is committed.
+
+The library brings two dynamic frameworks, `LiveKitWebRTC` (29 MB for both
+architectures) and `RustLiveKitFFI` (3 MB); putting them into the app bundle
+and signing them is not done yet. SwiftPM downloads WebRTC for every Apple
+platform at once, a 686 MB archive, on a clean build.

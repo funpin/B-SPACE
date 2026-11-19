@@ -45,6 +45,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
                 }),
                 screenCapturer: { SystemScreenCapturer() },
                 systemAudioCapturer: { SystemSoundCapturer() },
+                sharePublisher: { LiveKitSharePublisher() },
                 pointerOverlay: SystemPointerOverlay()
             )
             mainWindow = controller

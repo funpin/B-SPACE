@@ -273,6 +273,21 @@ interface BackspaceElectronAPI {
   // A capture ended by itself: the permission was taken away, the system
   // stopped it.
   onNativeSystemAudioEnded?: (cb: (event: { id: string }) => void) => () => void;
+  // Native macOS shell only. The shell publishes the share itself: it
+  // joins the call as the user's stream participant (docs/systems/voice.md,
+  // "The stream participant") with the stream token the page got from the
+  // call's server, and sends what it captures with one hardware encode.
+  // Nothing of the share passes through the page. One share per window.
+  startNativeScreenShare?: (options: NativeScreenShareOptions) => Promise<NativeScreenShareResult>;
+  // Changes what is named and nothing else, on the same published track:
+  // another source, size or frame rate, another bitrate, the sound on or
+  // off. The codec is decided at the start; for another one, stop and start.
+  updateNativeScreenShare?: (options: NativeScreenShareUpdate) => Promise<NativeScreenShareResult>;
+  stopNativeScreenShare?: () => void;
+  // What happens to the share while it runs: it ended by itself, its
+  // connection is being restored, its window changed size, its sound
+  // ended, and once a second what it sends.
+  onNativeScreenShareEvent?: (cb: (event: NativeScreenShareEvent) => void) => () => void;
 }
 
 interface NativeScreenCaptureOptions {
@@ -292,6 +307,69 @@ type NativeScreenCaptureResult =
 type NativeSystemAudioResult =
   | { ok: true; id: string; url: string; token: string; sampleRate: number; channels: number }
   | { ok: false; reason: 'no-permission' | 'unsupported' | 'too-many' | 'failed' };
+
+interface NativeScreenShareOptions {
+  /** The call's LiveKit address and the stream token its server issued (`purpose: 'stream'`). */
+  url: string;
+  token: string;
+  /** An id from `getScreenSources`. */
+  sourceId: string;
+  /** The most the video may measure; the source's own size when smaller. */
+  maxWidth?: number;
+  maxHeight?: number;
+  /** 1 to 60; 30 when left out. */
+  frameRate?: number;
+  /** `h264` when left out. With `h265`, viewers that cannot decode it are sent H.264. */
+  codec?: 'h264' | 'h265';
+  /** Bits a second: the ceiling, and the floor the encoder keeps while the bandwidth estimate is lower (0 for none). */
+  maxBitrate?: number;
+  minBitrate?: number;
+  /** Whether the system's sound goes with the picture. */
+  audio?: boolean;
+}
+
+/** Only what is named changes. */
+interface NativeScreenShareUpdate {
+  sourceId?: string;
+  maxWidth?: number;
+  maxHeight?: number;
+  frameRate?: number;
+  maxBitrate?: number;
+  minBitrate?: number;
+  audio?: boolean;
+}
+
+type NativeScreenShareResult =
+  | { ok: true; width: number; height: number; frameRate: number }
+  | {
+      ok: false;
+      reason:
+        | 'bad-request' | 'no-permission' | 'no-source' | 'unsupported' | 'busy'
+        | 'connect-failed' | 'publish-failed' | 'not-running' | 'failed';
+    };
+
+type NativeScreenShareEvent =
+  | { type: 'ended'; reason: 'source-ended' | 'disconnected' | 'failed' }
+  | { type: 'reconnecting' }
+  | { type: 'reconnected' }
+  | { type: 'resized'; width: number; height: number }
+  | { type: 'audio-ended' }
+  | {
+      type: 'stats';
+      /** Bits a second of video sent. */
+      bitrate: number;
+      frameRate: number;
+      width: number;
+      height: number;
+      /** As WebRTC names them: `video/H265`, `VideoToolbox`. */
+      codec: string;
+      encoder: string;
+      hardware: boolean;
+      roundTripMs?: number;
+      availableBitrate?: number;
+      limitedBy?: string;
+      audioBitrate?: number;
+    };
 
 interface Window {
   backspace?: BackspaceElectronAPI;

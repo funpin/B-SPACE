@@ -93,19 +93,26 @@ public enum ScreenCaptureReply: Equatable {
 
 /// Whether the page is told that the app lists the sources itself.
 ///
-/// It is, when the web client says it can take a native capture
-/// (`getScreenSharePickerMode({ nativeCapture: true })`) and the shell can
-/// give one. A web client from before native capture says nothing, and is
-/// told `system`: it calls `getDisplayMedia`, WebKit shows its own picker, and
-/// the share works at what WebKit's capture gives.
+/// It is, when the web client says it can have the shell publish the share
+/// (`getScreenSharePickerMode({ nativeShare: true })`) and the shell can, or
+/// says it can take a native capture (`{ nativeCapture: true }`) and the
+/// shell can give one. A web client that says neither is told `system`: it
+/// calls `getDisplayMedia`, WebKit shows its own picker, and the share works
+/// at what WebKit's capture gives.
 public enum ScreenSharePickerMode: String {
     case app
     case system
 
-    public static func answer(arguments: BridgeArguments, shellCanCapture: Bool) -> ScreenSharePickerMode {
-        guard shellCanCapture,
-              let number = arguments.object(at: 0)?["nativeCapture"] as? NSNumber,
-              CFGetTypeID(number) == CFBooleanGetTypeID(), number.boolValue else { return .system }
-        return .app
+    public static func answer(
+        arguments: BridgeArguments, shellCanCapture: Bool, shellCanPublish: Bool = false
+    ) -> ScreenSharePickerMode {
+        let options = arguments.object(at: 0)
+        func says(_ key: String) -> Bool {
+            guard let number = options?[key] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return false }
+            return number.boolValue
+        }
+        if shellCanPublish, says("nativeShare") { return .app }
+        if shellCanCapture, says("nativeCapture") { return .app }
+        return .system
     }
 }

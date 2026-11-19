@@ -103,8 +103,8 @@ describe('bridge contract', () => {
 
   it('counts what the native macOS shell has to carry', () => {
     const members = BRIDGE_CONTRACT.backspace;
-    expect(members).toHaveLength(67);
-    expect(members.filter((member) => member.kind === 'subscribe')).toHaveLength(19);
+    expect(members).toHaveLength(71);
+    expect(members.filter((member) => member.kind === 'subscribe')).toHaveLength(20);
   });
 
   it('keeps the members only the native macOS shell has out of Electron', () => {
@@ -113,6 +113,7 @@ describe('bridge contract', () => {
       'setDragRegions', 'openKeybindPermissionSettings',
       'startNativeScreenCapture', 'stopNativeScreenCapture', 'onNativeScreenCaptureEnded',
       'startNativeSystemAudio', 'stopNativeSystemAudio', 'onNativeSystemAudioEnded',
+      'startNativeScreenShare', 'updateNativeScreenShare', 'stopNativeScreenShare', 'onNativeScreenShareEvent',
     ]);
     const everywhere = [mainProcessSources(), ...Object.values(PRELOADS).map((file) => fs.readFileSync(path.join(__dirname, file), 'utf-8'))].join('\n');
     for (const member of nativeOnly) {

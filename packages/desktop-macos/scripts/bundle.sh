@@ -85,6 +85,8 @@ for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/resources/re
   [[ -f "$resource" ]] || { echo "bundle.sh: $resource is missing" >&2; exit 1; }
 done
 
+# shellcheck source=toolchain.sh
+source "$(dirname "$SELF")/toolchain.sh"
 swift build -c release --product BSpaceApp >&2
 
 EXECUTABLE="B-SPACE"
@@ -92,6 +94,27 @@ APP=".build/app/${IDENTITY}/B-SPACE.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/BSpaceApp "$APP/Contents/MacOS/$EXECUTABLE"
+# LiveKit's library comes as two dynamic frameworks (WebRTC and its own
+# native part). SwiftPM leaves them beside the executable it builds; in the
+# bundle they go where frameworks go, and the executable is told to look
+# there. Whole, symbolic links kept: a framework's layout is part of what
+# is signed.
+mkdir -p "$APP/Contents/Frameworks"
+for framework in LiveKitWebRTC RustLiveKitFFI; do
+  [[ -d ".build/release/$framework.framework" ]] || {
+    echo "bundle.sh: .build/release/$framework.framework is missing" >&2
+    exit 1
+  }
+  cp -R ".build/release/$framework.framework" "$APP/Contents/Frameworks/"
+done
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/$EXECUTABLE" >&2
+for dependency in $(otool -L "$APP/Contents/MacOS/$EXECUTABLE" | sed -n 's/^[[:space:]]*\(@rpath\/[^ ]*\) .*/\1/p'); do
+  name="${dependency#@rpath/}"
+  [[ -e "$APP/Contents/Frameworks/$name" ]] || {
+    echo "bundle.sh: the executable needs $dependency and the bundle does not carry it" >&2
+    exit 1
+  }
+done
 cp "$DESKTOP/resources/instance-picker.html" "$APP/Contents/Resources/instance-picker.html"
 cp "$DESKTOP/resources/recovery.html" "$APP/Contents/Resources/recovery.html"
 cp "$DESKTOP/src/bridgeContract.json" "$APP/Contents/Resources/bridgeContract.json"

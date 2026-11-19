@@ -41,6 +41,21 @@ APP="$1"
 # its own root) and a chained one as `certificate leaf`.
 STABLE_REQUIREMENT='certificate (leaf|root) = H"[0-9a-fA-F]{40}"'
 
+# Code inside the bundle is signed before the bundle: a signature over the app
+# seals what its frameworks' signatures are, so they have to exist first, and
+# the system refuses to load a framework signed by somebody else into a
+# hardened app. The frameworks are LiveKit's library (bundle.sh puts them in).
+# The arguments are codesign's: the identity, then anything that goes with it.
+sign_frameworks() {
+  local identity="$1"
+  shift
+  local framework
+  for framework in "$APP"/Contents/Frameworks/*.framework; do
+    [[ -d "$framework" ]] || continue
+    codesign --force --sign "$identity" "$@" --timestamp=none "$framework" >&2
+  done
+}
+
 # Empty counts as unset: CI passes '' to jobs that have no access to the secret.
 P12_BASE64="$(printf '%s' "${MAC_SIGN_P12:-}" | tr -d '[:space:]')"
 P12_PASSWORD="${MAC_SIGN_P12_PASSWORD:-}"
@@ -54,8 +69,9 @@ if [[ -z "$P12_BASE64" && -z "$P12_PASSWORD" ]]; then
   echo "sign.sh: no MAC_SIGN_P12: ad hoc signing. macOS permissions will not survive the next update." >&2
   # `--sign -` never contacts a timestamp server; saying so keeps the build
   # hermetic rather than relying on that default.
+  sign_frameworks -
   codesign --force --sign - --timestamp=none "$APP" >&2
-  codesign --verify --strict "$APP" >&2
+  codesign --verify --deep --strict "$APP" >&2
   exit 0
 fi
 if [[ -z "$P12_BASE64" || -z "$P12_PASSWORD" ]]; then
@@ -115,8 +131,9 @@ if [[ -z "$SHA1" ]]; then
   exit 1
 fi
 
+sign_frameworks "$SHA1" --keychain "$KEYCHAIN"
 codesign --force --sign "$SHA1" --keychain "$KEYCHAIN" --timestamp=none "$APP" >&2
-codesign --verify --strict "$APP" >&2
+codesign --verify --deep --strict "$APP" >&2
 
 # codesign writes the requirement to standard output and its remarks to
 # standard error; both are kept so a failure shows everything it said.

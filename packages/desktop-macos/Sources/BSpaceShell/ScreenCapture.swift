@@ -13,6 +13,12 @@ public protocol ScreenCapturer: AnyObject {
     /// was closed, the display unplugged, the permission taken away.
     var onEnded: (() -> Void)? { get set }
 
+    /// Called on the main queue when a captured window is no longer the
+    /// size the video was sized from, with its size in its own pixels: it
+    /// was resized, or it came out of Stage Manager's strip, where the
+    /// system reports it shrunk. Not called for a display.
+    var onSourceResized: ((_ width: Int, _ height: Int) -> Void)? { get set }
+
     /// Finds the source and decides the size of the video. Answers on the
     /// main queue.
     func prepare(
@@ -29,14 +35,24 @@ public protocol ScreenCapturer: AnyObject {
         completion: @escaping (Bool) -> Void
     )
 
+    /// Changes the size of the video to come. Frames of the size before
+    /// may still arrive for a moment.
+    func resize(width: Int, height: Int)
+
     func stop()
 }
 
 /// The screen, through ScreenCaptureKit.
 public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutput, SCStreamDelegate {
     public var onEnded: (() -> Void)?
+    public var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
 
     private let queue = DispatchQueue(label: "screen-capture", qos: .userInteractive)
+    /// The size of the window being captured as the session was last
+    /// told it, in the window's own pixels. Nil for a display, whose size
+    /// is not followed. Set before the capture starts, and after that
+    /// touched only on `queue`.
+    private var windowSize: (width: Int, height: Int)?
     private var stream: SCStream?
     private var filter: SCContentFilter?
     private var configuration: SCStreamConfiguration?
@@ -81,11 +97,17 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
             // The source in its own pixels, fitted into what was asked for.
             let info = SCShareableContent.info(for: filter)
             let scale = Double(info.pointPixelScale)
-            let size = VideoShape.encodedSize(
+            let source = (
                 width: Int((Double(info.contentRect.width) * scale).rounded()),
-                height: Int((Double(info.contentRect.height) * scale).rounded()),
+                height: Int((Double(info.contentRect.height) * scale).rounded())
+            )
+            let size = VideoShape.encodedSize(
+                width: source.width, height: source.height,
                 maxWidth: request.maxWidth, maxHeight: request.maxHeight
             )
+            if case .window = request.source {
+                self.windowSize = source
+            }
 
             let configuration = SCStreamConfiguration()
             configuration.width = size.width
@@ -143,6 +165,17 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
         }
     }
 
+    public func resize(width: Int, height: Int) {
+        guard let stream, let configuration, !isStopped else { return }
+        configuration.width = width
+        configuration.height = height
+        stream.updateConfiguration(configuration) { error in
+            if let error {
+                NSLog("[capture] the capture would not change its size: %@", error.localizedDescription)
+            }
+        }
+    }
+
     public func stop() {
         isStopped = true
         let stream = self.stream
@@ -159,11 +192,31 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
             as? [[SCStreamFrameInfo: Any]]
         guard let raw = attachments?.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
+        if let known = windowSize, let now = Self.sourceSize(attachments?.first), !VideoShape.isSameSource(known, now) {
+            windowSize = now
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isStopped else { return }
+                self.onSourceResized?(now.width, now.height)
+            }
+        }
 
         // The sample is stamped on the host's clock; the page's is the wall clock.
         let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let age = CACurrentMediaTime() - time.seconds
         frame?(pixelBuffer, time, (Date().timeIntervalSince1970 - age) * 1000)
+    }
+
+    /// The size of the captured window in its own pixels, from what the
+    /// system attached to a frame.
+    private static func sourceSize(_ info: [SCStreamFrameInfo: Any]?) -> (width: Int, height: Int)? {
+        guard let info, let dictionary = info[.contentRect],
+              let content = CGRect(dictionaryRepresentation: dictionary as! CFDictionary),
+              let contentScale = (info[.contentScale] as? NSNumber)?.doubleValue,
+              let pixelsPerPoint = (info[.scaleFactor] as? NSNumber)?.doubleValue else { return nil }
+        return VideoShape.sourceSize(
+            contentWidth: Double(content.width), contentHeight: Double(content.height),
+            contentScale: contentScale, pixelsPerPoint: pixelsPerPoint
+        )
     }
 
     public func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -197,6 +250,12 @@ final class CaptureSession {
     private var lastFormat: MediaWire.VideoFormat?
     private var framesEncoded = 0
     private var isStopped = false
+    /// The size of the video now: frames of another size are not for the
+    /// encoder that runs.
+    private var size: (width: Int, height: Int)?
+    /// Only on the main queue: the change of size that waits for the
+    /// window to settle.
+    private var resizing: DispatchWorkItem?
     /// One frame is given to the encoder at a time, whichever thread it
     /// comes from.
     private let encoding = NSLock()
@@ -204,6 +263,9 @@ final class CaptureSession {
     /// How long a request for a key frame waits for the screen to change
     /// before the last frame is encoded again.
     static let patienceForAChange: TimeInterval = 0.05
+    /// How long a window has to keep a new size before the video takes
+    /// it: a window being dragged larger reports a size for every frame.
+    static let patienceForASize: TimeInterval = 0.3
 
     init(capturer: ScreenCapturer, channel: LocalMediaChannel, request: ScreenCaptureRequest) {
         self.capturer = capturer
@@ -216,6 +278,9 @@ final class CaptureSession {
     func start(_ completion: @escaping (Result<(width: Int, height: Int), ScreenCaptureFailure>) -> Void) {
         capturer.onEnded = { [weak self] in
             self?.onEnded?()
+        }
+        capturer.onSourceResized = { [weak self] width, height in
+            self?.sourceResized(width: width, height: height)
         }
         channel.onClientConnected = { [weak self] in
             self?.pageNeedsAKeyFrame(announcingTheFormat: true)
@@ -240,6 +305,9 @@ final class CaptureSession {
                     ))
                     self.wire(encoder)
                     self.encoder = encoder
+                    self.lock.lock()
+                    self.size = size
+                    self.lock.unlock()
                 } catch {
                     NSLog("[capture] no encoder for %dx%d: %@", size.width, size.height, String(describing: error))
                     completion(.failure(.failed))
@@ -259,7 +327,10 @@ final class CaptureSession {
         isStopped = true
         lastFrame = nil
         lock.unlock()
+        resizing?.cancel()
+        resizing = nil
         capturer.onEnded = nil
+        capturer.onSourceResized = nil
         capturer.stop()
         channel.onClientConnected = nil
         channel.onMessage = nil
@@ -283,9 +354,55 @@ final class CaptureSession {
         }
     }
 
+    /// The captured window has another size. The video follows once the
+    /// window has kept that size for a moment: an encoder of the new size,
+    /// whose format the page is told, and a capture resized to match.
+    private func sourceResized(width: Int, height: Int) {
+        resizing?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.adoptSourceSize(width: width, height: height)
+        }
+        resizing = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.patienceForASize, execute: work)
+    }
+
+    private func adoptSourceSize(width: Int, height: Int) {
+        let target = VideoShape.encodedSize(
+            width: width, height: height, maxWidth: request.maxWidth, maxHeight: request.maxHeight
+        )
+        lock.lock()
+        let unchanged = isStopped || size.map { $0 == target } ?? true
+        lock.unlock()
+        guard !unchanged else { return }
+        let next: VideoEncoder
+        do {
+            next = try VideoEncoder(settings: .init(
+                width: target.width, height: target.height, framesPerSecond: request.framesPerSecond
+            ))
+        } catch {
+            NSLog("[capture] no encoder for %dx%d: %@", target.width, target.height, String(describing: error))
+            return
+        }
+        wire(next)
+        encoding.lock()
+        encoder = next
+        encoding.unlock()
+        lock.lock()
+        size = target
+        // What was kept is of the size before.
+        lastFrame = nil
+        lastFormat = nil
+        lock.unlock()
+        capturer.resize(width: target.width, height: target.height)
+    }
+
     private func encode(_ pixelBuffer: CVPixelBuffer, at time: CMTime, capturedAt: Double) {
         lock.lock()
-        guard !isStopped else {
+        // A frame of the size before a change, still on its way.
+        let fits = size.map {
+            $0.width == CVPixelBufferGetWidth(pixelBuffer) && $0.height == CVPixelBufferGetHeight(pixelBuffer)
+        } ?? true
+        guard !isStopped, fits else {
             lock.unlock()
             return
         }

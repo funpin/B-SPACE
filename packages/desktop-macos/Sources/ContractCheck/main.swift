@@ -183,6 +183,14 @@ import WebKit
 // of the pointers alone, drawn off screen. Run by hand; it is not part of
 // contract-check.sh.
 //
+// With --check capture-window-system it opens a small window of its own ON
+// THE SCREEN for a few seconds, captures it through ScreenCaptureKit and
+// makes it larger while it is captured: the video has to start at the
+// window's own size, the system has to say once that the size changed, and
+// frames of the new size have to follow. It needs the permission to record
+// the screen and shows the system's recording indicator; only the sizes of
+// the frames are read. Run by hand; it is not part of contract-check.sh.
+//
 // With --check audio-clock [--seconds 2] it measures how fast the clock of
 // an audio context runs in the shell's web view against the wall clock:
 // for one context and for two at once at the same and at different rates,
@@ -1798,15 +1806,24 @@ func checkVideoPipe(size: String, sink: String, noiseEvery: Int) -> Never {
 /// It changes for `movingFrames` frames and then stands still.
 final class CheckScreenCapturer: ScreenCapturer {
     var onEnded: (() -> Void)?
+    var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
     private(set) var request: ScreenCaptureRequest?
     private(set) var isStopped = false
+    /// The sizes the video was changed to after it started.
+    private(set) var resizedTo: [(width: Int, height: Int)] = []
     private let movingFrames: Int
+    /// How busy the made-up picture is, see `CheckFrameSource`.
+    private let noiseEvery: Int
+    /// What draws the frames: replaced when the video changes its size,
+    /// and read by the timer on its own queue.
+    private let sourceLock = NSLock()
     private var source: CheckFrameSource?
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "check-screen")
 
-    init(movingFrames: Int) {
+    init(movingFrames: Int, noiseEvery: Int = 32) {
         self.movingFrames = movingFrames
+        self.noiseEvery = noiseEvery
     }
 
     func prepare(
@@ -1819,20 +1836,24 @@ final class CheckScreenCapturer: ScreenCapturer {
             return
         }
         let size = VideoShape.encodedSize(width: 1920, height: 1200, maxWidth: request.maxWidth, maxHeight: request.maxHeight)
-        source = CheckFrameSource(width: size.width, height: size.height, noiseEvery: 32)
+        source = CheckFrameSource(width: size.width, height: size.height, noiseEvery: noiseEvery)
         DispatchQueue.main.async { completion(.success(size)) }
     }
 
     func begin(frame: @escaping (CVPixelBuffer, CMTime, Double) -> Void, completion: @escaping (Bool) -> Void) {
-        guard let request, let source else {
+        guard let request, source != nil else {
             completion(false)
             return
         }
         var sent = 0
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Double(request.framesPerSecond), leeway: .milliseconds(1))
-        timer.setEventHandler { [movingFrames] in
-            guard sent < movingFrames, let picture = source.frame(sent) else {
+        timer.setEventHandler { [weak self, movingFrames] in
+            guard let self else { return }
+            self.sourceLock.lock()
+            let source = self.source
+            self.sourceLock.unlock()
+            guard sent < movingFrames, let picture = source?.frame(sent) else {
                 timer.cancel()
                 return
             }
@@ -1844,6 +1865,14 @@ final class CheckScreenCapturer: ScreenCapturer {
         DispatchQueue.main.async { completion(true) }
     }
 
+    func resize(width: Int, height: Int) {
+        resizedTo.append((width, height))
+        let next = CheckFrameSource(width: width, height: height, noiseEvery: noiseEvery)
+        sourceLock.lock()
+        source = next
+        sourceLock.unlock()
+    }
+
     func stop() {
         isStopped = true
         timer?.cancel()
@@ -1852,6 +1881,11 @@ final class CheckScreenCapturer: ScreenCapturer {
     func endByItself() {
         timer?.cancel()
         onEnded?()
+    }
+
+    /// The made-up source has another size, as a window that was resized.
+    func sourceBecame(width: Int, height: Int) {
+        onSourceResized?(width, height)
     }
 }
 
@@ -2816,6 +2850,601 @@ func checkPointerOverlaySystem(pictureAt: String?) -> Never {
     exit(1)
 }
 
+/// A real window of the check's own, captured through ScreenCaptureKit and
+/// resized while it is captured: does the system say that the window has
+/// another size, and do frames of the new size come once the capture is
+/// resized to it. A small window appears on the screen for a few seconds and
+/// the system shows that the screen is being recorded. Nothing captured is
+/// kept: only the sizes of the frames are read.
+func checkCaptureWindowSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 200, y: 300, width: 480, height: 320),
+        styleMask: [.titled, .resizable], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: a window that changes its size"
+    let pulse = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
+    pulse.autoresizingMask = [.width, .height]
+    pulse.wantsLayer = true
+    window.contentView = pulse
+    window.orderFrontRegardless()
+    // Something has to change in the window, or the system sends no frames.
+    var tick = 0
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
+        tick += 1
+        pulse.layer?.backgroundColor = CGColor(gray: CGFloat(tick % 30) / 30, alpha: 1)
+    }
+    defer { timer.invalidate() }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+
+    let capturer = SystemScreenCapturer()
+    let request = ScreenCaptureRequest(
+        source: .window(UInt32(window.windowNumber)), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30
+    )
+    var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    capturer.prepare(request) { prepared = $0 }
+    guard wait(10, until: { prepared != nil }), case .success(let first)? = prepared else {
+        if case .failure(let failure)? = prepared { fail("the capture did not start: \(failure.rawValue)") }
+        fail("the capture did not answer")
+    }
+    let lock = NSLock()
+    var frameSizes: [String] = []
+    var reported: [(width: Int, height: Int)] = []
+    capturer.onSourceResized = { width, height in
+        reported.append((width, height))
+        // As a session does: the video takes the window's own size.
+        let target = VideoShape.encodedSize(width: width, height: height, maxWidth: 8192, maxHeight: 8192)
+        capturer.resize(width: target.width, height: target.height)
+    }
+    var started: Bool?
+    capturer.begin(frame: { frame, _, _ in
+        let size = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.lock()
+        if frameSizes.last != size { frameSizes.append(size) }
+        lock.unlock()
+    }, completion: { started = $0 })
+    guard wait(10, until: { started != nil }), started == true else { fail("the capture did not begin") }
+
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let reportedBefore = reported.count
+    // The whole window is captured, its title bar included.
+    let scale = window.backingScaleFactor
+    func pixels(_ size: NSSize) -> String {
+        "\(Int((size.width * scale).rounded()))x\(Int((size.height * scale).rounded()))"
+    }
+    let expectedFirst = pixels(window.frame.size)
+    window.setContentSize(NSSize(width: 720, height: 480))
+    let expected = pixels(window.frame.size)
+    RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+    let reportedAfterGrowing = reported.count
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    capturer.stop()
+    window.orderOut(nil)
+    lock.lock()
+    let sizes = frameSizes
+    lock.unlock()
+
+    print("the video started at \(first.width)x\(first.height) for a window whose frame is \(expectedFirst) pixels")
+    print("the system reported a new size \(reported.count - reportedBefore) time(s) after the window grew: \(reported.dropFirst(reportedBefore).map { "\($0.width)x\($0.height)" }); before it, \(reportedBefore) time(s)")
+    print("the frames were, in order, \(sizes)")
+    var problems: [String] = []
+    if "\(first.width)x\(first.height)" != expectedFirst {
+        problems.append("the first size is not the window's own")
+    }
+    if reportedBefore != 0 {
+        problems.append("a size was reported for a window that had not changed")
+    }
+    if reported.last.map({ "\($0.width)x\($0.height)" }) != expected || sizes.last != expected {
+        problems.append("after the window grew the last size reported and the last frames should be \(expected)")
+    }
+    if reported.count != reportedAfterGrowing {
+        problems.append("sizes went on being reported after the window had stopped changing")
+    }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture of a window, the real system: the video starts at the window's own size and follows it when the window is resized"
+        : "capture of a window, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A share's connection to a call that goes nowhere: it remembers what it
+/// was handed, and says what the check tells it to.
+final class CheckSharePublisher: ScreenSharePublisher {
+    var onEvent: ((SharePublisherEvent) -> Void)?
+    /// What the check decides beforehand.
+    var connects = true
+    var publishes = true
+
+    private(set) var connectedTo: (url: String, token: String)?
+    private(set) var published: [(width: Int, height: Int, settings: SharePublication)] = []
+    private(set) var encodings: [(maxBitrate: Int, minBitrate: Int, framesPerSecond: Int)] = []
+    private(set) var audioPublished = 0
+    private(set) var audioUnpublished = 0
+    private(set) var isDisconnected = false
+
+    /// What the frames' and the samples' queues write.
+    private let lock = NSLock()
+    private var frames = 0
+    private var lastFrame = ""
+    private var samples = 0
+
+    var framesSent: Int { lock.lock(); defer { lock.unlock() }; return frames }
+    var lastFrameSize: String { lock.lock(); defer { lock.unlock() }; return lastFrame }
+    var samplesSent: Int { lock.lock(); defer { lock.unlock() }; return samples }
+
+    func connect(url: String, token: String, completion: @escaping (Bool) -> Void) {
+        if connects { connectedTo = (url, token) }
+        DispatchQueue.main.async { [connects] in completion(connects) }
+    }
+
+    func publishVideo(width: Int, height: Int, settings: SharePublication, completion: @escaping (Bool) -> Void) {
+        if publishes { published.append((width, height, settings)) }
+        DispatchQueue.main.async { [publishes] in completion(publishes) }
+    }
+
+    func send(frame: CVPixelBuffer) {
+        lock.lock()
+        frames += 1
+        lastFrame = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.unlock()
+    }
+
+    func setEncoding(maxBitrate: Int, minBitrate: Int, framesPerSecond: Int, completion: @escaping (Bool) -> Void) {
+        encodings.append((maxBitrate, minBitrate, framesPerSecond))
+        DispatchQueue.main.async { completion(true) }
+    }
+
+    func publishAudio(format _: MediaWire.AudioFormat, completion: @escaping (Bool) -> Void) {
+        audioPublished += 1
+        DispatchQueue.main.async { completion(true) }
+    }
+
+    func send(audio samples: Data) {
+        lock.lock()
+        self.samples += samples.count
+        lock.unlock()
+    }
+
+    func unpublishAudio() {
+        audioUnpublished += 1
+    }
+
+    func disconnect() {
+        isDisconnected = true
+    }
+
+    /// The connection says something, as the real one does while a share runs.
+    func say(_ event: SharePublisherEvent) {
+        onEvent?(event)
+    }
+}
+
+/// The shell's own share through the bridge, as the web client will start
+/// one: a screen and a system the check makes up, and a connection to a call
+/// that goes nowhere. What is checked is the share's own conduct: what it
+/// refuses, what it hands the call, what a change touches and what it leaves,
+/// and how it ends.
+func checkShare() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var sounds: [CheckSystemAudioCapturer] = []
+    var publishers: [CheckSharePublisher] = []
+    var connects = true
+    var publishes = true
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 100_000)
+                capturers.append(capturer)
+                return capturer
+            },
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                sounds.append(capturer)
+                return capturer
+            },
+            sharePublisher: {
+                let publisher = CheckSharePublisher()
+                publisher.connects = connects
+                publisher.publishes = publishes
+                publishers.append(publisher)
+                return publisher
+            }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start(_ options: String) -> [String: Any] {
+        page("return await window.backspace.startNativeScreenShare(\(options));") as? [String: Any] ?? [:]
+    }
+    func update(_ options: String) -> [String: Any] {
+        page("return await window.backspace.updateNativeScreenShare(\(options));") as? [String: Any] ?? [:]
+    }
+    func listen() {
+        _ = page("""
+            window.events = [];
+            window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+            return true;
+            """)
+    }
+    func events(_ type: String) -> [[String: Any]] {
+        let all = page("return window.events;") as? [[String: Any]] ?? []
+        return all.filter { $0["type"] as? String == type }
+    }
+    func refused(_ answer: [String: Any], _ reason: String) -> Bool {
+        answer["ok"] as? Bool == false && answer["reason"] as? String == reason
+    }
+    let good = """
+        { url: 'wss://calls.example/livekit', token: 'stream-token', sourceId: 'screen:1:0',
+          maxWidth: 1280, maxHeight: 720, frameRate: 30, codec: 'h265',
+          maxBitrate: 6000000, minBitrate: 1500000, audio: true }
+        """
+
+    load(address)
+    listen()
+
+    // 1. Who picks the source: the app, for a client that says it can have
+    //    the shell publish the share; WebKit, for one that says nothing.
+    let modes = page("""
+        return [
+          await window.backspace.getScreenSharePickerMode({ nativeShare: true }),
+          await window.backspace.getScreenSharePickerMode(),
+        ];
+        """) as? [String]
+    if modes != ["app", "system"] {
+        problems.append("the picker modes were \(String(describing: modes)), expected app for a client that has the shell publish and system otherwise")
+    }
+
+    // 2. What is not a share is refused before anything is made for it: no
+    //    address, an address that is no call server, no token, no source.
+    let unasked = [
+        start("{ token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'ws://calls.example', token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'https://calls.example', token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'wss://calls.example', sourceId: 'screen:1:0' }"),
+        start("{ url: 'wss://calls.example', token: 't' }"),
+    ]
+    if !unasked.allSatisfy({ refused($0, "bad-request") }) || !publishers.isEmpty || !capturers.isEmpty {
+        problems.append("requests that are no share were answered \(unasked), and \(publishers.count) connection(s) and \(capturers.count) capture(s) were made for them")
+    }
+    if !refused(update("{ maxBitrate: 3000000 }"), "not-running") {
+        problems.append("a change to a share that does not run was not refused as one")
+    }
+
+    // 3. A source that is gone: the call never hears of the share.
+    let gone = start("{ url: 'wss://calls.example', token: 't', sourceId: 'screen:77:0' }")
+    if !refused(gone, "no-source") || publishers.last?.connectedTo != nil {
+        problems.append("a share of a source that is gone was answered \(gone), and the call was \(publishers.last?.connectedTo == nil ? "not " : "")joined")
+    }
+
+    // 4. A call that does not let the share in, and one that does and takes
+    //    no track: both are said, and nothing is left capturing.
+    connects = false
+    let shut = start(good)
+    if !refused(shut, "connect-failed") || capturers.last?.isStopped != true {
+        problems.append("a share the call did not let in was answered \(shut); its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running")")
+    }
+    connects = true
+    publishes = false
+    let untaken = start(good)
+    if !refused(untaken, "publish-failed") || capturers.last?.isStopped != true || publishers.last?.isDisconnected != true {
+        problems.append("a share whose track was not published was answered \(untaken); its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running"), its connection \(publishers.last?.isDisconnected == true ? "closed" : "left open")")
+    }
+    publishes = true
+
+    // 5. A share: the call is joined with the address and the token the
+    //    page gave, the track is published as asked, frames of the fitted
+    //    size and the system's sound reach it.
+    let running = start(good)
+    let publisher = publishers.last
+    let firstCapturer = capturers.last
+    if running["ok"] as? Bool != true || running["width"] as? Int != 1152 || running["height"] as? Int != 720
+        || running["frameRate"] as? Int != 30 {
+        problems.append("the share was answered \(running), expected 1152 by 720 at 30")
+    }
+    if publisher?.connectedTo?.url != "wss://calls.example/livekit" || publisher?.connectedTo?.token != "stream-token" {
+        problems.append("the call was not joined with the address and the token the page gave")
+    }
+    let asked = SharePublication(codec: .h265, maxBitrate: 6_000_000, minBitrate: 1_500_000, framesPerSecond: 30)
+    if publisher?.published.count != 1 || publisher?.published.first?.settings != asked
+        || publisher?.published.first?.width != 1152 || publisher?.published.first?.height != 720 {
+        problems.append("the track was published as \(String(describing: publisher?.published)), expected once, 1152 by 720, \(asked)")
+    }
+    if !wait(5, until: { (publisher?.framesSent ?? 0) >= 30 && (publisher?.samplesSent ?? 0) > 0 })
+        || publisher?.lastFrameSize != "1152x720" || publisher?.audioPublished != 1 {
+        problems.append("the call was handed \(publisher?.framesSent ?? 0) frame(s), the last \(publisher?.lastFrameSize ?? "?"), and \(publisher?.samplesSent ?? 0) byte(s) of sound over \(publisher?.audioPublished ?? 0) published sound track(s)")
+    }
+
+    // 6. One share at a time.
+    let second = start(good)
+    if !refused(second, "busy") || publishers.count != 4 || publisher?.isDisconnected != false {
+        problems.append("a second share was answered \(second) while the first ran; \(publishers.count) connections were made in all")
+    }
+
+    // 7. Another bitrate: the published track is given a new encoding, and
+    //    neither the capture nor the publication starts again.
+    let capturesBefore = capturers.count
+    let cheaper = update("{ maxBitrate: 3000000 }")
+    let encoding = publisher?.encodings.last
+    if cheaper["ok"] as? Bool != true || encoding?.maxBitrate != 3_000_000 || encoding?.minBitrate != 1_500_000
+        || encoding?.framesPerSecond != 30 || capturers.count != capturesBefore || publisher?.published.count != 1 {
+        problems.append("a new bitrate was answered \(cheaper); the encoding became \(String(describing: encoding)), \(capturers.count - capturesBefore) capture(s) and \((publisher?.published.count ?? 1) - 1) publication(s) were started for it")
+    }
+
+    // 8. Another size: a new capture takes over, the one before it stops,
+    //    and its frames go into the same track.
+    let smaller = update("{ maxWidth: 640, maxHeight: 360 }")
+    if smaller["ok"] as? Bool != true || smaller["width"] as? Int != 576 || smaller["height"] as? Int != 360
+        || capturers.count != capturesBefore + 1 || firstCapturer?.isStopped != true || capturers.last?.isStopped != false
+        || publisher?.published.count != 1
+        || !wait(5, until: { publisher?.lastFrameSize == "576x360" }) {
+        problems.append("a smaller size was answered \(smaller); the first capture was \(firstCapturer?.isStopped == true ? "stopped" : "left running"), the call's last frame is \(publisher?.lastFrameSize ?? "?"), the track was published \(publisher?.published.count ?? 0) time(s)")
+    }
+
+    // 9. A source that is gone cannot replace the one that is shared: the
+    //    share goes on as it was.
+    let sharing = capturers.last
+    let nowhere = update("{ sourceId: 'screen:77:0' }")
+    let framesThen = publisher?.framesSent ?? 0
+    if !refused(nowhere, "no-source") || sharing?.isStopped != false
+        || !wait(5, until: { (publisher?.framesSent ?? 0) >= framesThen + 10 }) {
+        problems.append("a change to a source that is gone was answered \(nowhere); the capture that ran was \(sharing?.isStopped == false ? "kept" : "stopped")")
+    }
+
+    // 10. The sound off and on again: its track is unpublished and
+    //     published anew, the picture is not touched.
+    let quiet = update("{ audio: false }")
+    let firstSound = sounds.last
+    if quiet["ok"] as? Bool != true || firstSound?.isStopped != true || publisher?.audioUnpublished != 1 {
+        problems.append("turning the sound off was answered \(quiet); its capture was \(firstSound?.isStopped == true ? "stopped" : "left running"), its track unpublished \(publisher?.audioUnpublished ?? 0) time(s)")
+    }
+    let loud = update("{ audio: true }")
+    let samplesThen = publisher?.samplesSent ?? 0
+    if loud["ok"] as? Bool != true || publisher?.audioPublished != 2 || sounds.count != 2
+        || !wait(5, until: { (publisher?.samplesSent ?? 0) > samplesThen }) || publisher?.published.count != 1 {
+        problems.append("turning the sound on again was answered \(loud); \(publisher?.audioPublished ?? 0) sound track(s) were published over \(sounds.count) capture(s)")
+    }
+
+    // 11. The source changes its size, as a window that is resized: the
+    //     video takes the size it settles on, fitted into what was asked,
+    //     and the page is told. A size it only passed through is not taken.
+    sharing?.sourceBecame(width: 500, height: 500)
+    sharing?.sourceBecame(width: 1000, height: 1000)
+    let resized = wait(5, until: { !events("resized").isEmpty })
+    let told = events("resized")
+    if !resized || told.count != 1 || told.first?["width"] as? Int != 360 || told.first?["height"] as? Int != 360
+        || sharing?.resizedTo.map({ [$0.width, $0.height] }) != [[360, 360]] {
+        problems.append("after the source became 1000 by 1000 the page was told \(told) and the capture was resized to \(String(describing: sharing?.resizedTo))")
+    }
+
+    // 12. What the connection says reaches the page: that it is being
+    //     restored, that it is back, and what it sends.
+    publisher?.say(.reconnecting)
+    publisher?.say(.reconnected)
+    publisher?.say(.stats(ScreenShareStats(
+        bitrate: 2_900_000, framesPerSecond: 30, width: 576, height: 360, codec: "video/H265", encoder: "VideoToolbox",
+        hardware: true, roundTripMilliseconds: 5, availableBitrate: 6_000_000, limitedBy: "none", audioBitrate: 128_000
+    )))
+    let said = wait(5, until: { !events("stats").isEmpty })
+    let stats = events("stats").first
+    if !said || events("reconnecting").count != 1 || events("reconnected").count != 1
+        || stats?["bitrate"] as? Int != 2_900_000 || stats?["codec"] as? String != "video/H265"
+        || stats?["hardware"] as? Bool != true || stats?["audioBitrate"] as? Int != 128_000 {
+        problems.append("of a connection that was restored and reported once the page heard \(events("reconnecting").count) reconnecting, \(events("reconnected").count) reconnected, statistics \(String(describing: stats))")
+    }
+
+    // 13. The system's sound ends by itself: the page is told, and the
+    //     picture goes on.
+    sounds.last?.endByItself()
+    let soundEnded = wait(5, until: { !events("audio-ended").isEmpty })
+    let framesAfterSound = publisher?.framesSent ?? 0
+    if !soundEnded || publisher?.audioUnpublished != 2 || !events("ended").isEmpty
+        || !wait(5, until: { (publisher?.framesSent ?? 0) >= framesAfterSound + 10 }) {
+        problems.append("after the sound ended by itself the page heard \(events("audio-ended").count) audio-ended and \(events("ended").count) ended; the sound track was unpublished \(publisher?.audioUnpublished ?? 0) time(s)")
+    }
+
+    // 14. The page stops the share: the capture stops, the call is left,
+    //     and nothing is said about an ending that was asked for.
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    if !wait(5, until: { publisher?.isDisconnected == true && sharing?.isStopped == true }) || !events("ended").isEmpty {
+        problems.append("after the page stopped the share its capture was \(sharing?.isStopped == true ? "stopped" : "left running"), its connection \(publisher?.isDisconnected == true ? "closed" : "left open"), and the page heard \(events("ended").count) ended")
+    }
+    if !refused(update("{ maxBitrate: 3000000 }"), "not-running") {
+        problems.append("a change to a share that was stopped was not refused as one")
+    }
+
+    // 15. A source that ends by itself ends the share, and the page is told
+    //     why; another share can start after it.
+    _ = start(good)
+    capturers.last?.endByItself()
+    let endedBySource = wait(5, until: { !events("ended").isEmpty })
+    if !endedBySource || events("ended").first?["reason"] as? String != "source-ended" || publishers.last?.isDisconnected != true {
+        problems.append("after the source ended by itself the page heard \(events("ended")); the connection was \(publishers.last?.isDisconnected == true ? "closed" : "left open")")
+    }
+
+    // 16. A connection that is lost for good ends the share too.
+    listen()
+    let again = start(good)
+    publishers.last?.say(.disconnected)
+    let endedByCall = wait(5, until: { !events("ended").isEmpty })
+    if again["ok"] as? Bool != true || !endedByCall || events("ended").first?["reason"] as? String != "disconnected"
+        || capturers.last?.isStopped != true {
+        problems.append("a share started after one that ended was answered \(again); after its connection was lost the page heard \(events("ended")), and its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    // 17. The window shows another page: the share of the page before goes
+    //     with it.
+    _ = start(good)
+    let orphan = publishers.last
+    let orphanCapture = capturers.last
+    load(address)
+    if !wait(5, until: { orphan?.isDisconnected == true && orphanCapture?.isStopped == true && sounds.last?.isStopped == true }) {
+        problems.append("after the window showed another page the share's connection was \(orphan?.isDisconnected == true ? "closed" : "left open"), its capture \(orphanCapture?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the shell's own share: refused, started, changed and ended as it should be, through the bridge"
+        : "the shell's own share: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The shell's own share into a real call: the real session and the real
+/// connection through LiveKit's library, started through the bridge as the
+/// web client will, with a screen and a system the check makes up (the real
+/// screen is not captured and nothing is played on this machine). It joins
+/// the room the token names, publishes for a while, changes the bitrate in
+/// the middle, and prints what the connection reports once a second.
+///
+///   --check share-live --url wss://… --token-file <stream token> [--seconds 20] [--codec h265]
+///
+/// Run by hand, with a token minted for a test room; watch the room with
+/// `StreamProbe --watch` to see what arrives.
+func checkShareLive() -> Never {
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    guard let url = arguments["url"], let tokenPath = arguments["token-file"],
+          let token = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+          !token.isEmpty else {
+        fail("--check share-live needs --url and --token-file")
+    }
+    let seconds = Int(arguments["seconds"] ?? "") ?? 20
+    let codec = arguments["codec"] ?? "h265"
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            // A picture that moves and can be compressed: a busy one makes the
+            // encoder drop frames to keep the bitrate, which says nothing of
+            // the share.
+            screenCapturer: { CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000) },
+            systemAudioCapturer: { CheckSystemAudioCapturer() },
+            sharePublisher: { LiveKitSharePublisher() }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    func page(_ script: String, _ arguments: [String: Any] = [:]) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { answer = $0 }
+        guard wait(60, until: { answer != nil }) else { return nil }
+        if case .success(let value)? = answer { return value }
+        if case .failure(let error)? = answer {
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+        }
+        return nil
+    }
+    _ = page("""
+        window.events = [];
+        window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+        window.backspace.rendererReady();
+        return true;
+        """)
+    // The token goes to the page as an argument and from it to the shell,
+    // as the web client hands it over; it is never printed.
+    let started = page("""
+        return await window.backspace.startNativeScreenShare({
+          url, token, sourceId: 'screen:1:0', maxWidth: 2560, maxHeight: 1600, frameRate: 60,
+          codec, maxBitrate: 8000000, minBitrate: 1500000, audio: true,
+        });
+        """, ["url": url, "token": token, "codec": codec]) as? [String: Any] ?? [:]
+    print("the share was answered \(started)")
+    guard started["ok"] as? Bool == true else { exit(1) }
+
+    var problems: [String] = []
+    var printed = 0
+    func report() {
+        let all = page("return window.events;") as? [[String: Any]] ?? []
+        for event in all.dropFirst(printed) {
+            if event["type"] as? String == "stats" {
+                print(String(
+                    format: "  sends %@ %dx%d %.0f fps %d kbit/s, encoder %@%@, limited by %@, round trip %@ ms, sound %@ kbit/s",
+                    event["codec"] as? String ?? "?", event["width"] as? Int ?? 0, event["height"] as? Int ?? 0,
+                    event["frameRate"] as? Double ?? 0, (event["bitrate"] as? Int ?? 0) / 1000,
+                    event["encoder"] as? String ?? "?", event["hardware"] as? Bool == true ? " (hardware)" : "",
+                    event["limitedBy"] as? String ?? "?",
+                    (event["roundTripMs"] as? Double).map { String(format: "%.0f", $0) } ?? "?",
+                    (event["audioBitrate"] as? Int).map { String($0 / 1000) } ?? "?"
+                ))
+            } else {
+                print("  the page heard \(event)")
+            }
+        }
+        printed = all.count
+    }
+    for second in 1 ... seconds {
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        report()
+        if second == seconds / 2 {
+            let changed = page("return await window.backspace.updateNativeScreenShare({ maxBitrate: 2000000, minBitrate: 0 });") as? [String: Any] ?? [:]
+            print("  -- a ceiling of 2000 kbit/s was answered \(changed)")
+            if changed["ok"] as? Bool != true { problems.append("the bitrate was not changed") }
+        }
+    }
+    let all = page("return window.events;") as? [[String: Any]] ?? []
+    let stats = all.filter { $0["type"] as? String == "stats" }
+    let late = stats.suffix(3)
+    if stats.count < seconds / 2 { problems.append("only \(stats.count) statistics in \(seconds) s") }
+    if !late.allSatisfy({ ($0["frameRate"] as? Double ?? 0) >= 55 }) { problems.append("the share did not hold 55 frames a second at its end") }
+    if !late.allSatisfy({ $0["hardware"] as? Bool == true }) { problems.append("the encoder is not the hardware one") }
+    if !late.allSatisfy({ ($0["bitrate"] as? Int ?? 0) <= 2_600_000 }) { problems.append("the new ceiling was not kept") }
+    if all.contains(where: { $0["type"] as? String == "ended" }) { problems.append("the share ended by itself") }
+
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    // The room is left on a task of the library's own.
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the shell's own share into a real call: joined, published in hardware, changed and left"
+        : "the shell's own share into a real call: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 /// A share through the bridge, as the web client will start one, with a
 /// screen the check makes up.
 func checkCapture() -> Never {
@@ -2974,6 +3603,29 @@ func checkCapture() -> Never {
     if page("return window.ended;") as? Int != endedBefore + 1 {
         problems.append("the page was told that a share it stopped itself had ended")
     }
+
+    // 6a. The source changes its size, as a window that is resized: the
+    //     video follows once the size has settled, fitted into the same
+    //     limits, and the page is told the new format and goes on
+    //     decoding. A size it only passed through is not taken.
+    movingFrames = 900
+    _ = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    let resized = capturers.last
+    _ = page(connect)
+    _ = wait(8, until: { decoded() >= 15 })
+    resized?.sourceBecame(width: 500, height: 500)
+    resized?.sourceBecame(width: 1000, height: 1000)
+    let tookTheNewSize = wait(8, until: {
+        let formats = stats()["formats"] as? [[String: Any]] ?? []
+        return formats.last?["width"] as? Int == 720 && formats.last?["height"] as? Int == 720
+    })
+    let decodedThen = decoded()
+    let wentOn = wait(8, until: { decoded() >= decodedThen + 15 })
+    if !tookTheNewSize || !wentOn || resized?.resizedTo.map({ [$0.width, $0.height] }) != [[720, 720]]
+        || stats()["videoWidth"] as? Int != 720 {
+        problems.append("after the source became 1000 by 1000 the capture was resized to \(String(describing: resized?.resizedTo)), the page's last format is \(String(describing: (stats()["formats"] as? [[String: Any]])?.last)), its video is \(stats()["videoWidth"] ?? "?") wide")
+    }
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
 
     // 7. A page may have a few captures at once, and no more.
     let made = capturers.count
@@ -4294,6 +4946,10 @@ case "media-channel":
     checkMediaChannel()
 case "capture":
     checkCapture()
+case "share":
+    checkShare()
+case "share-live":
+    checkShareLive()
 case "system-audio":
     checkSystemAudio()
 case "system-audio-system":
@@ -4307,6 +4963,8 @@ case "pointer-overlay":
     checkPointerOverlay()
 case "pointer-overlay-system":
     checkPointerOverlaySystem(pictureAt: arguments["out"])
+case "capture-window-system":
+    checkCaptureWindowSystem()
 case "capture-web":
     checkCaptureWeb(address: arguments["url"] ?? "http://localhost:5173/dev-native-capture.html")
 case "capture-system":
@@ -4329,7 +4987,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, share, share-live, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
 }
 
 let contract: BridgeContract

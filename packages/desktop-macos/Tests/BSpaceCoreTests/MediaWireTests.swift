@@ -2,6 +2,36 @@ import Foundation
 import Testing
 @testable import BSpaceCore
 
+@Suite struct SourceSizeTests {
+    @Test func aWindowShownAtItsOwnSizeIsItsContentInPixels() {
+        let size = VideoShape.sourceSize(contentWidth: 480, contentHeight: 320, contentScale: 1, pixelsPerPoint: 2)
+        #expect(size?.width == 960)
+        #expect(size?.height == 640)
+    }
+
+    @Test func aWindowScaledDownToFitTheVideoIsLargerThanItsPlaceInTheFrame() {
+        // The window grew to 720 by 480 points and was fitted into a video
+        // sized for 480 by 320: two thirds of its size.
+        let size = VideoShape.sourceSize(contentWidth: 480, contentHeight: 320, contentScale: 2.0 / 3.0, pixelsPerPoint: 2)
+        #expect(size?.width == 1440)
+        #expect(size?.height == 960)
+    }
+
+    @Test func numbersThatMakeNoSizeAreNoSize() {
+        #expect(VideoShape.sourceSize(contentWidth: 0, contentHeight: 320, contentScale: 1, pixelsPerPoint: 2) == nil)
+        #expect(VideoShape.sourceSize(contentWidth: 480, contentHeight: 320, contentScale: 0, pixelsPerPoint: 2) == nil)
+        #expect(VideoShape.sourceSize(contentWidth: 480, contentHeight: 320, contentScale: 1, pixelsPerPoint: 0) == nil)
+        #expect(VideoShape.sourceSize(contentWidth: .nan, contentHeight: 320, contentScale: 1, pixelsPerPoint: 2) == nil)
+        #expect(VideoShape.sourceSize(contentWidth: 480, contentHeight: 320, contentScale: 0.000001, pixelsPerPoint: 2) == nil)
+    }
+
+    @Test func aPixelOrTwoApartIsTheSameSource() {
+        #expect(VideoShape.isSameSource((960, 640), (961, 638)))
+        #expect(!VideoShape.isSameSource((960, 640), (963, 640)))
+        #expect(!VideoShape.isSameSource((960, 640), (1440, 960)))
+    }
+}
+
 @Suite struct MediaWireTests {
     @Test func aMessageIsItsKindItsTimeAndItsPayload() {
         let message = MediaWire.message(kind: .videoKeyFrame, capturedAt: 1_795_000_000_123.5, payload: Data([9, 8, 7]))
