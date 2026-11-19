@@ -15,8 +15,6 @@ import Foundation
 public enum InterimReplies {
     /// `fire` channels that are accepted and do nothing yet.
     public static let fireChannels: Set<String> = [
-        // Stage 2: notifications and badge, language, recovery.
-        "show-notification", "set-badge-count", "set-language", "renderer-ready", "recovery-action",
         // Stage 3: tray, global shortcuts.
         "set-tray-state", "set-tray-context", "keybind-portal-retry",
         // Stage 4: screen sharing, viewers' pointers.
@@ -28,21 +26,7 @@ public enum InterimReplies {
 
     /// `invoke` channels with the answer each gives for now.
     public static func invokeReplies() -> [String: BridgeReply] {
-        let noAutoLaunch: [String: Any] = ["openAtLogin": false, "startMinimized": false]
         return [
-            // Stage 2. Auto-launch: the answer of a build that cannot register
-            // a login item. Recovery: the initial state, nothing went wrong.
-            "get-auto-launch-settings": .value(noAutoLaunch),
-            "set-auto-launch-settings": .value(noAutoLaunch),
-            "get-recovery-state": .value([
-                "mode": "normal",
-                "reason": NSNull(),
-                "updateState": "idle",
-                "updateVersion": NSNull(),
-                "lastUpdateError": NSNull(),
-                "lastCheckResult": NSNull(),
-            ] as [String: Any]),
-
             // Stage 3. No activity detected; the shortcut hook is not running;
             // the portal status is null everywhere but on Wayland.
             "get-current-activity": .null,

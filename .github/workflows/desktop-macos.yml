@@ -19,7 +19,9 @@ on:
     paths:
       - packages/desktop-macos/**
       - packages/desktop/src/bridgeContract.json
+      - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
+      - packages/desktop/resources/recovery.html
       - packages/desktop/build/icon.icns
       - package.json
       - .github/workflows/desktop-macos.yml
@@ -30,7 +32,9 @@ on:
     paths:
       - packages/desktop-macos/**
       - packages/desktop/src/bridgeContract.json
+      - packages/desktop/src/desktopStrings.json
       - packages/desktop/resources/instance-picker.html
+      - packages/desktop/resources/recovery.html
       - packages/desktop/build/icon.icns
       - package.json
       - .github/workflows/desktop-macos.yml

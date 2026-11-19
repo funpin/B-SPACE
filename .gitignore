@@ -71,6 +71,9 @@ Desktop.ini
 *.log
 npm-debug.log*
 pnpm-debug.log*
+# Not a log of ours: the write-ahead log of the LevelDB fixture the macOS
+# client's tests read.
+!packages/desktop-macos/Tests/BSpaceCoreTests/Fixtures/**/*.log
 
 # TypeScript
 *.tsbuildinfo

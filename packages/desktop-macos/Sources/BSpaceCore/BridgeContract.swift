@@ -24,12 +24,17 @@ public struct BridgeContract: Equatable {
         /// Present for a subscription: whether it returns a function that
         /// removes the callback.
         public let unsubscribe: Bool?
+        /// Present, and true, on a member this shell alone exposes: it stands
+        /// in for something Chromium does by itself and WebKit does not, so
+        /// Electron's preload does not have it.
+        public let nativeOnly: Bool?
 
-        public init(name: String, kind: Kind, channel: String? = nil, unsubscribe: Bool? = nil) {
+        public init(name: String, kind: Kind, channel: String? = nil, unsubscribe: Bool? = nil, nativeOnly: Bool? = nil) {
             self.name = name
             self.kind = kind
             self.channel = channel
             self.unsubscribe = unsubscribe
+            self.nativeOnly = nativeOnly
         }
     }
 
@@ -98,6 +103,10 @@ public struct BridgeContract: Equatable {
             }
             guard names.insert(member.name).inserted else {
                 throw Malformed(description: "\(place): declared twice")
+            }
+            // Left out, not false: a member of both shells is the ordinary case.
+            guard member.nativeOnly ?? true else {
+                throw Malformed(description: "\(place): \"nativeOnly\" is true or left out")
             }
             switch member.kind {
             case .value:

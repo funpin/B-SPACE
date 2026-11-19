@@ -12,6 +12,10 @@
  * A sandboxed preload cannot require a local module, so `preload.ts` and
  * `updatePreload.ts` stay written by hand. `bridgeContract.test.ts` reads their
  * source and fails when they and the description disagree, in either direction.
+ *
+ * A member marked `nativeOnly` exists in the native macOS shell alone: it
+ * stands in for something Chromium does by itself and WebKit does not. The
+ * preloads do not have it, so a page checks that it is there before calling.
  */
 import contract from './bridgeContract.json';
 
@@ -26,10 +30,14 @@ import contract from './bridgeContract.json';
 export const BRIDGE_MEMBER_KINDS = ['value', 'fire', 'invoke', 'subscribe'] as const;
 export type BridgeMemberKind = (typeof BRIDGE_MEMBER_KINDS)[number];
 
-export type BridgeMember =
+export type BridgeMember = (
   | { name: string; kind: 'value' }
   | { name: string; kind: 'fire' | 'invoke'; channel: string }
-  | { name: string; kind: 'subscribe'; channel: string; unsubscribe: boolean };
+  | { name: string; kind: 'subscribe'; channel: string; unsubscribe: boolean }
+) & {
+  /** Present, and true, on a member only the native macOS shell exposes. */
+  nativeOnly?: true;
+};
 
 export const BRIDGE_NAMES = ['backspace', 'bspaceUpdate'] as const;
 export type BridgeName = (typeof BRIDGE_NAMES)[number];
@@ -46,24 +54,27 @@ function isMemberKind(value: unknown): value is BridgeMemberKind {
 
 function parseMember(bridge: string, value: unknown): BridgeMember {
   if (!isRecord(value)) throw new Error(`${bridge}: a member is not an object`);
-  const { name, kind, channel, unsubscribe, ...rest } = value;
+  const { name, kind, channel, unsubscribe, nativeOnly, ...rest } = value;
   if (typeof name !== 'string' || name.length === 0) throw new Error(`${bridge}: a member has no name`);
   const where = `${bridge}.${name}`;
   const extra = Object.keys(rest);
   if (extra.length > 0) throw new Error(`${where}: unknown field ${extra.join(', ')}`);
   if (!isMemberKind(kind)) throw new Error(`${where}: unknown kind ${String(kind)}`);
+  // Left out, not false: a member of both shells is the ordinary case.
+  if (nativeOnly !== undefined && nativeOnly !== true) throw new Error(`${where}: "nativeOnly" is true or left out`);
+  const only: { nativeOnly?: true } = nativeOnly === true ? { nativeOnly } : {};
 
   if (kind === 'value') {
     if (channel !== undefined || unsubscribe !== undefined) throw new Error(`${where}: a value has no channel`);
-    return { name, kind };
+    return { name, kind, ...only };
   }
   if (typeof channel !== 'string' || channel.length === 0) throw new Error(`${where}: no channel`);
   if (kind === 'subscribe') {
     if (typeof unsubscribe !== 'boolean') throw new Error(`${where}: a subscription says whether it can be removed`);
-    return { name, kind, channel, unsubscribe };
+    return { name, kind, channel, unsubscribe, ...only };
   }
   if (unsubscribe !== undefined) throw new Error(`${where}: only a subscription has "unsubscribe"`);
-  return { name, kind, channel };
+  return { name, kind, channel, ...only };
 }
 
 /**

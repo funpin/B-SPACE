@@ -411,7 +411,7 @@ not part of the system.
 - `.no-scrollbar` — Hides scrollbars
 - `.scrollbar-thin` — 4px thin scrollbars
 - `.rounded-inherit` — Inherits border radius
-- `.titlebar-drag` / `.titlebar-no-drag` — Electron window drag
+- `.titlebar-drag` / `.titlebar-no-drag` — the parts of the page the desktop window is dragged by, and the controls inside them that are clicked instead. Electron reads them from CSS (`-webkit-app-region`); for the native macOS shell `platform/windowDragRegions.ts` measures the elements carrying these classes and reports their rectangles, so the classes are the one way to mark a drag region for both
 - `.call-refraction` — Light shimmer overlay for call UI
 
 ---

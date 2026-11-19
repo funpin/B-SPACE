@@ -21,6 +21,18 @@ interface RecoveryState {
   lastUpdateError: { message: string; code: string | null; at: number } | null;
   lastCheckResult: 'up-to-date' | 'failed' | null;
 }
+/** A rectangle of the viewport, as `getBoundingClientRect()` gives it. */
+interface WindowDragRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/** Where the window is dragged by, and the exceptions inside those parts. */
+interface WindowDragRegions {
+  drag: WindowDragRect[];
+  noDrag: WindowDragRect[];
+}
 type RecoveryAction =
   | 'reload'
   | 'check-update'
@@ -219,6 +231,11 @@ interface BackspaceElectronAPI {
   getRecoveryState: () => Promise<RecoveryState>;
   onRecoveryStateChanged: (cb: (state: RecoveryState) => void) => () => void;
   recoveryAction: (action: RecoveryAction) => void;
+
+  // Native macOS shell only (`nativeOnly` in bridgeContract.json). WebKit has
+  // no -webkit-app-region, so the page reports where its title bar is; see
+  // platform/windowDragRegions.ts. Electron does not have this member.
+  setDragRegions?: (regions: WindowDragRegions) => void;
 }
 
 interface Window {

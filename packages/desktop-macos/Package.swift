@@ -34,7 +34,10 @@ let package = Package(
         .testTarget(
             name: "BSpaceCoreTests",
             dependencies: ["BSpaceCore"],
-            path: "Tests/BSpaceCoreTests"
+            path: "Tests/BSpaceCoreTests",
+            // A LevelDB database written by the real library
+            // (scripts/make-leveldb-fixture.mjs).
+            resources: [.copy("Fixtures")]
         ),
         .target(
             name: "ProbeSupport",

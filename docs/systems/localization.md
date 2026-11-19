@@ -41,9 +41,12 @@ Source files:
   `ErrorCode`, `ApiErrorBody`, `isErrorCode`)
 - Server error helper: `packages/server/src/utils/httpErrors.ts` (`sendError`,
   `ERROR_MESSAGES`)
-- Desktop main-process catalog: `packages/desktop/src/l10n.ts`; the recovery
-  and instance-picker pages under `packages/desktop/resources/` carry their
-  own inline catalogs
+- Desktop catalog, one for both desktop shells:
+  `packages/desktop/src/desktopStrings.json`, read by
+  `packages/desktop/src/l10n.ts` (Electron) and by `DesktopStrings` in
+  `packages/desktop-macos` (the native macOS client); the recovery and
+  instance-picker pages under `packages/desktop/resources/` carry their own
+  inline catalogs
 - Consistency check: `scripts/check-i18n.mjs` with its rules in
   `scripts/i18n/check.mjs` (runs in `pnpm typecheck` and in the web build)
 - Test bootstrap: `packages/web/src/test/setup.ts` starts i18next in English
@@ -467,11 +470,25 @@ the feature, not a localization task.
 The main process shows a handful of strings outside the renderer: tray menu
 items, the application menu (macOS, and the accelerator-only Edit menu on
 Windows and Linux), the update items, the recovery page and the instance
-picker. The menu strings live in `packages/desktop/src/l10n.ts` as a small
-typed catalog with `en`, `ru`, `de`, `pt` and `zh` entries;
-`translateDesktop(language, key, values?)` reads it. The recovery and instance-picker pages carry their
-own inline `STRINGS` tables, because they are shown precisely when the
-renderer is unavailable.
+picker. The menu strings live in `packages/desktop/src/desktopStrings.json`,
+a table of languages (`en`, `ru`, `de`, `pt`, `zh`) with the same keys in
+each. `packages/desktop/src/l10n.ts` imports it and types it, so a language
+missing a key does not compile; the list of languages and the key type are
+derived from the file. `translateDesktop(language, key, values?)` reads it.
+The recovery and instance-picker pages carry their own inline `STRINGS`
+tables, because they are shown precisely when the renderer is unavailable.
+
+The native macOS client reads the same file (`DesktopStrings` in
+`packages/desktop-macos/Sources/BSpaceCore/Localization.swift`; it is copied
+into the application bundle), with the same language rule and the same
+`language.json`. Its languages are the keys of the file: nothing in the Swift
+code names one. Keys under `mac.` are that client's own and unused by
+Electron: `mac.menu.*` are the standard menu items Electron fills in from its
+roles (About, Hide, Quit, Undo, Copy and the rest), in the words macOS itself
+uses, and `mac.permission.<Info.plist key>` are the texts of the system's
+permission prompts, which `packages/desktop-macos/scripts/bundle.sh` writes
+into the bundle as one `<language>.lproj/InfoPlist.strings` per language.
+The client refuses a catalog in which a language lacks a key it uses.
 
 Language source, in order: the last `set-language` IPC message from the
 renderer, persisted as `language.json` next to `instance-url.json` in
@@ -637,8 +654,9 @@ is omitted, so the Russian page uses it and the English page does not.
 
 1. Create `packages/web/src/locales/<lng>/` with every namespace file.
 2. Add `{ code, nativeName, dir }` to `supportedLanguages`.
-3. Add the entry to the desktop catalog in `l10n.ts` and to the inline
-   catalogs of the recovery window and the instance picker.
+3. Add the entry to the desktop catalog, `desktopStrings.json` (every key,
+   the `mac.` ones included: both desktop shells read this one file), and to
+   the inline catalogs of the recovery window and the instance picker.
 4. Run `pnpm typecheck`; the check script confirms parity.
 
 Nothing else. If a fifth step turns out to be needed, the fix is to remove

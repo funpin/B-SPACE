@@ -73,6 +73,269 @@ when something the package builds from changes (the package, the three files
 taken from `packages/desktop`, the root `package.json`, the workflow), because
 macOS minutes are the expensive kind.
 
+### Settings files
+
+The app keeps its settings where the Electron build does, in the same files
+and formats, so either shell reads what the other wrote
+(`~/Library/Application Support/Backspace`; a development build uses
+`Backspace-Dev`). Every file is written atomically.
+
+| File | What | Code |
+|------|------|------|
+| `instance-url.json` | The chosen instance | `InstanceURLStore` |
+| `window-state.json` | Size, position and whether the window was zoomed | `WindowStateStore`, `WindowPlacement` |
+| `language.json` | The language the web client last reported, for the shell's own strings | `LanguageStore` |
+| `auto-launch.json` | Whether the app starts hidden when opened at login (`startMinimized`); its `openAtLogin` is written and never read back | `AutoLaunchStore` |
+| `local-storage-import.json` | The origins whose `localStorage` was brought over from the Electron build (native app only) | `LocalStorageImportLedger` |
+
+`window-state.json` holds Electron's coordinates: points from the top left
+corner of the primary display, Y growing downwards. AppKit counts from the
+bottom left, upwards; `WindowPlacement.flipped` converts both ways. A saved
+place that is no longer on any display (the monitor is gone) is dropped and
+the window is centred at its saved size. The place is written 0.3 s after the
+window stops moving, when it is closed and when the app quits; while the
+window is zoomed the un-zoomed frame is what is written, and a full-screen
+window is not written at all.
+
+### What comes over from the Electron build
+
+The web client keeps the sign-in, the connected instances and its settings in
+`localStorage`. In the Electron build that is a LevelDB database inside the
+same folder (`Local Storage/leveldb`: the folder is also Electron's Chromium
+profile); in the native app it is WebKit's own storage. So that moving from one
+build to the other does not sign anyone out, the native app brings the items
+over:
+
+- **When.** Before the shell loads an instance, for that instance's origin
+  (and, for an `http://` address on the default port, the `https://` origin of
+  the same host, where a redirect would have put the storage). Once per origin:
+  `local-storage-import.json` lists the origins already offered their items.
+- **What.** Every item of the origin, as it is. Only the origin's own storage:
+  storage partitioned under an embedding site is left out. IndexedDB is not
+  brought over; the web client keeps only file handles of resumable uploads
+  there, and those are Chromium objects.
+- **Never over existing data.** If WebKit already holds items for the origin,
+  nothing is written: what the native app stored is newer.
+- **How.** `LevelDB` reads the database without the LevelDB library (manifest,
+  tables with Snappy blocks, write-ahead log; the newest entry for a key
+  wins). `ChromiumLocalStorage` turns the entries into items by origin.
+  `LocalStorageImporter` writes them through a second web view that never
+  shows and loads nothing from the network: an empty document given the
+  origin, in the main web view's data store. The items are arguments of a
+  function call, never page source.
+- **The Electron profile is only read**, so going back to the Electron build
+  finds it as it was.
+- **When it fails** (a damaged database, a refusal by the page) the instance
+  loads without it and the user signs in again. A failure to read is tried
+  again at the next launch; a refusal is not.
+
+`ContractCheck --check electron-profile --profile <folder>` lists what the
+import finds in a profile: origins, item counts and sizes, and with
+`--keys yes` the item names. It never prints a value.
+
+The tests read a database written by the real LevelDB library
+(`Tests/BSpaceCoreTests/Fixtures/chromium-local-storage`), made by
+`scripts/make-leveldb-fixture.mjs`; everything in it is made up.
+
+### Starting the app
+
+Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
+`BSpaceShell/AppLaunchSupport.swift`, the order of things in `AppDelegate`.
+
+- **One copy.** macOS keeps to one copy of an app opened from the Finder or
+  the Dock. A copy started past that (the executable run directly, `open -n`)
+  looks for others with its bundle identifier; the one that started first
+  stays (`SingleInstance.survivor`, by the kernel's start time, then by process
+  identifier, so two copies launched together agree). The copy that gives way
+  sends the other a distributed notification named
+  `<bundle identifier>.second-instance`, carrying the `backspace://` link it
+  was launched with if there was one, activates it and exits before creating
+  a window. The copy that stays shows its window. An executable with no bundle
+  (a test run) skips all of this.
+- **`backspace://` links.** They come from the system
+  (`application(_:open:)`), from the command line, or from a second copy.
+  Anything that does not start with `backspace://` is dropped before it
+  reaches the page. A link is sent on the `deep-link` channel and the window
+  comes forward. If the page is not listening yet (the link launched the app,
+  or the page is reloading) the link waits in `DeepLinkInbox`, the newest
+  replacing an older one, and is sent when the page subscribes: the bridge
+  script posts a `subscribe` message each time the page starts listening on an
+  event channel (`BridgeRouter.onSubscribe`). A bundle whose Info.plist
+  declares the scheme makes itself its handler at every launch, as Electron
+  does; a development bundle does not declare it.
+- **Opening at login.** `SystemLoginItem` is the app's own login item
+  (`SMAppService.mainApp`). It belongs to the bundle identifier, so the item
+  the Electron build registered is the same one. `getAutoLaunchSettings`
+  answers with what the system says for `openAtLogin` and what
+  `auto-launch.json` says for `startMinimized`. `setAutoLaunchSettings`
+  changes the fields it is given, asks the system only when `openAtLogin`
+  really changes, and answers with the state after the change as the system
+  reports it: if the system refuses, the client's switch goes back.
+- **A hidden start.** The window stays hidden until something asks for it
+  (the Dock icon, a link, a second launch) when the app is run with
+  `--hidden`, or when the system opened it at login (the launch event says so)
+  and `startMinimized` is on. The page loads and connects all the same. A
+  launch by a link is never hidden.
+
+### Language and the menu bar
+
+- **Strings.** What the shell says on its own comes from
+  `packages/desktop/src/desktopStrings.json`, the one catalog of both desktop
+  shells (the Electron build's `l10n.ts` reads the same file); `bundle.sh`
+  copies it into the bundle and `DesktopStrings` reads it. The languages are
+  the keys of that file: adding one there is all the shell needs. A catalog in
+  which a language lacks a key the shell uses is refused at launch.
+- **Which language.** The web client owns the choice and reports it on
+  `set-language`; the shell remembers it in `language.json` and starts in it
+  next time. Before the web client has said anything, the system's first
+  language decides, then English (`DesktopStrings.resolve`). A language the
+  catalog lacks is ignored.
+- **The menu bar** (`AppMenu`) is the one `buildAppMenuTemplate` gives the
+  Electron build: the application menu (About, Source code, Change Instance,
+  Hide, Hide Others, Show All, Quit), Edit and Window. It is rebuilt when the
+  language changes. "Source code" asks the instance for the address of its
+  own source (`GET /api/instance/info`, `sourceCodeUrl`) and opens that, or
+  the project's repository. "Change Instance" opens the picker and keeps the
+  saved instance until another is chosen. Two differences from Electron: no "Toggle Developer
+  Tools" (a `WKWebView`'s inspector cannot be opened from code; attach from
+  Safari's Develop menu), and Window has Close (Command-W).
+- **Permission prompts.** The texts the system shows when the app first asks
+  for the microphone, the camera or the system's sound are in the same
+  catalog (`mac.permission.<Info.plist key>`). `scripts/permission-texts.swift`
+  writes them into the bundle, one `<language>.lproj/InfoPlist.strings` per
+  language; the system picks by its own language, not the web client's.
+
+### Recovery mode
+
+When the web client cannot be shown, the window shows `recovery.html` (the
+page of the Electron build, from `packages/desktop/resources`), which says
+what happened and offers to reload, to change the instance or to quit. The
+decisions are in `BSpaceCore/Recovery.swift`, a port of
+`packages/desktop/src/recovery.ts`; the window's side is in
+`MainWindowController`.
+
+| Reason | When |
+|--------|------|
+| `load-failed` | A load the shell asked for failed, or a page broke off half shown. A navigation that became a download or was cancelled is not a failure (`WebKitErrorDomain` 102). |
+| `renderer-stalled` | A page of an instance finished loading and the web client did not call `rendererReady()` within 20 s (`BootWatch`). |
+| `unresponsive` | The page did not answer the shell for 25 s (`HangWatch`). |
+| `render-gone` | The web content process ended twice within a minute (`CrashLoopGuard`). |
+
+- **A page that hangs.** A `WKWebView` does not say when its page hangs, so
+  the shell asks the page a trivial question every 5 s, while the window is on
+  screen, and takes a question unanswered for 25 s as a hang. A tick that
+  comes much later than it should (the machine slept) starts the count again.
+  A stuck page cannot be navigated away from: every load is first put to the
+  process of the page on screen. So for this reason the shell puts a new web
+  view in the window (`replaceWebView`), and WebKit ends the stuck process.
+- **A process that ends.** WebKit ends the web content process for its own
+  reasons too (the system is short of memory), so the first time the page is
+  loaded again; only a second ending within a minute goes to recovery.
+- **A navigation of the page's own that fails before anything of it is
+  shown** leaves the page it came from on screen and working, and is not
+  recovered from. Chromium replaces the page with an error page there, so
+  the Electron build recovers.
+- **No loop.** Going into recovery while already there changes what the page
+  says and loads nothing: if `recovery.html` itself cannot load, the window
+  stays as it is.
+- **Always visible.** Recovery brings the window forward even after a hidden
+  start.
+- **Actions** (`recovery-action`): `reload` leaves recovery and loads the
+  saved instance, or the picker when there is none; `change-instance` leaves
+  recovery and opens the picker; `quit` quits; `open-releases` opens the
+  latest release in the browser. The updater is stage 5: until then
+  `check-update` opens the latest release too, and `install-update` does
+  nothing.
+
+### Dragging the window
+
+The window has no title bar of its own: the page draws one, and Electron
+learns which parts of it drag the window from the CSS property
+`-webkit-app-region`. WebKit does not know the property and drops it from the
+style sheet, so here the page says where its title bar is, and the shell tells
+the system to drag the window by those parts.
+
+- **What the page reports.** The web client measures the elements it marks
+  `.titlebar-drag` and `.titlebar-no-drag` and calls
+  `window.backspace.setDragRegions({ drag, noDrag })` with their rectangles,
+  in points from the top left corner of the page
+  (`packages/web/src/platform/windowDragRegions.ts`). It reports again when
+  such an element appears, goes away or changes size, and when the window is
+  resized. The member is marked `nativeOnly` in the contract: Electron's
+  preload does not have it, and there the client reports nothing.
+- **A page that reports nothing** is dragged by a strip along its top edge,
+  32 points high (`WindowDragMap.fallbackStripHeight`). That covers the
+  shell's own pages (the instance picker, recovery), whose title bar is that
+  strip, and a server whose web client is older than `setDragRegions`. Every
+  new page starts from the strip again.
+- **A report is taken whole or not at all** (`DragRegions`): `drag` has to be
+  a list, every rectangle four finite numbers with a size that is not
+  negative, and at most 64 of a kind. A report that cannot be read leaves
+  the last one standing. An empty `drag` is believed: such a page is not
+  dragged anywhere.
+- **Who starts the drag.** The system does, by itself, from the rectangles
+  of the views that say they move the window (`mouseDownCanMoveWindow`, in a
+  window that is `isMovableByWindowBackground`). It reads those answers when
+  the window is laid out, not at each press, so the shell cannot decide
+  press by press. `ShellWebView` says it moves the window, and
+  `ShellContentView` lays transparent `StayView`s, which say they do not and
+  let every press through, over everything that must stay a page:
+  `WindowDragMap.stayRects` gives their rectangles, the view short of the
+  dragged parts plus the exceptions. They are laid out again when the page
+  reports, when another page is shown and when the window changes size; a
+  window that grew stays a page beside what was last reported until the page
+  has measured itself again.
+- **Why not `performDrag(with:)`.** Asking for the drag at the press is what
+  the first version did, and what Chromium does. On the machine this was
+  written on, that call started the drag only now and then: on a bench of
+  windows dragged by hand 2 of 18 presses moved the window that asked,
+  against 12 of 12 for the one built as above; an ordinary window with a
+  plain view failed the same way, and the Electron build dragged as badly.
+  The machine turned out to be in a bad state then (a system gesture had
+  stopped working too). After a reboot the Electron build drags reliably, so
+  the call itself is sound and the cause was that state, not the system's
+  version; the bench was not run again. The layout above was kept all the
+  same: it is the system's own way of moving a window, it needs no answer
+  from the app at the press, and it held where the call did not. Two things
+  that look simpler do not work:
+  answering `mouseDownCanMoveWindow` by where the mouse is (the answer is
+  kept from the last layout), and views that move the window laid over a web
+  view that does not (a view that does not takes its whole rectangle out).
+- **Where a press goes.** A press on a dragged part still reaches the web
+  view, after the system has begun moving the window. `ShellWebView` keeps
+  it from the page, release included; anywhere else the page gets the whole
+  click.
+- **A double click** on a dragged part does what the system's setting says a
+  double click on a title bar does (`TitleBarDoubleClick`, from
+  `AppleActionOnDoubleClick` and the older `AppleMiniaturizeOnDoubleClick`):
+  zoom, minimize or nothing. "Fill" has no public call and is done as zoom.
+  A full-screen window ignores it.
+
+### Notifications and the badge
+
+- **`showNotification(title, body, options)`** becomes a system notification
+  (`SystemNotificationPresenter`, `UNUserNotificationCenter`), with the default
+  sound, shown even while the app is in front: the web client decides when a
+  notification is due. A call with no title shows nothing.
+- **Permission** (alerts, sounds and the icon's badge) is asked when the
+  window is first shown, if the user has never been asked. The system's
+  question is a banner that goes away after a while and then counts as a
+  refusal, so it must not wait for the first notification, which comes when
+  nobody is looking. Permission is kept per bundle identifier: the one given
+  to the Electron build stands and nothing is asked.
+- **A click** brings the window forward and sends `options` back on
+  `notification-click`, but only if the page is still of the origin that asked
+  for the notification (`NotificationRequest.clickPayload`): identifiers from
+  one instance must not open things on another. The origin and the payload
+  travel with the notification through the system, so nothing is held in the
+  app for a click to work, and a click still arrives after a restart. A click
+  that comes before the page listens only brings the window forward.
+- **`setBadgeCount(n)`** sets the Dock icon's badge to the whole number when
+  it is one or more and clears it otherwise (`BadgeCount`). The system shows
+  the badge only while the app is allowed to badge its icon.
+- An executable that is not an application bundle has no notification centre
+  and shows none.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -81,6 +344,10 @@ in [desktop.md](../../docs/systems/desktop.md)). `BridgeScript` turns it into
 the script injected at document start in the main frame; `BridgeRouter` routes
 what the page posts to handlers by channel name; `BridgeHost` connects the two
 to WebKit and sends the shell's events back.
+
+A member marked `nativeOnly` exists in this shell alone, for something
+Chromium does by itself and WebKit does not: `setDragRegions` is the one so
+far (see "Dragging the window").
 
 Every call channel of the contract has to be answered before the first page
 loads, or the app stops at launch. Channels whose feature is not ported yet
@@ -97,7 +364,39 @@ scripts/contract-check.sh [--out report.json]
 ```
 
 runs the real shell with no window on screen and its settings in a temporary
-folder, loads `contract/harness.html`, and lets that page use the bridge the
+folder. It first checks the window state on this machine's displays
+(`ContractCheck --check window-state`: the window appears where the file says,
+the file follows a move, a lost place is centred) and the import of the
+Electron build's `localStorage` (`--check local-storage-import`: the fixture's
+items reach a page of their origin as they are, an origin is imported once,
+storage in use is kept, the shell imports before it loads an instance; the
+data store is never written to disk, and the one address asked of the network
+is a `.test` name that does not exist), and what reaches the page from outside
+(`--check launch`: a link is held until the page listens and delivered once,
+a later one goes straight through, what is not a link is dropped, and the
+auto-launch settings go through the bridge to a login item that registers
+nothing), and notifications and the badge (`--check notifications`, on a page
+the driver serves from the loopback address so that it has a real origin: what
+the page asks for reaches a presenter that only records, a click hands the
+payload back, a click on a notification from another origin does not, the
+badge is set and cleared), and the menu bar (`--check menu`: built in every
+language of the catalog with no item left untitled, the shortcuts in place,
+and the shell's language following `set-language`), and recovery mode
+(`--check recovery`, with its clocks shortened: an address that cannot be
+loaded, a page that never reports that it started and a page whose thread is
+stuck each end on the recovery page with the right reason; a second failure
+changes what that page says without loading it again; a page that reports is
+left alone; Reload, Change Instance, Quit and the releases page work), and
+dragging the window (`--check drag`: a page that reported nothing is dragged
+by its top strip and no lower; what `setDragRegions` reports replaces the
+strip, exceptions included; a report that cannot be read changes nothing; the
+next page starts from the strip again; the page sees nothing of a press that
+drags and the whole click of one that does not; a double click asks the
+system's setting; the parts follow the window's size). The check reads which
+parts the system is told about and gives its presses to the web view
+directly. The drag itself is the system's and needs a real mouse: it was
+tried by hand on the built app. Then it loads
+`contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
 (exit status 1) when a `fire` member returns anything but `undefined`, an
@@ -119,6 +418,8 @@ body of an async function whose return value is printed:
 ```bash
 .build/release/ContractCheck --contract ../desktop/src/bridgeContract.json \
   --picker ../desktop/resources/instance-picker.html \
+  --strings ../desktop/src/desktopStrings.json \
+  --recovery ../desktop/resources/recovery.html \
   --visit https://your.instance.example --settle 6
 ```
 
