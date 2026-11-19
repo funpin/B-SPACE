@@ -838,6 +838,33 @@ The app bundle carries the library's two frameworks in
 Xcode's toolchain: built by the Command Line Tools the library compiles and
 then crashes when a share joins a call.
 
+### The rate of a capture
+
+ScreenCaptureKit does not give the rate it is asked for. Asked to leave a
+sixtieth of a second between frames on a display that refreshes 120 times a
+second it gives about 57 frames a second, 42 for 45 and 29 for 30 (the first
+share in a real call arrived at 53 and at 28): a frame that comes a hair
+before its time is skipped, and the next is a whole refresh later. Asked for
+a shorter interval it gives more than the rate, by an amount that depends
+on the display.
+
+So `SystemScreenCapturer` asks for frames with room to spare (three
+quarters of the rate's interval, `frameIntervalFactor`) and `FramePacer`
+(`BSpaceCore`) picks the rate's own out of them: a schedule that moves by
+whole intervals, so a frame taken a little early or late does not shift
+the ones after it, and a screen that stood still is not made up for. It
+covers the share, the preview and the capture path alike.
+
+`--check capture-rate-system` (by hand: a small window that changes at
+every refresh, and the system's recording indicator) counts the frames
+three ways. On 2026-11-20, on the built-in display at 120 Hz:
+
+| Asked for | The system, for the rate itself | The system, with room to spare | The capturer |
+|---|---|---|---|
+| 60 | 56.9 | 73.8 | 59.7 |
+| 45 | 42.3 | 57.5 | 45.1 |
+| 30 | 29.2 | 38.6 | 30.0 |
+
 ### The live preview of a source
 
 Before a share starts, the stream setup screen shows the picked source live.

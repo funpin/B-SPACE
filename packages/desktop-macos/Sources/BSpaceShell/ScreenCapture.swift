@@ -44,6 +44,18 @@ public protocol ScreenCapturer: AnyObject {
 
 /// The screen, through ScreenCaptureKit.
 public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutput, SCStreamDelegate {
+    /// The part of a frame's time that the system is asked to leave between
+    /// two frames. Less than the whole of it: asked for the rate itself the
+    /// system gives fewer frames (about 56 for 60, 28.8 for 30 on a display
+    /// of 120 Hz), so it is asked for frames with room to spare and
+    /// `FramePacer` picks the rate's own. `--check capture-rate-system`
+    /// sets both to compare.
+    public var frameIntervalFactor = 0.75
+    /// Whether the frames are paced to the rate that was asked for.
+    public var pacesFrames = true
+    /// Read and written on the stream's queue alone.
+    private var pacer: FramePacer?
+
     public var onEnded: (() -> Void)?
     public var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
 
@@ -112,7 +124,10 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
             let configuration = SCStreamConfiguration()
             configuration.width = size.width
             configuration.height = size.height
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(request.framesPerSecond))
+            configuration.minimumFrameInterval = CMTime(
+                seconds: self.frameIntervalFactor / Double(request.framesPerSecond), preferredTimescale: 600_000
+            )
+            self.pacer = self.pacesFrames ? FramePacer(framesPerSecond: request.framesPerSecond) : nil
             // What the hardware encoder takes without a conversion.
             configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             configuration.showsCursor = true
@@ -202,6 +217,9 @@ public final class SystemScreenCapturer: NSObject, ScreenCapturer, SCStreamOutpu
 
         // The sample is stamped on the host's clock; the page's is the wall clock.
         let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        // The system was asked for frames with room to spare: only the
+        // rate's own go on.
+        if pacer?.takes(at: time.seconds) == false { return }
         let age = CACurrentMediaTime() - time.seconds
         frame?(pixelBuffer, time, (Date().timeIntervalSince1970 - age) * 1000)
     }

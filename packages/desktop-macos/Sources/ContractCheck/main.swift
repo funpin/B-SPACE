@@ -3662,6 +3662,101 @@ func checkSharePreviewSystem() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// How many frames a second ScreenCaptureKit really gives when asked for a
+/// rate, on this machine's display. A small window of the check's own appears
+/// ON THE SCREEN and changes colour at every refresh, so that the display has
+/// something new each time; the main display is captured for a few seconds at
+/// each rate three ways (the system asked for the rate itself, asked for
+/// frames with room to spare, and the capturer as the app uses it, which
+/// paces them), and the frames are counted. The system shows that
+/// the screen is being recorded; nothing captured is read but the count.
+///
+///   --check capture-rate-system [--seconds 4]
+///
+/// Run by hand; it is not part of contract-check.sh.
+func checkCaptureRateSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 200, y: 300, width: 320, height: 200),
+        styleMask: [.titled], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: a picture that changes at every refresh"
+    let pulse = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+    pulse.wantsLayer = true
+    window.contentView = pulse
+    window.orderFrontRegardless()
+    var tick = 0
+    let timer = Timer(timeInterval: 1.0 / 240, repeats: true) { _ in
+        tick += 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pulse.layer?.backgroundColor = CGColor(gray: CGFloat(tick % 16) / 16, alpha: 1)
+        CATransaction.commit()
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    defer { timer.invalidate() }
+    let seconds = Double(arguments["seconds"] ?? "") ?? 4
+    let refresh = NSScreen.main?.maximumFramesPerSecond ?? 0
+    print("the main display refreshes up to \(refresh) times a second")
+
+    func measure(rate: Int, factor: Double, paced: Bool) -> Double? {
+        let capturer = SystemScreenCapturer()
+        capturer.frameIntervalFactor = factor
+        capturer.pacesFrames = paced
+        var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+        capturer.prepare(ScreenCaptureRequest(
+            source: .display(CGMainDisplayID()), maxWidth: 1920, maxHeight: 1200, framesPerSecond: rate
+        )) { prepared = $0 }
+        guard wait(10, until: { prepared != nil }), case .success? = prepared else { return nil }
+        let lock = NSLock()
+        var times: [Double] = []
+        var began: Bool?
+        capturer.begin(frame: { _, time, _ in
+            lock.lock()
+            times.append(time.seconds)
+            lock.unlock()
+        }, completion: { began = $0 })
+        guard wait(10, until: { began != nil }), began == true else { return nil }
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds + 1))
+        capturer.stop()
+        lock.lock()
+        let all = times
+        lock.unlock()
+        // The first second is the capture starting.
+        guard let last = all.last else { return 0 }
+        let counted = all.filter { $0 >= last - seconds }
+        guard counted.count > 1, let first = counted.first else { return 0 }
+        return Double(counted.count - 1) / (last - first)
+    }
+
+    let product = SystemScreenCapturer()
+    var lines: [String] = []
+    var problems: [String] = []
+    for rate in [60, 45, 30] {
+        let asIs = measure(rate: rate, factor: 1, paced: false)
+        let spare = measure(rate: rate, factor: product.frameIntervalFactor, paced: false)
+        let paced = measure(rate: rate, factor: product.frameIntervalFactor, paced: true)
+        func said(_ value: Double?) -> String { value.map { String(format: "%.1f", $0) } ?? "no capture" }
+        lines.append("asked for \(rate) a second: the system gives \(said(asIs)) for the rate itself and \(said(spare)) with room to spare; the capturer hands on \(said(paced))")
+        if let paced, abs(paced - Double(rate)) > Double(rate) * 0.03 {
+            problems.append("the capturer hands on \(said(paced)) frames a second where \(rate) were asked for")
+        } else if paced == nil {
+            problems.append("the capture at \(rate) a second did not start")
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+    }
+    window.orderOut(nil)
+    lines.forEach { print($0) }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture rate, the real system: the capturer hands on the rate that was asked for"
+        : "capture rate, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 /// A share through the bridge, as the web client will start one, with a
 /// screen the check makes up.
 func checkCapture() -> Never {
@@ -5169,6 +5264,8 @@ case "share-live":
     checkShareLive()
 case "share-preview-system":
     checkSharePreviewSystem()
+case "capture-rate-system":
+    checkCaptureRateSystem()
 case "system-audio":
     checkSystemAudio()
 case "system-audio-system":
@@ -5206,7 +5303,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, share, share-live, share-preview-system, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-rate-system, share, share-live, share-preview-system, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
 }
 
 let contract: BridgeContract
