@@ -71,6 +71,39 @@ import WebKit
 // double click asks the system's setting. The drag itself is the system's:
 // it needs a real mouse and is not part of this check.
 //
+// With --check tray it checks the tray on the real shell, with something that
+// records what the tray is given in place of the menu bar: the character
+// plays the loop of the state the page reports and ignores a state that is
+// not one, the menu has the row of buttons the page's context allows (fewer
+// for a web client that does not report the camera, the screen share and the
+// pointers), a pressed button comes back to the page as a `tray-action`, Open
+// and Quit do what they say, the menu follows the page's language, and
+// another page starts from an empty menu and a resting character.
+//
+// With --check activity it checks game detection on the real shell, with a
+// list of processes and an answer of the network that the check makes up:
+// the page hears of a game once when it starts and once when it ends and
+// reads the same from `getCurrentActivity`, a newer dictionary that was
+// fetched is saved with its tag and used, a second start reads the saved one
+// and names its tag, and detection stops when the processes cannot be
+// listed. Nothing is fetched; the real list of processes is read once, to
+// see that the system gives it.
+//
+// With --check activity-network it fetches the games dictionary from the
+// project's repository once, the way the app does, and prints what came
+// back. It is the one check that uses the network, and is not part of
+// contract-check.sh.
+//
+// With --check keybinds it checks the global keybinds on the real shell, with
+// a keyboard and a permission that the check makes up: without the
+// permission nothing is listened to, the page is told so and the system is
+// asked once; with it the synced keybinds are listened for and a held key
+// presses its action once, and a release the system never reported ends it
+// all the same; an empty list stops the listening; a list that
+// cannot be read changes nothing; the page's request opens the permission's
+// settings; a listener the system will not start is reported; another page
+// starts with no keybinds. No real key is listened to.
+//
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
 // how many items there are and how large they are; --keys yes adds the item
@@ -192,7 +225,7 @@ if arguments["check"] == "electron-profile" {
     describeElectronProfile(fileURL(arguments, "profile"), withKeys: arguments["keys"] == "yes")
 }
 let contractURL = fileURL(arguments, "contract")
-let pickerURL = fileURL(arguments, "picker")
+let pickerSourceURL = fileURL(arguments, "picker")
 let stringsURL = fileURL(arguments, "strings")
 let recoveryURL = fileURL(arguments, "recovery")
 let visitAddress = arguments["visit"]
@@ -201,6 +234,36 @@ let harnessURL = visitAddress == nil && checkName == nil ? fileURL(arguments, "h
 
 let temporary = FileManager.default.temporaryDirectory
     .appendingPathComponent("bspace-contract-check-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+
+/// Where the checks keep their copy of the picker; removed when the process ends.
+let pickerPagesFolder = FileManager.default.temporaryDirectory
+    .appendingPathComponent("bspace-contract-check-pages-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+
+/// The picker as the checks load it: the page of the Electron build without
+/// its one request to the network, a font imported from Google Fonts. Behind
+/// a proxy that answers for every host name that request neither fails nor
+/// ends, the page never finishes loading, and a check that waits for a page
+/// would wait on the network. The copy is kept apart from the settings
+/// folder, which the checks create and remove.
+let pickerURL: URL = {
+    guard let page = try? String(contentsOf: pickerSourceURL, encoding: .utf8) else {
+        fail("--picker is not readable as UTF-8 text")
+    }
+    let offline = page
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .filter { !$0.contains("fonts.googleapis.com") }
+        .joined(separator: "\n")
+    let copy = pickerPagesFolder.appendingPathComponent("instance-picker.html")
+    do {
+        try FileManager.default.createDirectory(at: pickerPagesFolder, withIntermediateDirectories: true)
+        try Data(offline.utf8).write(to: copy)
+    } catch {
+        fail("could not write the picker for the checks: \(error.localizedDescription)")
+    }
+    // Every check ends the process with exit(), which runs no defer.
+    atexit { try? FileManager.default.removeItem(at: pickerPagesFolder) }
+    return copy
+}()
 let strings: DesktopStrings
 do {
     strings = try DesktopStrings(data: Data(contentsOf: stringsURL))
@@ -243,6 +306,132 @@ final class CheckNotificationPresenter: NotificationPresenter {
 
     func show(_ request: NotificationRequest) {
         shown.append(request)
+    }
+}
+
+/// A keyboard the check presses the keys of.
+final class CheckKeyInputSource: KeyInputSource {
+    var onInput: ((KeyInput) -> Void)?
+    var onInterrupted: (() -> Void)?
+    var isStarted = false
+    var starts = 0
+    /// False: the system will not start the listener.
+    var canStart = true
+
+    func start() -> Bool {
+        starts += 1
+        isStarted = canStart
+        return canStart
+    }
+
+    func stop() {
+        isStarted = false
+    }
+
+    func send(_ input: KeyInput) {
+        onInput?(input)
+    }
+}
+
+/// Says which keys are really down, as the check tells it to.
+final class CheckKeyStateProbe: KeyStateProbe {
+    /// The keys that are not down, whatever was reported.
+    var releasedKeys: Set<UInt16> = []
+
+    func isKeyDown(_ keyCode: UInt16) -> Bool {
+        !releasedKeys.contains(keyCode)
+    }
+
+    func isMouseButtonDown(_ button: Int) -> Bool {
+        true
+    }
+}
+
+/// A permission the check gives and takes.
+final class CheckKeybindPermission: KeybindPermission {
+    var isGranted = false
+    var requests = 0
+    var settingsOpened = 0
+
+    func request() {
+        requests += 1
+    }
+
+    func openSettings() {
+        settingsOpened += 1
+    }
+}
+
+/// Says which processes are running, as the check tells it to.
+final class CheckProcessLister: ProcessLister {
+    /// Nil: the processes cannot be listed.
+    var names: Set<String>? = []
+    var asked = 0
+
+    func runningProcessNames(completion: @escaping (Set<String>?) -> Void) {
+        asked += 1
+        let answer = names
+        DispatchQueue.main.async { completion(answer) }
+    }
+}
+
+/// Answers for the network, as the check tells it to, and keeps the tags it
+/// was asked with.
+final class CheckDictionaryFetcher: GameDictionaryFetcher {
+    var answer: (status: Int, body: Data, etag: String?)?
+    var knownTags: [String?] = []
+
+    func fetch(knownTag: String?, completion: @escaping ((status: Int, body: Data, etag: String?)?) -> Void) {
+        knownTags.append(knownTag)
+        let answer = self.answer
+        DispatchQueue.main.async { completion(answer) }
+    }
+}
+
+/// Records what the tray is given, in place of the menu bar.
+final class CheckTrayPresenter: TrayPresenter {
+    var onCommand: ((TrayMenuCommand) -> Void)?
+    var frames: [TrayFrame] = []
+    var menu: [TrayMenuItem] = []
+
+    func show(_ frame: TrayFrame) {
+        frames.append(frame)
+    }
+
+    func setMenu(_ items: [TrayMenuItem]) {
+        menu = items
+    }
+
+    /// The titles of the menu, one string per item.
+    var titles: [String] {
+        menu.map {
+            switch $0 {
+            case .separator: return "-"
+            case .label(let title): return "(\(title))"
+            case .action(let title, _): return title
+            case .toggle(let title, let isOn, _): return (isOn ? "[x] " : "[ ] ") + title
+            case .controls(let controls): return "{" + controls.map(\.title).joined(separator: " | ") + "}"
+            }
+        }
+    }
+
+    /// Chooses the item, or presses the button of the row, with this title.
+    func choose(_ title: String) -> Bool {
+        for item in menu {
+            switch item {
+            case .action(title, let command), .toggle(title, _, let command):
+                onCommand?(command)
+                return true
+            case .controls(let controls):
+                if let control = controls.first(where: { $0.title == title }) {
+                    onCommand?(control.command)
+                    return true
+                }
+            default:
+                continue
+            }
+        }
+        return false
     }
 }
 
@@ -1205,9 +1394,517 @@ func checkDrag() -> Never {
     exit(problems.isEmpty ? 0 : 1)
 }
 
+/// The tray check. Ends the process.
+func checkTray() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    // The page keeps the tray actions it is sent, and says it is ready.
+    let listener = """
+    <!doctype html><title>tray</title><script>
+    window.__actions = [];
+    window.backspace.onTrayAction((action) => window.__actions.push(JSON.stringify(action)));
+    window.backspace.rendererReady();
+    </script>
+    """
+    let tray = CheckTrayPresenter()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer(pages: ["/client": listener])
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            tray: tray
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let client = URL(string: origin + "/client") else {
+        fail("the local page server did not start")
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// The tray actions the page was sent since the last call. Waits for as
+    /// many as are expected, a few seconds at most: a busy machine delivers
+    /// them late.
+    func actions(expecting count: Int) -> [String] {
+        var all: [String] = []
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            guard let more = page("const seen = window.__actions; window.__actions = []; return seen;") as? [String] else {
+                return all + ["no answer"]
+            }
+            all += more
+        } while all.count < count && Date() < deadline
+        // One more look, for an action too many.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        return all + (page("const seen = window.__actions; window.__actions = []; return seen;") as? [String] ?? [])
+    }
+    let ownItems = ["Show B:SPACE", "-", "Quit"]
+
+    // 0. The frame images of the Electron build load as the menu bar needs
+    //    them: every frame, 18 by 22 points whatever the file says of its
+    //    resolution, as a template, with a second image for dense displays.
+    let frames = SystemTrayPresenter.loadFrames(from: pickerSourceURL.deletingLastPathComponent())
+    for frame in TrayFrame.allCases {
+        guard let image = frames[frame] else {
+            problems.append("the frame \(frame.rawValue) has no image")
+            continue
+        }
+        let pixels = image.representations.map { "\($0.pixelsWide)x\($0.pixelsHigh)" }.sorted()
+        if image.size != NSSize(width: 18, height: 22) || !image.isTemplate || pixels != ["18x22", "36x44"]
+            || image.representations.contains(where: { $0.size != image.size }) {
+            problems.append("the frame \(frame.rawValue) loads as \(image.size), template \(image.isTemplate), images \(pixels)")
+        }
+    }
+
+    let missing = SystemTrayPresenter.missingControlSymbols()
+    if !missing.isEmpty { problems.append("this system has no symbol for \(missing)") }
+
+    // 1. Before any page: the app's own items, and the character at rest.
+    if tray.titles != ownItems { problems.append("the menu before any page is \(tray.titles)") }
+    if tray.frames != [.idle] { problems.append("the character starts with \(tray.frames.map(\.rawValue))") }
+
+    var loaded = false
+    shell.onMainFrameLoadEnded = { _ in loaded = true }
+    shell.load(client)
+    if !wait(until: { loaded && shell.webView.url == client }) { fail("the page did not load") }
+
+    // 2. The character plays the loop of the state the page reports. With
+    //    the system asking for reduced motion it shows the still frame only.
+    let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    tray.frames = []
+    _ = page("window.backspace.setTrayState('typing'); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(1.6))
+    let expected: [TrayFrame] = still ? [.typingA] : [.typingA, .typingB, .typing, .typingA]
+    if Array(tray.frames.prefix(expected.count)) != expected {
+        problems.append("reporting 'typing' showed \(tray.frames.map(\.rawValue)), expected \(expected.map(\.rawValue)) first")
+    }
+
+    // 3. A state that is not one, and a still state, which ends the loop.
+    _ = page("window.backspace.setTrayState('dancing'); window.backspace.setTrayState(); window.backspace.setTrayState('dnd'); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    tray.frames = []
+    RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+    if !tray.frames.isEmpty { problems.append("a still state kept changing frames: \(tray.frames.map(\.rawValue))") }
+
+    // 4. A web client that does not report the camera, the screen share and
+    //    the pointers gets the buttons it can answer for.
+    let older = "signedIn: true, voice: { channelName: 'General' }, muted: true, deafened: false, status: 'online'"
+    _ = page("window.backspace.setTrayContext({ \(older) }); return true;")
+    let olderMenu = ["(In voice: General)", "{Microphone is off | Sound is on | Disconnect}", "-", "[ ] Do Not Disturb"] + ownItems
+    if !wait(until: { tray.titles == olderMenu }) { problems.append("for an older web client the menu is \(tray.titles)") }
+
+    //    One that does gets the whole row.
+    _ = page("window.backspace.setTrayContext({ \(older), cameraOn: true, screenSharing: true, showPointers: true }); return true;")
+    let inCall = [
+        "(In voice: General)",
+        "{Microphone is off | Sound is on | Viewers' pointers are shown | Turn off camera | Stop sharing | Disconnect}",
+        "-", "[ ] Do Not Disturb",
+    ] + ownItems
+    if !wait(until: { tray.titles == inCall }) { problems.append("in a call the menu is \(tray.titles)") }
+
+    // 5. A context that cannot be read changes nothing.
+    _ = page("window.backspace.setTrayContext({ signedIn: 'yes' }); window.backspace.setTrayContext(); window.backspace.setTrayContext({ signedIn: true, voice: null, muted: false, deafened: false }); window.backspace.setTrayContext({ \(older), cameraOn: 'yes' }); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    if tray.titles != inCall { problems.append("a context that cannot be read changed the menu to \(tray.titles)") }
+
+    // 6. A pressed button and a chosen item come back to the page.
+    let pressed = ["Microphone is off", "Sound is on", "Viewers' pointers are shown", "Turn off camera", "Stop sharing", "Disconnect", "Do Not Disturb"]
+    for title in pressed where !tray.choose(title) {
+        problems.append("the menu has nothing called '\(title)'")
+    }
+    let sent = actions(expecting: pressed.count)
+    let wanted = ["toggleMute", "toggleDeafen", "toggleShowPointers", "stopCamera", "stopScreenShare", "disconnect"].map { #"{"type":"\#($0)"}"# }
+    if Array(sent.prefix(6)) != wanted || sent.count != 7 || !sent[6].contains("\"setStatus\"") || !sent[6].contains("\"dnd\"") {
+        problems.append("the page was sent \(sent)")
+    }
+
+    // 7. The menu follows the page's language.
+    _ = page("window.backspace.setLanguage('ru'); return true;")
+    if !wait(until: { tray.titles.first == "(В голосовом: General)" }) {
+        problems.append("after the page chose Russian the menu starts with \(tray.titles.first ?? "nothing")")
+    }
+    _ = page("window.backspace.setLanguage('en'); return true;")
+    if !wait(until: { tray.titles == inCall }) { problems.append("back in English the menu is \(tray.titles)") }
+
+    // 8. The app's own items.
+    var quitRequests = 0
+    var opened: [String] = []
+    shell.onQuitRequested = { quitRequests += 1 }
+    shell.openInBrowser = { opened.append($0) }
+    for title in ["Quit", "Show B:SPACE"] where !tray.choose(title) {
+        problems.append("the menu has no item '\(title)'")
+    }
+    if quitRequests != 1 { problems.append("Quit reached the app \(quitRequests) time(s)") }
+    if !opened.isEmpty { problems.append("the tray menu opened \(opened)") }
+
+    // 9. Another page (here the picker) starts from an empty menu and a
+    //    resting character.
+    _ = page("window.backspace.setTrayState('notify'); return true;")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    tray.frames = []
+    shell.changeInstance()
+    if !wait(until: { shell.webView.url?.path == pickerURL.path && !shell.webView.isLoading }) {
+        problems.append("the picker did not open")
+    }
+    if !wait(until: { tray.titles == ownItems }) { problems.append("on the picker the menu is \(tray.titles)") }
+    if tray.frames.last != .idle { problems.append("on the picker the character shows \(tray.frames.last?.rawValue ?? "nothing new")") }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "tray: the character plays the reported state, the menu has the row of buttons the page allows and sends the pressed one back, in the page's language"
+        : "tray: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The game detection check. Ends the process.
+func checkActivity() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let listener = """
+    <!doctype html><title>activity</title><script>
+    window.__seen = [];
+    window.backspace.onActivityDetected((activity) => window.__seen.push(activity === null ? 'null' : JSON.stringify(activity)));
+    window.backspace.rendererReady();
+    </script>
+    """
+    let settings = environment.userDataDirectory
+    let seed = pickerSourceURL.deletingLastPathComponent().appendingPathComponent("games.json")
+    let fetchedBody = Data(#"{ "version": 9999, "games": [{ "id": "zz-check", "name": "ZZ Check Game", "processes": ["ZZ-Check-Game"], "type": "watching" }, { "id": "cs2", "name": "Counter-Strike 2", "processes": ["cs2"] }] }"#.utf8)
+    let lister = CheckProcessLister()
+    lister.names = ["finder"]
+    let fetcher = CheckDictionaryFetcher()
+    fetcher.answer = (status: 200, body: fetchedBody, etag: "\"check-tag\"")
+    let detector = ActivityDetector(seedURL: seed, settingsDirectory: settings, lister: lister, fetcher: fetcher, pollInterval: 0.2)
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer(pages: ["/client": listener])
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            tray: nil,
+            activity: detector
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let client = URL(string: origin + "/client") else {
+        fail("the local page server did not start")
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func seen() -> [String] {
+        page("return window.__seen;") as? [String] ?? ["no answer"]
+    }
+    func current() -> [String: Any]? {
+        page("return await window.backspace.getCurrentActivity();") as? [String: Any]
+    }
+    func activity(_ json: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+    }
+
+    // 1. Starting the shell starts the detector, which reads the dictionary
+    //    shipped with the app and asks the network once, with no tag yet.
+    shell.start(hidden: true)
+    if !detector.isRunning { problems.append("the detector did not start with the shell") }
+    var loaded = false
+    shell.onMainFrameLoadEnded = { _ in loaded = true }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    loaded = false
+    shell.load(client)
+    if !wait(until: { loaded && shell.webView.url == client }) { fail("the page did not load") }
+    if fetcher.knownTags.count != 1 || fetcher.knownTags[0] != nil {
+        problems.append("the network was asked \(fetcher.knownTags.count) time(s), with the tags \(fetcher.knownTags)")
+    }
+
+    // 2. The newer dictionary it was given is saved with its tag.
+    let cache = settings.appendingPathComponent(GameDictionarySync.cacheFileName)
+    let tag = settings.appendingPathComponent(GameDictionarySync.tagFileName)
+    if (try? Data(contentsOf: cache)) != fetchedBody { problems.append("the fetched dictionary was not saved as it came") }
+    if (try? String(contentsOf: tag, encoding: .utf8)) != "\"check-tag\"" { problems.append("the dictionary's tag was not saved") }
+
+    // 3. Nothing known is running: the page hears nothing.
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+    if !seen().isEmpty || current() != nil {
+        problems.append("with nothing known running the page heard \(seen()) and read \(String(describing: current()))")
+    }
+
+    // 4. A game starts: the page hears of it once, and reads the same.
+    let before = Date().timeIntervalSince1970 * 1000
+    lister.names = ["finder", "cs2"]
+    if !wait(5, until: { seen().count == 1 }) { problems.append("a running game was not reported: \(seen())") }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+    let heard = seen()
+    let started = activity(heard.first ?? "")
+    let start = (started["timestamps"] as? [String: Any])?["start"] as? Double ?? 0
+    if heard.count != 1 || started["type"] as? String != "playing" || started["name"] as? String != "Counter-Strike 2"
+        || start < before || start > before + 10_000 {
+        problems.append("a running game was reported as \(heard)")
+    }
+    if current()?["name"] as? String != "Counter-Strike 2" { problems.append("the page read \(String(describing: current())) while the game ran") }
+
+    // 5. It ends: the page hears null once.
+    lister.names = ["finder"]
+    if !wait(5, until: { seen().count == 2 }) || seen().last != "null" || current() != nil {
+        problems.append("the end of the game was reported as \(seen()), then read as \(String(describing: current()))")
+    }
+
+    // 6. A game only the fetched dictionary knows, in whatever case.
+    lister.names = ["zz-check-game"]
+    if !wait(5, until: { seen().count == 3 }) { problems.append("a game of the fetched dictionary was not reported: \(seen())") }
+    let fetchedGame = activity(seen().last ?? "")
+    if fetchedGame["name"] as? String != "ZZ Check Game" || fetchedGame["type"] as? String != "watching" {
+        problems.append("a game of the fetched dictionary was reported as \(seen().last ?? "nothing")")
+    }
+
+    // 7. When the processes cannot be listed, detection stops asking.
+    lister.names = nil
+    if !wait(5, until: { !detector.isRunning }) { problems.append("detection went on without a list of processes") }
+    let asked = lister.asked
+    RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+    if lister.asked != asked { problems.append("the processes were asked for again after detection stopped") }
+
+    // 8. A second start reads the saved dictionary and names its tag.
+    let secondLister = CheckProcessLister()
+    secondLister.names = ["zz-check-game"]
+    let secondFetcher = CheckDictionaryFetcher()
+    secondFetcher.answer = (status: 304, body: Data(), etag: nil)
+    let second = ActivityDetector(seedURL: seed, settingsDirectory: settings, lister: secondLister, fetcher: secondFetcher, pollInterval: 0.2)
+    second.start()
+    if !wait(5, until: { second.current != nil }) || second.current?.name != "ZZ Check Game" {
+        problems.append("a second start did not use the saved dictionary: \(String(describing: second.current))")
+    }
+    if secondFetcher.knownTags != ["\"check-tag\""] { problems.append("a second start asked the network with \(secondFetcher.knownTags)") }
+    second.stop()
+
+    // 9. The system's own list can be read, and this process is in it.
+    var real: Set<String>??
+    SystemProcessLister().runningProcessNames { real = .some($0) }
+    if !wait(10, until: { real != nil }) {
+        problems.append("the system's list of processes did not come")
+    } else if let names = real ?? nil {
+        if names.count < 20 || !names.contains("contractcheck") {
+            problems.append("the system's list has \(names.count) names and \(names.contains("contractcheck") ? "this process" : "not this process")")
+        }
+    } else {
+        problems.append("the system's list of processes could not be read")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "activity: a game is reported once when it starts and once when it ends, a fetched dictionary is saved and used, detection stops without a list of processes"
+        : "activity: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// Fetches the games dictionary from the network once. Ends the process.
+func checkActivityNetwork() -> Never {
+    var answer: (status: Int, body: Data, etag: String?)??
+    NetworkGameDictionaryFetcher().fetch(knownTag: nil) { answer = .some($0) }
+    guard wait(20, until: { answer != nil }), let received = answer ?? nil else {
+        print("activity-network: no answer")
+        exit(1)
+    }
+    let read = GameDictionary(data: received.body)
+    print("activity-network: status \(received.status), \(received.body.count) bytes, tag \(received.etag ?? "none"), "
+        + (read.map { "version \($0.version) with \($0.entries.count) games" } ?? "not a dictionary"))
+    exit(received.status == 200 && read != nil ? 0 : 1)
+}
+
+/// The global keybinds check. Ends the process.
+func checkKeybinds() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let listener = """
+    <!doctype html><title>keybinds</title><script>
+    window.__actions = []; window.__status = []; window.__errors = [];
+    window.backspace.onKeybindAction((action) => window.__actions.push(action.actionId + (action.pressed ? ' down' : ' up')));
+    window.backspace.onAccessibilityStatus((status) => window.__status.push(status.trusted));
+    window.backspace.onKeybindHookError((error) => window.__errors.push(error.message));
+    window.backspace.rendererReady();
+    </script>
+    """
+    let keyboard = CheckKeyInputSource()
+    let permission = CheckKeybindPermission()
+    let probe = CheckKeyStateProbe()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer(pages: ["/client": listener, "/other": listener])
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            tray: nil,
+            keybinds: KeybindCoordinator(source: keyboard, permission: permission, probe: probe, reconcileInterval: 0.2)
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin() else { fail("the local page server did not start") }
+    func open(_ path: String) {
+        guard let url = URL(string: origin + path) else { fail("bad address \(path)") }
+        var loaded = false
+        shell.onMainFrameLoadEnded = { _ in loaded = true }
+        shell.load(url)
+        if !wait(until: { loaded && shell.webView.url == url }) { fail("\(path) did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// What the page heard on one of its lists since the last call. Waits
+    /// for as many entries as are expected, a few seconds at most, then looks
+    /// once more for one too many. With nothing expected it waits long
+    /// enough for something that should not come to have come.
+    func taken(_ name: String, expecting count: Int = 0) -> [Any] {
+        let take = "const seen = window.\(name); window.\(name) = []; return seen;"
+        var all: [Any] = []
+        let deadline = Date().addingTimeInterval(5)
+        while all.count < count && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            guard let more = page(take) as? [Any] else { return all + ["no answer"] }
+            all += more
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        return all + (page(take) as? [Any] ?? ["no answer"])
+    }
+    let keyA = KeyCodes.hash("KeyA")
+    let control = KeyCodes.hash("ControlLeft")
+    let talk = "[{ actionId: 'talk', keys: [\(keyA)] }]"
+    let combo = "[{ actionId: 'combo', keys: [\(control), \(keyA)] }, { actionId: 'side', keys: [], mouseButton: 4 }]"
+
+    open("/client")
+
+    // 1. Without the permission: not listening, the page is told, the
+    //    system is asked.
+    let first = page("return await window.backspace.syncKeybinds(\(talk));") as? Bool
+    if first != false || keyboard.isStarted || permission.requests != 1 {
+        problems.append("without the permission the sync answered \(String(describing: first)), listening \(keyboard.isStarted), asked the system \(permission.requests) time(s)")
+    }
+    if taken("__status", expecting: 1) as? [Bool] != [false] { problems.append("without the permission the page was not told once that it is missing") }
+    if page("return await window.backspace.checkAccessibility();") as? Bool != false { problems.append("the permission was reported as given") }
+    keyboard.send(.keyDown(keyCode: 0x00))
+    if !taken("__actions").isEmpty { problems.append("a key was acted on without the permission") }
+
+    // 2. The permission is given: the next look starts the listening.
+    permission.isGranted = true
+    if page("return await window.backspace.checkAccessibility();") as? Bool != true || !keyboard.isStarted {
+        problems.append("after the permission was given the shell is \(keyboard.isStarted ? "listening" : "not listening")")
+    }
+    if taken("__status", expecting: 1) as? [Bool] != [true] { problems.append("the page was not told that the permission is there") }
+
+    // 3. A held key presses its action once and releases it once.
+    keyboard.send(.keyDown(keyCode: 0x00))
+    keyboard.send(.keyDown(keyCode: 0x00))
+    keyboard.send(.keyDown(keyCode: 0x00))
+    keyboard.send(.keyUp(keyCode: 0x00))
+    let single = taken("__actions", expecting: 2) as? [String] ?? []
+    if single != ["talk down", "talk up"] { problems.append("a held key gave \(single)") }
+
+    //    A release the system never reported is noticed: the key is found
+    //    to be up, and the action ends once.
+    keyboard.send(.keyDown(keyCode: 0x00))
+    if taken("__actions", expecting: 1) as? [String] != ["talk down"] { problems.append("a key did not press its action before its release was lost") }
+    probe.releasedKeys = [0x00]
+    if taken("__actions", expecting: 1) as? [String] != ["talk up"] { problems.append("a lost release left the action pressed") }
+    probe.releasedKeys = []
+
+    // 4. An empty list stops the listening; a new one starts it again.
+    if page("return await window.backspace.syncKeybinds([]);") as? Bool != false || keyboard.isStarted {
+        problems.append("an empty list left the shell listening")
+    }
+    if page("return await window.backspace.syncKeybinds(\(combo));") as? Bool != true || !keyboard.isStarted {
+        problems.append("a new list did not start the listening again")
+    }
+
+    // 5. A combination with a modifier, and a mouse button.
+    keyboard.send(.flagsChanged(keyCode: 0x3B, flags: 0x40101))
+    keyboard.send(.keyDown(keyCode: 0x00))
+    keyboard.send(.flagsChanged(keyCode: 0x3B, flags: 0x100))
+    keyboard.send(.keyUp(keyCode: 0x00))
+    keyboard.send(.mouseDown(button: 3))
+    keyboard.send(.mouseUp(button: 3))
+    let mixed = taken("__actions", expecting: 4) as? [String] ?? []
+    if mixed != ["combo down", "combo up", "side down", "side up"] { problems.append("a combination and a mouse button gave \(mixed)") }
+
+    // 6. A list that cannot be read changes nothing.
+    let afterBad = page("return await window.backspace.syncKeybinds([{ actionId: 'broken', keys: 'KeyA' }]);") as? Bool
+    keyboard.send(.mouseDown(button: 3))
+    keyboard.send(.mouseUp(button: 3))
+    if afterBad != true || taken("__actions", expecting: 2) as? [String] != ["side down", "side up"] {
+        problems.append("a list that cannot be read changed what is listened for")
+    }
+
+    // 7. The page's request opens the permission's settings; the Wayland
+    //    portal has no status here.
+    _ = page("window.backspace.openKeybindPermissionSettings(); return true;")
+    if !wait(5, until: { permission.settingsOpened == 1 }) { problems.append("the permission's settings were opened \(permission.settingsOpened) time(s)") }
+    let portal = page("return (await window.backspace.getKeybindPortalStatus()) === null;") as? Bool
+    if portal != true { problems.append("the portal status is not null") }
+
+    // 8. Another page starts with no keybinds, and nothing is listened to.
+    keyboard.send(.mouseDown(button: 3))
+    _ = taken("__actions")
+    open("/other")
+    if keyboard.isStarted { problems.append("another page left the shell listening for the keybinds of the last one") }
+
+    // 9. A listener the system will not start is reported to the page.
+    keyboard.canStart = false
+    if page("return await window.backspace.syncKeybinds(\(talk));") as? Bool != false {
+        problems.append("the sync said the shell is listening when the listener did not start")
+    }
+    if (taken("__errors", expecting: 1) as? [String])?.count != 1 { problems.append("a listener that did not start was not reported once") }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "keybinds: nothing is listened to without the permission; with it a held key presses its action once; another page starts with none"
+        : "keybinds: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
 switch checkName {
 case nil:
     break
+case "keybinds":
+    checkKeybinds()
+case "activity":
+    checkActivity()
+case "activity-network":
+    checkActivityNetwork()
+case "tray":
+    checkTray()
 case "drag":
     checkDrag()
 case "recovery":
@@ -1223,7 +1920,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds or electron-profile")
 }
 
 let contract: BridgeContract

@@ -81,7 +81,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "bundle.sh: could not read a plain version from the root package.json (got \"$VERSION\")" >&2
   exit 1
 fi
-for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/resources/recovery.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/src/desktopStrings.json" "$DESKTOP/build/icon.icns"; do
+for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/resources/recovery.html" "$DESKTOP/src/bridgeContract.json" "$DESKTOP/src/desktopStrings.json" "$DESKTOP/resources/games.json" "$DESKTOP/build/icon.icns"; do
   [[ -f "$resource" ]] || { echo "bundle.sh: $resource is missing" >&2; exit 1; }
 done
 
@@ -96,6 +96,19 @@ cp "$DESKTOP/resources/instance-picker.html" "$APP/Contents/Resources/instance-p
 cp "$DESKTOP/resources/recovery.html" "$APP/Contents/Resources/recovery.html"
 cp "$DESKTOP/src/bridgeContract.json" "$APP/Contents/Resources/bridgeContract.json"
 cp "$DESKTOP/build/icon.icns" "$APP/Contents/Resources/icon.icns"
+# The games recognised by their process names.
+cp "$DESKTOP/resources/games.json" "$APP/Contents/Resources/games.json"
+# The frames of the character in the menu bar: black templates, with their
+# @2x files beside them, which the system tints for the menu bar's colour.
+TRAY_FRAMES=0
+for frame in "$DESKTOP"/resources/tray-*Template.png "$DESKTOP"/resources/tray-*Template@2x.png; do
+  cp "$frame" "$APP/Contents/Resources/"
+  TRAY_FRAMES=$((TRAY_FRAMES + 1))
+done
+if [[ "$TRAY_FRAMES" -ne 32 ]]; then
+  echo "bundle.sh: expected 32 tray frame images (16 frames, each with @2x), found $TRAY_FRAMES" >&2
+  exit 1
+fi
 # What the shell says on its own (menus), in every language of the web client.
 cp "$DESKTOP/src/desktopStrings.json" "$APP/Contents/Resources/desktop-strings.json"
 # The texts of the system's permission prompts, from the same catalog: one

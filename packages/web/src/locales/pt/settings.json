@@ -353,6 +353,11 @@
       "description": "O B:SPACE precisa da permissão de Acessibilidade para que os atalhos globais funcionem fora do app.",
       "grant": "Conceder permissão"
     },
+    "inputMonitoring": {
+      "title": "Permissão de Monitoramento de Entrada necessária",
+      "description": "O B:SPACE precisa da permissão de Monitoramento de Entrada para que os atalhos globais funcionem fora do app. Ative-a nos Ajustes do Sistema e abra o B:SPACE novamente.",
+      "grant": "Abrir Ajustes do Sistema"
+    },
     "hookError": {
       "title": "Atalhos globais indisponíveis",
       "description": "Falha ao iniciar o monitor de entrada. No Linux, seu usuário pode precisar estar no grupo <code>input</code>."

@@ -351,6 +351,11 @@
       "description": "B:SPACE 需要辅助功能权限才能在应用外部使用全局快捷键。",
       "grant": "授予权限"
     },
+    "inputMonitoring": {
+      "title": "需要输入监控权限",
+      "description": "B:SPACE 需要输入监控权限才能在应用外部使用全局快捷键。请在系统设置中开启，然后重新打开 B:SPACE。",
+      "grant": "打开系统设置"
+    },
     "hookError": {
       "title": "全局快捷键不可用",
       "description": "无法启动输入监听器。在 Linux 上，您的用户可能需要加入 <code>input</code> 用户组。"

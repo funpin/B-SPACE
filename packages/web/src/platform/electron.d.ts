@@ -236,6 +236,12 @@ interface BackspaceElectronAPI {
   // no -webkit-app-region, so the page reports where its title bar is; see
   // platform/windowDragRegions.ts. Electron does not have this member.
   setDragRegions?: (regions: WindowDragRegions) => void;
+  // Native macOS shell only. It listens for the global keybinds with the
+  // Input Monitoring permission, not Accessibility as the Electron build
+  // does: this has the system ask for it and opens its list in System
+  // Settings. `checkAccessibility` and `onAccessibilityStatus` report that
+  // permission there.
+  openKeybindPermissionSettings?: () => void;
 }
 
 interface Window {

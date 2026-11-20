@@ -352,6 +352,11 @@
       "description": "Damit globale Tastenkürzel außerhalb der App funktionieren, braucht B:SPACE die Berechtigung für Bedienungshilfen.",
       "grant": "Berechtigung erteilen"
     },
+    "inputMonitoring": {
+      "title": "Berechtigung „Eingabeüberwachung“ erforderlich",
+      "description": "Damit globale Tastenkürzel außerhalb der App funktionieren, braucht B:SPACE die Berechtigung „Eingabeüberwachung“. Aktiviere sie in den Systemeinstellungen und öffne B:SPACE danach neu.",
+      "grant": "Systemeinstellungen öffnen"
+    },
     "hookError": {
       "title": "Globale Tastenkürzel nicht verfügbar",
       "description": "Der Eingabe-Listener konnte nicht gestartet werden. Unter Linux muss dein Benutzer eventuell in der Gruppe <code>input</code> sein."

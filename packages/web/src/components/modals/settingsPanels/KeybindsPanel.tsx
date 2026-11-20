@@ -158,6 +158,9 @@ export function KeybindsPanel() {
     }
   }
 
+  // Only the native macOS shell has this member (see electron.d.ts).
+  const openPermissionSettings = window.backspace?.openKeybindPermissionSettings;
+
   // --- Platform checks on mount ---
   useEffect(() => {
     if (isElectronMac() && window.backspace?.checkAccessibility) {
@@ -343,22 +346,31 @@ export function KeybindsPanel() {
   return (
     <div className="space-y-5">
       <h2 className="text-xl font-semibold text-txt-primary mb-6">{t('keybinds.title')}</h2>
-      {/* macOS Accessibility Warning */}
+      {/* macOS permission warning. The Electron build needs Accessibility and
+          the button looks again; the native shell needs Input Monitoring and
+          can open its list in System Settings (the shell then reports the
+          change itself, over onAccessibilityStatus). */}
       {isElectronMac() && accessibilityTrusted === false && (
         <div className="rounded-xl bg-status-warn/10 border border-status-warn/20 p-3.5">
-          <div className="text-sm text-status-warn font-medium">{t('keybinds.accessibility.title')}</div>
+          <div className="text-sm text-status-warn font-medium">
+            {openPermissionSettings ? t('keybinds.inputMonitoring.title') : t('keybinds.accessibility.title')}
+          </div>
           <div className="text-xs text-txt-secondary mt-1">
-            {t('keybinds.accessibility.description')}
+            {openPermissionSettings ? t('keybinds.inputMonitoring.description') : t('keybinds.accessibility.description')}
           </div>
           <Button
             variant="secondary"
             size="sm"
             className="mt-2.5"
             onClick={() => {
-              window.backspace?.checkAccessibility().then(setAccessibilityTrusted);
+              if (openPermissionSettings) {
+                openPermissionSettings();
+              } else {
+                window.backspace?.checkAccessibility().then(setAccessibilityTrusted);
+              }
             }}
           >
-            {t('keybinds.accessibility.grant')}
+            {openPermissionSettings ? t('keybinds.inputMonitoring.grant') : t('keybinds.accessibility.grant')}
           </Button>
         </div>
       )}
