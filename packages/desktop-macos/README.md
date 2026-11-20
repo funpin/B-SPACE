@@ -92,6 +92,33 @@ certificate: it makes a throwaway one, builds the bundle signed with it,
 confirms the requirement and that the keychain search list is as it was, and
 signs the bundle ad hoc again.
 
+### B-SPACE Swift Beta
+
+What users are handed while this client is not the app yet is **B-SPACE
+Swift Beta**: `scripts/bundle.sh --identity beta`. It is an application of
+its own beside the Electron build, B-SPACE: its own bundle identifier
+(`com.backspace.desktop.swift`), its own settings folder
+(`~/Library/Application Support/Backspace-Swift`), no claim on the
+`backspace://` scheme. Installing it replaces nothing, it does not take over
+the Electron build's sign-in, and removing it leaves B-SPACE as it was. The
+identifier and the folder do not say "beta": they stay when the word leaves
+the name, and with them the user's sign-in and the permissions macOS gave.
+The `release` identity, the one that replaces the Electron build in place,
+is not handed out yet.
+
+`scripts/dmg.sh <app> <image>` packs a bundle into a disk image with a link
+to `/Applications` and verifies the copy inside it.
+
+A release (`.github/workflows/release.yml`, the `build-swift` job, on a
+`v*` tag) builds the beta identity on a macOS runner, signs it with the
+project's certificate (`MAC_SIGN_REQUIRED=1`), checks that the tag is the
+version in the root `package.json`, packs
+`B-SPACE-Swift-Beta-<version>-mac-arm64.dmg` and adds it to the draft
+release, whose download table lists it above the two Electron builds. The
+beta has no updater (stage 5 of the plan): a new version is downloaded by
+hand, and the image adds nothing to the feed files the Electron build's
+auto-update reads.
+
 ### CI
 
 `.github/workflows/desktop-macos.yml` runs `swift build`, `swift test`, the
