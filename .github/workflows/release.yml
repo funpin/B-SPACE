@@ -56,13 +56,16 @@ jobs:
         # because `releaseInfo.releaseName` is not set in electron-builder.yml.
         #
         # The body starts as a "# B:SPACE X.Y.Z" heading followed by a
-        # download table: two badges, Windows x64 and macOS Apple Silicon, the
-        # only builds this fork ships, then the install notes. It is written
+        # download table of three badges, then the install notes. The first
+        # row is B-SPACE Swift Beta, the native macOS client, an application
+        # of its own; under it are the two builds of B-SPACE, the Electron
+        # app: macOS Apple Silicon and Windows x64. The table is written
         # before any asset exists (the draft is not visible until published)
-        # from the names electron-builder will produce, so it has to move with
-        # `artifactName` in packages/desktop/electron-builder.yml. The human
-        # step before publishing is to add the "what changed" sections between
-        # the table and the install notes.
+        # from the names the builds will produce, so it has to move with
+        # `artifactName` in packages/desktop/electron-builder.yml and with
+        # the image's name in the `build-swift` job below. The human step
+        # before publishing is to add the "what changed" sections between the
+        # table and the install notes.
         run: |
           set -euo pipefail
 
@@ -83,8 +86,7 @@ jobs:
 
           version="${TAG#v}"
           base="https://github.com/$GH_REPO/releases/download/$TAG"
-          # This fork ships two builds: Windows x64 and macOS Apple Silicon.
-          # The table is two badges that link straight to the files.
+          # The badges link straight to the files.
           badge() { printf '[![%s](https://img.shields.io/badge/%s?style=for-the-badge&logo=%s&logoColor=white)](%s/%s)' "$1" "$2" "$3" "$base" "$4"; }
           notes="$(mktemp)"
           {
@@ -92,23 +94,32 @@ jobs:
             echo
             echo "### Скачать"
             echo
-            echo "| ОС | Файл |"
-            echo "|---|---|"
-            echo "| **Windows 10/11** | $(badge "Setup x64" "Setup-x64-2B6CB0" windows "B-SPACE-$version-win-x64.exe") |"
-            echo "| **macOS 12+** | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-111111" apple "B-SPACE-$version-mac-arm64.dmg") |"
+            echo "| Приложение | ОС | Файл |"
+            echo "|---|---|---|"
+            echo "| **B-SPACE Swift Beta**<br>нативный клиент на Swift, бета | macOS 26+, Apple Silicon | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-6E5BEF" swift "B-SPACE-Swift-Beta-$version-mac-arm64.dmg") |"
+            echo "| **B-SPACE**<br>Electron | macOS 12+, Apple Silicon | $(badge "DMG Apple Silicon" "DMG-Apple%20Silicon-111111" apple "B-SPACE-$version-mac-arm64.dmg") |"
+            echo "| **B-SPACE**<br>Electron | Windows 10/11 | $(badge "Setup x64" "Setup-x64-2B6CB0" windows "B-SPACE-$version-win-x64.exe") |"
             echo
-            echo "Файлы \`.zip\` (macOS), \`.blockmap\` и \`.yml\` читает автообновление, скачивать их вручную не нужно."
+            echo "**B-SPACE** — привычное приложение на Electron. **B-SPACE Swift Beta** — новый нативный клиент для macOS: отдельное приложение, которое ставится рядом с B-SPACE и не заменяет его. Это бета: он ещё не закончен."
+            echo
+            echo "Файлы \`.zip\` (macOS), \`.blockmap\` и \`.yml\` читает автообновление B-SPACE, скачивать их вручную не нужно."
             echo
             echo "---"
             echo
             echo "### Как установить"
             echo
-            echo "**Windows.** Запустите установщик и следуйте шагам. Новую версию ставьте поверх старой: настройки и вход сохраняются. Если SmartScreen предупредит о неизвестном издателе: «Подробнее» → «Выполнить в любом случае»."
+            echo "**B-SPACE, Windows.** Запустите установщик и следуйте шагам. Новую версию ставьте поверх старой: настройки и вход сохраняются. Если SmartScreen предупредит о неизвестном издателе: «Подробнее» → «Выполнить в любом случае»."
             echo
-            echo "**macOS (Apple Silicon).** Откройте DMG и перетащите B-SPACE в «Программы» (при обновлении — «Заменить»; старый Backspace из «Программ» после первого перехода на B-SPACE можно удалить). Приложение подписано сертификатом проекта, но не Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Дальше оно обновляется само, а разрешения macOS (запись экрана, звук) сохраняются между версиями. Если macOS пишет, что приложение повреждено, выполните в Терминале:"
+            echo "**B-SPACE, macOS (Apple Silicon).** Откройте DMG и перетащите B-SPACE в «Программы» (при обновлении — «Заменить»; старый Backspace из «Программ» после первого перехода на B-SPACE можно удалить). Приложение подписано сертификатом проекта, но не Apple, поэтому первый раз откройте его так: правый клик → «Открыть» → «Открыть». Дальше оно обновляется само, а разрешения macOS (запись экрана, звук) сохраняются между версиями. Если macOS пишет, что приложение повреждено, выполните в Терминале:"
             echo
             echo '```bash'
             echo 'xattr -dr com.apple.quarantine "/Applications/B-SPACE.app"'
+            echo '```'
+            echo
+            echo "**B-SPACE Swift Beta (macOS 26 и новее, Apple Silicon).** Откройте DMG и перетащите B-SPACE Swift Beta в «Программы». Он ставится рядом с B-SPACE: у него свой вход и свои разрешения macOS (микрофон, запись экрана), а B-SPACE остаётся как был. Первый раз откройте его так же: правый клик → «Открыть» → «Открыть». Сам он пока не обновляется: новую версию скачайте здесь и поставьте поверх. Если macOS пишет, что приложение повреждено:"
+            echo
+            echo '```bash'
+            echo 'xattr -dr com.apple.quarantine "/Applications/B-SPACE Swift Beta.app"'
             echo '```'
             echo
             echo "Это форк [TheZwiss/backspace](https://github.com/TheZwiss/backspace). Лицензия — AGPL-3.0."
@@ -119,6 +130,82 @@ jobs:
             --draft \
             --title "B:SPACE $version" \
             --notes-file "$notes"
+
+  # B-SPACE Swift Beta: the native macOS client (packages/desktop-macos), an
+  # application of its own beside the Electron build. It is built, signed
+  # with the project's certificate and packed into a disk image by the
+  # package's own scripts, and the image is added to the draft. It has no
+  # updater yet, so it adds nothing to the feed files the Electron build's
+  # auto-update reads.
+  build-swift:
+    needs: create-release
+    runs-on: macos-latest
+    # `contents: write` is scoped to this job: it uploads the image to the
+    # release for the tag.
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: packages/desktop-macos
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The package has to be built by an Xcode toolchain (scripts/toolchain.sh
+      # says why); the log keeps which one built a release.
+      - name: Toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Build, sign and pack
+        env:
+          TAG: ${{ github.ref_name }}
+          # The same certificate as the Electron build's (scripts/sign.sh is
+          # a port of packages/desktop/scripts/macSign.js). MAC_SIGN_REQUIRED
+          # makes a missing secret fail the release instead of shipping an ad
+          # hoc build, which would lose its users' macOS permissions with
+          # every later version.
+          MAC_SIGN_P12: ${{ secrets.MAC_SIGN_P12 }}
+          MAC_SIGN_P12_PASSWORD: ${{ secrets.MAC_SIGN_P12_PASSWORD }}
+          MAC_SIGN_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          app="$(scripts/bundle.sh --identity beta)"
+          # The bundle takes its version from the root package.json; a tag
+          # that names another one would publish a file whose name lies.
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::The tag is $TAG and the bundle says version $version: package.json was not bumped for this release."
+            exit 1
+          fi
+          image="$RUNNER_TEMP/B-SPACE-Swift-Beta-$version-mac-arm64.dmg"
+          scripts/dmg.sh "$app" "$image"
+          echo "APP=$app" >> "$GITHUB_ENV"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      # Backstop for scripts/sign.sh, as the Electron job has one for
+      # macSign.js: a bundle whose seal does not validate is one macOS calls
+      # damaged, and one whose requirement names no certificate loses its
+      # users' permissions with the next version.
+      - name: Verify the code signature
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          requirement="$(codesign -d -r- "$APP" 2>&1)"
+          echo "$requirement" | grep designated
+          if ! echo "$requirement" | grep -Eq 'identifier "com\.backspace\.desktop\.swift" and certificate (leaf|root) = H"[0-9a-fA-F]{40}"'; then
+            echo "::error::The bundle is not B-SPACE Swift Beta signed with the project certificate."
+            exit 1
+          fi
+
+      - name: Add the image to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" "$IMAGE" --clobber
 
   build:
     # Every matrix job publishes into the draft that `create-release` has

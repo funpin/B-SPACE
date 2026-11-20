@@ -93,8 +93,12 @@ interface BuildSpec {
 }
 
 /**
- * Exactly what this fork's release workflow emits, in windows, mac order: one
- * Windows x64 installer and one Apple Silicon disk image. A visitor on anything
+ * The builds of B-SPACE, the Electron app, that this fork's release workflow
+ * emits, in windows, mac order: one Windows x64 installer and one Apple
+ * Silicon disk image. A release also carries B-SPACE Swift Beta, the native
+ * macOS client; it is a second application for the same platform, which this
+ * panel's one card per platform has no place for, so it is found on the
+ * release page the panel links to. A visitor on anything
  * else (Linux, an Intel Mac, Windows on ARM without x64 emulation) gets no
  * primary build and the link to the release page.
  */
