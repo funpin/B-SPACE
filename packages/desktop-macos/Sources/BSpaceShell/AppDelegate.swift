@@ -36,7 +36,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, AppMenuActions 
                     seedURL: environment.resources.gamesURL,
                     settingsDirectory: environment.userDataDirectory
                 ),
-                keybinds: KeybindCoordinator()
+                keybinds: KeybindCoordinator(),
+                screenSources: SystemScreenSourceLister(unnamedScreen: { [weak self] number in
+                    strings.text(
+                        .captureScreen, in: self?.mainWindow?.language ?? environment.language,
+                        ["number": String(number)]
+                    )
+                }),
+                screenCapturer: { SystemScreenCapturer() },
+                systemAudioCapturer: { SystemSoundCapturer() },
+                sharePublisher: { LiveKitSharePublisher() },
+                sharePreview: SystemSharePreview(),
+                pointerOverlay: SystemPointerOverlay()
             )
             mainWindow = controller
             // The menu follows the language of the web client.

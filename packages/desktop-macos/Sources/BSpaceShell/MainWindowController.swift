@@ -18,6 +18,9 @@ final class StayView: NSView {
 /// view the views that keep everything but the page's title bar a page.
 final class ShellContentView: NSView {
     private(set) var stayViews: [StayView] = []
+    /// Views of the shell's own that lie over the page whichever web view
+    /// shows it: the preview of a source.
+    private var overlays: [NSView] = []
     /// Called when the view's size changes.
     var onResize: (() -> Void)?
 
@@ -27,12 +30,18 @@ final class ShellContentView: NSView {
     /// Puts a web view under the views that keep the page a page, in place of
     /// the one that was there.
     func show(_ webView: NSView) {
-        for view in subviews where !(view is StayView) {
+        for view in subviews where !(view is StayView) && !overlays.contains(where: { $0 === view }) {
             view.removeFromSuperview()
         }
         webView.frame = bounds
         webView.autoresizingMask = [.width, .height]
         addSubview(webView, positioned: .below, relativeTo: nil)
+    }
+
+    /// Lays a view of the shell's own over the page. It places itself.
+    func addOverlay(_ view: NSView) {
+        overlays.append(view)
+        addSubview(view)
     }
 
     /// Lays a view over each rectangle, reusing the views there are.
@@ -177,6 +186,9 @@ public final class MainWindowController: NSObject {
     public var webViewMovesWindow: Bool {
         webView.mouseDownCanMoveWindow && window.isMovableByWindowBackground && webView.superview === contentView
     }
+    /// Whether the window is the one the user is working in. Pictures of the
+    /// screen are taken for the page only while it is. A test run replaces it.
+    public var isWindowFocused: () -> Bool = { false }
     /// Opens an address in the user's browser. A test run replaces it.
     public var openInBrowser: (String) -> Void = { address in
         guard let url = URL(string: address) else { return }
@@ -198,6 +210,41 @@ public final class MainWindowController: NSObject {
     private let tray: TrayCoordinator?
     private let activity: ActivityDetector?
     private let keybinds: KeybindCoordinator?
+    private let screenSources: ScreenSourceService?
+    /// The local channels open to the page the window shows.
+    private var mediaChannels: [LocalMediaChannel] = []
+    /// Makes what captures the screen for a share; nil when the shell
+    /// cannot capture.
+    private let makeScreenCapturer: (() -> ScreenCapturer)?
+    /// The captures that run now, by the id the page knows each by, with
+    /// the channel each sends on.
+    private var captures: [String: (session: CaptureSession, channel: LocalMediaChannel)] = [:]
+    /// Makes what captures the system's sound for a share; nil when the
+    /// shell cannot.
+    private let makeSystemAudioCapturer: (() -> SystemAudioCapturer)?
+    /// The captures of the system's sound that run now, as `captures`.
+    private var audioCaptures: [String: (session: SystemAudioSession, channel: LocalMediaChannel)] = [:]
+    /// Makes a share's connection to a call; nil when the shell does not
+    /// publish shares itself.
+    private let makeSharePublisher: (() -> ScreenSharePublisher)?
+    /// The share the shell publishes for the page the window shows.
+    private var share: ShareSession?
+    /// What the pointers' target knows the share by.
+    private static let shareID = "share"
+    /// What shows the live preview of a source over the page; nil shows none.
+    private let sharePreview: SharePreviewPresenter?
+    /// The capture the preview shows, while there is one.
+    private var previewCapturer: ScreenCapturer?
+    /// Writes the page's warnings and errors to a file, in a development
+    /// build.
+    private var pageLog: PageLog?
+    /// Draws viewers' pointers over the display being shared; nil draws
+    /// none.
+    private let pointerOverlay: PointerOverlayPresenter?
+    /// Which display the pointers belong on, from the captures that run.
+    private var pointerTarget = PointerOverlayTarget()
+    /// The pointers the page sent last.
+    private var pointers: [OverlayPointer] = []
 
     private let timings: RecoveryTimings
     private var recovery = RecoveryMode()
@@ -242,6 +289,27 @@ public final class MainWindowController: NSObject {
     ///   - keybinds: what listens for the global keybinds; nil listens for
     ///     none. The app passes one that listens to the real keyboard, a test
     ///     run one that is fed made-up keys.
+    ///   - screenSources: what lists the displays and windows that can be
+    ///     shared; nil lists none. The app passes one that asks the system,
+    ///     a test run one with a made-up list.
+    ///   - screenCapturer: makes what captures the screen for one share; nil
+    ///     captures nothing. The app passes one that captures through the
+    ///     system, a test run one that draws its own frames.
+    ///   - systemAudioCapturer: makes what captures the system's sound for
+    ///     one share; nil captures none. The app passes one that captures
+    ///     through the system, a test run one that plays a tone of its own.
+    ///   - sharePublisher: makes a share's connection to a call; nil
+    ///     publishes none. The app passes one that joins the call through
+    ///     LiveKit's library, a test run one that only remembers what it
+    ///     was handed.
+    ///   - sharePreview: what shows the live preview of a source over the
+    ///     page's preview box; nil shows none. The app passes one with a
+    ///     layer the frames are handed to, a test run one that only
+    ///     remembers where it was put and how many frames it was given.
+    ///   - pointerOverlay: what draws viewers' pointers over the display
+    ///     being shared; nil draws none. The app passes one that puts a
+    ///     transparent panel over the display, a test run one that only
+    ///     remembers what it was asked to draw.
     ///   - activity: what notices a running game; nil detects none. The app
     ///     passes one that lists the real processes and fetches the
     ///     dictionary, a test run one that does neither.
@@ -256,10 +324,22 @@ public final class MainWindowController: NSObject {
         tray: TrayPresenter? = SystemTrayPresenter(),
         activity: ActivityDetector? = nil,
         keybinds: KeybindCoordinator? = nil,
+        screenSources: ScreenSourceLister? = nil,
+        screenCapturer: (() -> ScreenCapturer)? = nil,
+        systemAudioCapturer: (() -> SystemAudioCapturer)? = nil,
+        sharePublisher: (() -> ScreenSharePublisher)? = nil,
+        sharePreview: SharePreviewPresenter? = nil,
+        pointerOverlay: PointerOverlayPresenter? = nil,
         recoveryTimings: RecoveryTimings = RecoveryTimings()
     ) throws {
         self.activity = activity
         self.keybinds = keybinds
+        self.screenSources = screenSources.map(ScreenSourceService.init(lister:))
+        makeScreenCapturer = screenCapturer
+        makeSystemAudioCapturer = systemAudioCapturer
+        makeSharePublisher = sharePublisher
+        self.sharePreview = sharePreview
+        self.pointerOverlay = pointerOverlay
         self.environment = environment
         self.showsWindow = showsWindow
         self.notifications = notifications
@@ -299,6 +379,11 @@ public final class MainWindowController: NSObject {
             contract: contract,
             values: ["platform": AppIdentity.platform]
         )
+        if let url = environment.pageLogURL {
+            let log = PageLog(url: url)
+            log.install(into: configuration.userContentController)
+            pageLog = log
+        }
 
         let contentRect = NSRect(x: 0, y: 0, width: 1280, height: 800)
         webViewConfiguration = configuration
@@ -326,6 +411,7 @@ public final class MainWindowController: NSObject {
         window.isMovableByWindowBackground = true
         contentView = ShellContentView(frame: contentRect)
         contentView.show(firstWebView)
+        if let preview = sharePreview?.view { contentView.addOverlay(preview) }
         window.contentView = contentView
         window.center()
 
@@ -343,6 +429,9 @@ public final class MainWindowController: NSObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         window.delegate = self
+        isWindowFocused = { [weak self] in
+            NSApp.isActive && self?.window.isKeyWindow == true
+        }
         registerBridgeHandlers()
         self.tray?.onCommand = { [weak self] command in
             self?.trayItemChosen(command)
@@ -505,6 +594,8 @@ public final class MainWindowController: NSObject {
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -701,6 +792,379 @@ public final class MainWindowController: NSObject {
                 self?.openInBrowser(address)
             }
         }.resume()
+    }
+
+    // MARK: Media channels
+
+    /// Opens a local channel to the page the window shows: what captured
+    /// video and sound reach it on. The completion gets the channel and
+    /// what the page needs to connect. The channel is closed when the
+    /// window shows another page.
+    public func openMediaChannel(
+        _ completion: @escaping (Result<(channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint), LocalMediaChannel.Failure>) -> Void
+    ) {
+        guard let origin = webView.url.flatMap(WebOrigin.of) else {
+            completion(.failure(.noPage))
+            return
+        }
+        let channel: LocalMediaChannel
+        do {
+            channel = try LocalMediaChannel(pageOrigin: origin)
+        } catch let failure as LocalMediaChannel.Failure {
+            completion(.failure(failure))
+            return
+        } catch {
+            completion(.failure(.notListening(error.localizedDescription)))
+            return
+        }
+        mediaChannels.append(channel)
+        channel.start { [weak self, weak channel] result in
+            guard let self, let channel, self.mediaChannels.contains(where: { $0 === channel }) else {
+                // The page changed while the channel was starting.
+                completion(.failure(.noPage))
+                return
+            }
+            switch result {
+            case .success(let endpoint):
+                completion(.success((channel, endpoint)))
+            case .failure(let failure):
+                self.closeMediaChannel(channel)
+                completion(.failure(failure))
+            }
+        }
+    }
+
+    public func closeMediaChannel(_ channel: LocalMediaChannel) {
+        mediaChannels.removeAll { $0 === channel }
+        channel.stop()
+    }
+
+    private func closeMediaChannels() {
+        stopSharePreview()
+        stopScreenShare()
+        stopScreenCaptures()
+        stopSystemAudioCaptures()
+        // The page that sent the pointers is gone.
+        pointers = []
+        drawPointers()
+        let channels = mediaChannels
+        mediaChannels = []
+        channels.forEach { $0.stop() }
+    }
+
+    // MARK: Screen capture
+
+    /// Whether this shell can capture the screen for the page: something
+    /// makes capturers.
+    private var canCaptureScreen: Bool {
+        makeScreenCapturer != nil
+    }
+
+    /// Starts a capture for the page: a channel, a capturer, an encoder. A
+    /// page may have a few at once: while a share runs, the stream setup
+    /// screen previews the source the user is about to switch to.
+    private func startScreenCapture(_ request: ScreenCaptureRequest, reply: @escaping (ScreenCaptureReply) -> Void) {
+        guard canCaptureScreen, let makeScreenCapturer else {
+            reply(.refused(.unsupported))
+            return
+        }
+        guard captures.count < ScreenCaptureRequest.mostAtOnce else {
+            reply(.refused(.tooMany))
+            return
+        }
+        // A capture of a display leaves out the window that draws
+        // viewers' pointers over it: they see their pointers on the
+        // stream tile already, and would see each one twice.
+        var request = request
+        var display: UInt32?
+        if case .display(let id) = request.source {
+            display = id
+            request.excludedWindows = pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+        }
+        let asked = request
+        openMediaChannel { [weak self] result in
+            guard let self else { return }
+            let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
+            switch result {
+            case .success(let made):
+                opened = made
+            case .failure(let failure):
+                NSLog("[capture] no channel for the capture: %@", String(describing: failure))
+                reply(.refused(.failed))
+                return
+            }
+            let id = UUID().uuidString.lowercased()
+            let session = CaptureSession(capturer: makeScreenCapturer(), channel: opened.channel, request: asked)
+            self.captures[id] = (session, opened.channel)
+            self.pointerTarget.started(id, display: display)
+            self.drawPointers()
+            session.onEnded = { [weak self] in
+                guard let self, self.captures[id] != nil else { return }
+                self.stopScreenCapture(id)
+                self.bridge.emit("native-screen-capture-ended", payload: ["id": id])
+            }
+            session.start { [weak self] result in
+                // The page stopped it, or the window shows another page.
+                guard let self, self.captures[id] != nil else {
+                    reply(.refused(.failed))
+                    return
+                }
+                switch result {
+                case .success(let size):
+                    reply(.started(
+                        id: id, url: opened.endpoint.url, token: opened.endpoint.token,
+                        width: size.width, height: size.height, framesPerSecond: asked.framesPerSecond
+                    ))
+                case .failure(let failure):
+                    self.stopScreenCapture(id)
+                    reply(.refused(failure))
+                }
+            }
+        }
+    }
+
+    private func stopScreenCapture(_ id: String) {
+        guard let capture = captures.removeValue(forKey: id) else { return }
+        capture.session.stop()
+        closeMediaChannel(capture.channel)
+        pointerTarget.stopped(id)
+        drawPointers()
+    }
+
+    /// Puts the pointers the page sent last over the display the share
+    /// shows, and nowhere when no whole display is shared.
+    private func drawPointers() {
+        pointerOverlay?.show(pointers, onDisplay: pointerTarget.display)
+    }
+
+    private func stopScreenCaptures() {
+        for id in Array(captures.keys) {
+            stopScreenCapture(id)
+        }
+    }
+
+    // MARK: The shell's own share
+
+    /// Whether this shell can publish a share itself: something captures
+    /// the screen for it and something connects it to a call.
+    private var canPublishShare: Bool {
+        makeScreenCapturer != nil && makeSharePublisher != nil
+    }
+
+    /// Starts the page's share: a capture, a connection to the call, a
+    /// published track. One at a time: the stream setup screen previews
+    /// a source without a share of it.
+    private func startScreenShare(_ request: ScreenShareRequest, reply: @escaping (ScreenShareReply) -> Void) {
+        guard canPublishShare, let makeScreenCapturer, let makeSharePublisher else {
+            reply(.refused(.unsupported))
+            return
+        }
+        guard share == nil else {
+            reply(.refused(.busy))
+            return
+        }
+        let session = ShareSession(
+            request: request,
+            publisher: makeSharePublisher(),
+            makeCapturer: makeScreenCapturer,
+            makeSoundCapturer: makeSystemAudioCapturer,
+            // A capture of a display leaves out the window that draws
+            // viewers' pointers over it: they see their pointers on the
+            // stream tile already, and would see each one twice.
+            excludedWindows: { [weak self] source in
+                guard case .display(let id) = source else { return [] }
+                return self?.pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+            }
+        )
+        share = session
+        session.onEvent = { [weak self, weak session] event in
+            guard let self, let session, self.share === session else { return }
+            if case .ended = event {
+                self.share = nil
+                self.pointerTarget.stopped(Self.shareID)
+                self.drawPointers()
+            }
+            self.bridge.emit("native-screen-share-event", payload: event.bridgeValue)
+        }
+        session.start { [weak self, weak session] answer in
+            guard let self, let session, self.share === session else {
+                // The page stopped it, or the window shows another page.
+                reply(.refused(.failed))
+                return
+            }
+            if case .refused = answer {
+                self.share = nil
+            } else {
+                self.pointerTarget.started(Self.shareID, display: session.display)
+                self.drawPointers()
+            }
+            reply(answer)
+        }
+    }
+
+    private func updateScreenShare(_ update: ScreenShareUpdate, reply: @escaping (ScreenShareReply) -> Void) {
+        guard let session = share else {
+            reply(.refused(.notRunning))
+            return
+        }
+        session.update(update) { [weak self, weak session] answer in
+            if let self, let session, self.share === session, case .running = answer {
+                // Another source may be another display, or none.
+                self.pointerTarget.stopped(Self.shareID)
+                self.pointerTarget.started(Self.shareID, display: session.display)
+                self.drawPointers()
+            }
+            reply(answer)
+        }
+    }
+
+    private func stopScreenShare() {
+        guard let session = share else { return }
+        share = nil
+        session.onEvent = nil
+        session.stop()
+        pointerTarget.stopped(Self.shareID)
+        drawPointers()
+    }
+
+    // MARK: The preview of a source
+
+    /// Starts the live preview of a source, in place of the one before:
+    /// a capture at a preview's size whose frames go straight to the layer
+    /// over the page. Where the layer is, the page says apart.
+    private func startSharePreview(_ asked: ScreenCaptureRequest, reply: @escaping ([String: Any]) -> Void) {
+        guard let makeScreenCapturer, let sharePreview else {
+            reply(SharePreview.refused(.unsupported))
+            return
+        }
+        previewCapturer?.onEnded = nil
+        previewCapturer?.onHidden = nil
+        previewCapturer?.stop()
+        var request = asked
+        if case .display(let id) = request.source {
+            request.excludedWindows = pointerOverlay?.windowNumber(forDisplay: id).map { [$0] } ?? []
+        }
+        let capturer = makeScreenCapturer()
+        previewCapturer = capturer
+        capturer.prepare(request) { [weak self] result in
+            // Another source was asked for meanwhile, or the preview stopped.
+            guard let self, self.previewCapturer === capturer else {
+                capturer.stop()
+                reply(SharePreview.refused(.failed))
+                return
+            }
+            let size: (width: Int, height: Int)
+            switch result {
+            case .success(let made):
+                size = made
+            case .failure(let failure):
+                self.stopSharePreview()
+                reply(SharePreview.refused(failure))
+                return
+            }
+            capturer.onEnded = { [weak self] in
+                guard let self, self.previewCapturer === capturer else { return }
+                self.stopSharePreview()
+                self.bridge.emit("native-screen-share-event", payload: ScreenShareEvent.previewEnded.bridgeValue)
+            }
+            // A source the system does not draw has no picture to show:
+            // the page says so in words beside its empty box.
+            capturer.onHidden = { [weak self] hidden in
+                guard let self, self.previewCapturer === capturer else { return }
+                self.bridge.emit("native-screen-share-event", payload: ScreenShareEvent.previewHidden(hidden).bridgeValue)
+            }
+            capturer.begin(frame: { frame, time, _ in
+                sharePreview.draw(frame, at: time)
+            }, completion: { [weak self] began in
+                guard let self, self.previewCapturer === capturer else {
+                    capturer.stop()
+                    reply(SharePreview.refused(.failed))
+                    return
+                }
+                guard began else {
+                    self.stopSharePreview()
+                    reply(SharePreview.refused(.failed))
+                    return
+                }
+                reply(SharePreview.started(width: size.width, height: size.height, hidden: capturer.isHidden))
+            })
+        }
+    }
+
+    private func stopSharePreview() {
+        previewCapturer?.onEnded = nil
+        previewCapturer?.onHidden = nil
+        previewCapturer?.stop()
+        previewCapturer = nil
+        sharePreview?.clear()
+    }
+
+    // MARK: System audio
+
+    /// Whether this shell can capture the system's sound for the page:
+    /// something makes capturers.
+    private var canCaptureSystemAudio: Bool {
+        makeSystemAudioCapturer != nil
+    }
+
+    /// Starts a capture of the system's sound for the page: a channel and
+    /// a capturer. It is apart from the captures of the picture: the
+    /// System Audio switch starts and stops it while a share runs.
+    private func startSystemAudio(reply: @escaping (SystemAudioReply) -> Void) {
+        guard canCaptureSystemAudio, let makeSystemAudioCapturer else {
+            reply(.refused(.unsupported))
+            return
+        }
+        guard audioCaptures.count < SystemAudio.mostAtOnce else {
+            reply(.refused(.tooMany))
+            return
+        }
+        openMediaChannel { [weak self] result in
+            guard let self else { return }
+            let opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)
+            switch result {
+            case .success(let made):
+                opened = made
+            case .failure(let failure):
+                NSLog("[system-audio] no channel for the capture: %@", String(describing: failure))
+                reply(.refused(.failed))
+                return
+            }
+            let id = UUID().uuidString.lowercased()
+            let format = SystemAudio.format
+            let session = SystemAudioSession(capturer: makeSystemAudioCapturer(), channel: opened.channel, format: format)
+            self.audioCaptures[id] = (session, opened.channel)
+            session.onEnded = { [weak self] in
+                guard let self, self.audioCaptures[id] != nil else { return }
+                self.stopSystemAudio(id)
+                self.bridge.emit("native-system-audio-ended", payload: ["id": id])
+            }
+            session.start { [weak self] failure in
+                // The page stopped it, or the window shows another page.
+                guard let self, self.audioCaptures[id] != nil else {
+                    reply(.refused(.failed))
+                    return
+                }
+                if let failure {
+                    self.stopSystemAudio(id)
+                    reply(.refused(failure))
+                } else {
+                    reply(.started(id: id, url: opened.endpoint.url, token: opened.endpoint.token, format: format))
+                }
+            }
+        }
+    }
+
+    private func stopSystemAudio(_ id: String) {
+        guard let capture = audioCaptures.removeValue(forKey: id) else { return }
+        capture.session.stop()
+        closeMediaChannel(capture.channel)
+    }
+
+    private func stopSystemAudioCaptures() {
+        for id in Array(audioCaptures.keys) {
+            stopSystemAudio(id)
+        }
     }
 
     // MARK: Notifications
@@ -932,6 +1396,124 @@ public final class MainWindowController: NSObject {
         router.onInvoke("get-current-activity", answering: { [weak self] _ in
             self?.activity?.current.map { .value($0.bridgeValue) } ?? .null
         })
+        // What can be shared, with a picture of each. The pictures are of the
+        // user's screen and the page is a server's code: see `ScreenSourceGate`.
+        router.onInvoke("get-screen-sources") { [weak self] _, reply in
+            guard let self, let screenSources = self.screenSources else {
+                reply(.value([Any]()))
+                return
+            }
+            screenSources.sources(windowFocused: self.isWindowFocused()) { sources in
+                reply(.value(sources.map(\.bridgeValue)))
+            }
+        }
+
+        // Who picks what to share. A web client that says it can take a
+        // native capture is shown the app's own list; one from before it
+        // gets WebKit's picker.
+        router.onInvoke("get-screen-share-picker-mode", answering: { [weak self] arguments in
+            .value(ScreenSharePickerMode.answer(
+                arguments: arguments, shellCanCapture: self?.canCaptureScreen ?? false,
+                shellCanPublish: self?.canPublishShare ?? false
+            ).rawValue)
+        })
+        router.onInvoke("native-screen-share-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = ScreenShareRequest(arguments: arguments) else {
+                reply(.value(ScreenShareReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.startScreenShare(request) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onInvoke("native-screen-share-update") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let update = ScreenShareUpdate(arguments: arguments) else {
+                reply(.value(ScreenShareReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.updateScreenShare(update) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-screen-share-stop") { [weak self] _ in
+            self?.stopScreenShare()
+        }
+        router.onInvoke("native-share-preview-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = SharePreview.capture(arguments: arguments) else {
+                reply(.value(SharePreview.refused(.badRequest)))
+                return
+            }
+            self.startSharePreview(request) { answer in
+                reply(.value(answer))
+            }
+        }
+        // Where the page's preview box is now. Anything that is not a box
+        // hides the picture: the page sends that whenever it draws over it.
+        router.onFire("native-share-preview-frame") { [weak self] arguments in
+            guard let self, let sharePreview = self.sharePreview else { return }
+            guard self.previewCapturer != nil, let frame = SharePreviewFrame(arguments: arguments) else {
+                sharePreview.hide()
+                return
+            }
+            sharePreview.show(
+                in: NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height),
+                cornerRadius: CGFloat(frame.cornerRadius)
+            )
+        }
+        router.onFire("native-share-preview-stop") { [weak self] _ in
+            self?.stopSharePreview()
+        }
+        router.onInvoke("native-screen-capture-start") { [weak self] arguments, reply in
+            guard let self else { return }
+            guard let request = ScreenCaptureRequest(arguments: arguments) else {
+                reply(.value(ScreenCaptureReply.refused(.badRequest).bridgeValue))
+                return
+            }
+            self.startScreenCapture(request) { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-screen-capture-stop") { [weak self] arguments in
+            guard let id = arguments.string(at: 0) else { return }
+            self?.stopScreenCapture(id)
+        }
+
+        // Viewers' pointers on this client's share, drawn over the shared
+        // display. The page sends the whole list on every change, and
+        // `end` when the share is over or pointers are switched off.
+        router.onFire("stream-pointer-overlay") { [weak self] arguments in
+            guard let self else { return }
+            self.pointers = OverlayPointers.sanitized(arguments.values.first)
+            self.drawPointers()
+        }
+        router.onFire("stream-pointer-overlay-end") { [weak self] _ in
+            guard let self else { return }
+            self.pointers = []
+            self.drawPointers()
+        }
+
+        // The system's sound for a share, and what it carries of the app's
+        // own playback. A web client from before the native capture is told
+        // there is none: WebKit's capture gives a share no system audio.
+        router.onInvoke("get-system-audio-capability", answering: { [weak self] arguments in
+            .value(SystemAudio.capability(
+                arguments: arguments, shellCanCapture: self?.canCaptureSystemAudio ?? false
+            ))
+        })
+        router.onInvoke("native-system-audio-start") { [weak self] _, reply in
+            guard let self else { return }
+            self.startSystemAudio { answer in
+                reply(.value(answer.bridgeValue))
+            }
+        }
+        router.onFire("native-system-audio-stop") { [weak self] arguments in
+            guard let id = arguments.string(at: 0) else { return }
+            self?.stopSystemAudio(id)
+        }
+
         router.onInvoke("get-instance-url", answering: { [instanceStore] _ in
             instanceStore.load().map { .value($0) } ?? .null
         })
@@ -1014,14 +1596,47 @@ extension MainWindowController: WKNavigationDelegate {
         download.delegate = self
     }
 
+    /// A TLS server shows its certificate. The one certificate the shell
+    /// vouches for is that of a local media channel it has open, on that
+    /// channel's own address and port; for everything else the system
+    /// decides as it would have.
+    public func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = space.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        let chain = ((SecTrustCopyCertificateChain(trust) as? [SecCertificate]) ?? []).map {
+            SecCertificateCopyData($0) as Data
+        }
+        let isChannel = mediaChannels.contains { channel in
+            guard let port = channel.port else { return false }
+            return channel.identity.isChannel(
+                host: space.host, port: space.port, certificateChain: chain, channelPort: port
+            )
+        }
+        if isChannel {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // A new document: whatever listened for links in the old one is gone,
         // what it said of its title bar, of the tray and of its keybinds is
-        // gone, and the web client in it has yet to say it started.
+        // gone, the pictures of the screen made for it are not the next
+        // page's, and the web client in it has yet to say it started.
         deepLinks.pageChanged()
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
     }
@@ -1048,6 +1663,8 @@ extension MainWindowController: WKNavigationDelegate {
         dragMap.pageChanged()
         tray?.pageChanged()
         keybinds?.pageChanged()
+        screenSources?.pageChanged()
+        closeMediaChannels()
         apply(bootWatch.pageCommitted())
         hangWatch.reset()
         // WebKit ends this process for its own reasons too (the system is
@@ -1169,6 +1786,35 @@ extension MainWindowController: WKUIDelegate {
             break
         }
         return nil
+    }
+
+    /// The microphone and the camera. WebKit asks the shell before it asks
+    /// the system; a granted request leaves the system's own question as the
+    /// only one the user sees.
+    public func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let decision = MediaCapturePolicy.decision(
+            isMainFrame: frame.isMainFrame,
+            requestOrigin: WebOrigin.of(scheme: origin.protocol, host: origin.host, port: origin.port),
+            pageURL: webView.url
+        )
+        let devices: String
+        switch type {
+        case .camera: devices = "the camera"
+        case .microphone: devices = "the microphone"
+        case .cameraAndMicrophone: devices = "the camera and the microphone"
+        @unknown default: devices = "a capture device"
+        }
+        NSLog(
+            "[media] %@ asked for %@: %@", frame.isMainFrame ? "the page" : "a frame of \(origin.host)",
+            devices, decision == .grant ? "granted" : "denied"
+        )
+        decisionHandler(decision == .grant ? .grant : .deny)
     }
 
     public func webView(

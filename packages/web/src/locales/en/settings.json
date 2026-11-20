@@ -49,8 +49,7 @@
       "title": "Output Device",
       "checkingAccess": "Checking audio access…",
       "device": {
-        "systemDefault": "System Default",
-        "unsupported": "This browser doesn't support choosing an output device. Audio plays to the system default."
+        "systemDefault": "System Default"
       },
       "permissionPrompt": {
         "description": "Grant microphone permission to list output devices (browsers gate output names behind microphone access).",

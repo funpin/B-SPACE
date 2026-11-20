@@ -60,7 +60,20 @@
     { "name": "onRecoveryStateChanged", "kind": "subscribe", "channel": "recovery-state-changed", "unsubscribe": true },
     { "name": "recoveryAction", "kind": "fire", "channel": "recovery-action" },
     { "name": "setDragRegions", "kind": "fire", "channel": "set-drag-regions", "nativeOnly": true },
-    { "name": "openKeybindPermissionSettings", "kind": "fire", "channel": "open-keybind-permission-settings", "nativeOnly": true }
+    { "name": "openKeybindPermissionSettings", "kind": "fire", "channel": "open-keybind-permission-settings", "nativeOnly": true },
+    { "name": "startNativeScreenCapture", "kind": "invoke", "channel": "native-screen-capture-start", "nativeOnly": true },
+    { "name": "stopNativeScreenCapture", "kind": "fire", "channel": "native-screen-capture-stop", "nativeOnly": true },
+    { "name": "onNativeScreenCaptureEnded", "kind": "subscribe", "channel": "native-screen-capture-ended", "unsubscribe": true, "nativeOnly": true },
+    { "name": "startNativeSystemAudio", "kind": "invoke", "channel": "native-system-audio-start", "nativeOnly": true },
+    { "name": "stopNativeSystemAudio", "kind": "fire", "channel": "native-system-audio-stop", "nativeOnly": true },
+    { "name": "onNativeSystemAudioEnded", "kind": "subscribe", "channel": "native-system-audio-ended", "unsubscribe": true, "nativeOnly": true },
+    { "name": "startNativeScreenShare", "kind": "invoke", "channel": "native-screen-share-start", "nativeOnly": true },
+    { "name": "updateNativeScreenShare", "kind": "invoke", "channel": "native-screen-share-update", "nativeOnly": true },
+    { "name": "stopNativeScreenShare", "kind": "fire", "channel": "native-screen-share-stop", "nativeOnly": true },
+    { "name": "onNativeScreenShareEvent", "kind": "subscribe", "channel": "native-screen-share-event", "unsubscribe": true, "nativeOnly": true },
+    { "name": "startNativeSharePreview", "kind": "invoke", "channel": "native-share-preview-start", "nativeOnly": true },
+    { "name": "setNativeSharePreviewFrame", "kind": "fire", "channel": "native-share-preview-frame", "nativeOnly": true },
+    { "name": "stopNativeSharePreview", "kind": "fire", "channel": "native-share-preview-stop", "nativeOnly": true }
   ],
   "bspaceUpdate": [
     { "name": "getState", "kind": "invoke", "channel": "update-window:get" },

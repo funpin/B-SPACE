@@ -2,6 +2,7 @@ import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppresso
 import rnnoiseWorkletPath from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import rnnoiseWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import rnnoiseWasmSimdPath from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
+import { OutputRouter } from './outputRouter';
 
 export class AudioManager {
   private static instance: AudioManager | null = null;
@@ -13,6 +14,7 @@ export class AudioManager {
   private analyser: AnalyserNode | null = null;
   private masterCompressor: DynamicsCompressorNode | null = null;
   private masterBoost: GainNode | null = null;
+  private outputRouter: OutputRouter | null = null;
   
   private currentInputDeviceId: string = 'default';
   private desiredOutputDeviceId: string = 'default';
@@ -86,7 +88,9 @@ export class AudioManager {
     this.masterBoost = this.ctx.createGain();
     this.masterBoost.gain.value = 1.41; // +3dB
     this.masterBoost.connect(this.masterCompressor);
-    this.masterCompressor.connect(this.ctx.destination);
+    // The router connects the compressor to an output: the context's own, or an
+    // element pointed at the device the user picked (outputRouter.ts).
+    this.outputRouter = new OutputRouter(this.ctx, this.masterCompressor);
 
     this.inputGain.connect(this.inputDestination);
     this.inputGain.connect(this.analyser);
@@ -121,10 +125,14 @@ export class AudioManager {
   }
 
   /**
-   * Routes all Web Audio output to the specified device via AudioContext.setSinkId().
-   * This is the ONLY correct way to switch output devices when using a custom Web Audio
-   * pipeline — LiveKit's switchActiveDevice('audiooutput') targets <audio> elements
-   * which we deliberately kill via MutationObserver.
+   * Routes all Web Audio output to the specified device: the context is pointed at
+   * it where the engine can do that, and elsewhere the mix plays through an element
+   * that is (outputRouter.ts). LiveKit's switchActiveDevice('audiooutput') is no
+   * substitute — it targets LiveKit's own <audio> elements, which we deliberately
+   * kill via MutationObserver.
+   *
+   * Call it straight from the handler of the user's click: an engine may accept a
+   * choice of speaker only inside a gesture.
    */
   async setOutputDevice(deviceId: string): Promise<void> {
     this.desiredOutputDeviceId = deviceId;
@@ -132,10 +140,9 @@ export class AudioManager {
   }
 
   private async applyOutputDevice(): Promise<void> {
-    if (!this.ctx || !('setSinkId' in this.ctx)) return;
+    if (!this.outputRouter || this.outputRouter.routing === 'none') return;
     try {
-      const sinkId = this.desiredOutputDeviceId === 'default' ? '' : this.desiredOutputDeviceId;
-      await (this.ctx as any).setSinkId(sinkId);
+      await this.outputRouter.setDevice(this.desiredOutputDeviceId);
       console.log(`[AudioManager] Output device set to: ${this.desiredOutputDeviceId}`);
     } catch (err) {
       console.error('[AudioManager] Failed to set output device:', err);
@@ -561,10 +568,10 @@ export class AudioManager {
   }
 
   /**
-   * Returns the master output bus (masterBoost → masterCompressor → ctx.destination).
+   * Returns the master output bus (masterBoost → masterCompressor → the output).
    * All audio (remote voice, streams, effects) routes through this node.
    * The +3dB boost raises perceived loudness; the compressor catches peaks.
-   * Output device is controlled via setSinkId on the underlying AudioContext.
+   * The output device is chosen with setOutputDevice().
    */
   getMasterOutput(): AudioNode {
     if (!this.ctx) this.initContext();
@@ -591,7 +598,7 @@ export class AudioManager {
 
   /**
    * Plays a short test tone through the master output bus, exercising the
-   * current setSinkId binding. Used by the "Test Sound" button in audio
+   * current output routing. Used by the "Test Sound" button in audio
    * settings to confirm that audio is reaching the chosen output device.
    */
   async playTestTone(): Promise<void> {

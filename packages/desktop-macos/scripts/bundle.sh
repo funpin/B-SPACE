@@ -24,7 +24,10 @@
 #
 # Signing is scripts/sign.sh: with MAC_SIGN_P12 and MAC_SIGN_P12_PASSWORD in
 # the environment the bundle is signed with that certificate, otherwise ad hoc;
-# MAC_SIGN_REQUIRED=1 refuses the ad hoc fallback.
+# MAC_SIGN_REQUIRED=1 refuses the ad hoc fallback. A development build with
+# neither set is signed with this machine's own development identity when
+# scripts/dev-identity.sh has made one, so that macOS keeps the build's
+# permissions from one rebuild to the next.
 
 set -euo pipefail
 # Resolved before the cd below: $0 may be relative to the caller's directory.
@@ -43,7 +46,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run) RUN=true ;;
     --help|-h)
-      sed -n '2,27p' "$SELF" | sed 's/^# \{0,1\}//'
+      sed -n '2,30p' "$SELF" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -58,6 +61,7 @@ case "$IDENTITY" in
   dev)
     BUNDLE_ID="com.backspace.desktop.dev"
     BUNDLE_NAME="B-SPACE Dev"
+    APP_FILE="B-SPACE Dev.app"
     DISPLAY_NAME="B:SPACE Dev"
     USER_DATA_XML="<key>BSpaceUserDataDirectory</key><string>Backspace-Dev</string>"
     URL_SCHEME_XML=""
@@ -65,6 +69,7 @@ case "$IDENTITY" in
   release)
     BUNDLE_ID="com.backspace.desktop"
     BUNDLE_NAME="B-SPACE"
+    APP_FILE="B-SPACE.app"
     DISPLAY_NAME="B:SPACE"
     USER_DATA_XML=""
     URL_SCHEME_XML="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>B:SPACE</string><key>CFBundleTypeRole</key><string>Editor</string><key>CFBundleURLSchemes</key><array><string>backspace</string></array></dict></array>"
@@ -85,13 +90,40 @@ for resource in "$DESKTOP/resources/instance-picker.html" "$DESKTOP/resources/re
   [[ -f "$resource" ]] || { echo "bundle.sh: $resource is missing" >&2; exit 1; }
 done
 
+# shellcheck source=toolchain.sh
+source "$(dirname "$SELF")/toolchain.sh"
 swift build -c release --product BSpaceApp >&2
 
 EXECUTABLE="B-SPACE"
-APP=".build/app/${IDENTITY}/B-SPACE.app"
-rm -rf "$APP"
+# The file is named as the bundle is, so that a development build is told
+# from the installed app wherever only the file's name shows: in the
+# system's privacy lists, in the Dock, in a file dialog.
+APP=".build/app/${IDENTITY}/${APP_FILE}"
+# A build from before the file had its own name: one bundle per identity.
+rm -rf ".build/app/${IDENTITY}"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/BSpaceApp "$APP/Contents/MacOS/$EXECUTABLE"
+# LiveKit's library comes as two dynamic frameworks (WebRTC and its own
+# native part). SwiftPM leaves them beside the executable it builds; in the
+# bundle they go where frameworks go, and the executable is told to look
+# there. Whole, symbolic links kept: a framework's layout is part of what
+# is signed.
+mkdir -p "$APP/Contents/Frameworks"
+for framework in LiveKitWebRTC RustLiveKitFFI; do
+  [[ -d ".build/release/$framework.framework" ]] || {
+    echo "bundle.sh: .build/release/$framework.framework is missing" >&2
+    exit 1
+  }
+  cp -R ".build/release/$framework.framework" "$APP/Contents/Frameworks/"
+done
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/$EXECUTABLE" >&2
+for dependency in $(otool -L "$APP/Contents/MacOS/$EXECUTABLE" | sed -n 's/^[[:space:]]*\(@rpath\/[^ ]*\) .*/\1/p'); do
+  name="${dependency#@rpath/}"
+  [[ -e "$APP/Contents/Frameworks/$name" ]] || {
+    echo "bundle.sh: the executable needs $dependency and the bundle does not carry it" >&2
+    exit 1
+  }
+done
 cp "$DESKTOP/resources/instance-picker.html" "$APP/Contents/Resources/instance-picker.html"
 cp "$DESKTOP/resources/recovery.html" "$APP/Contents/Resources/recovery.html"
 cp "$DESKTOP/src/bridgeContract.json" "$APP/Contents/Resources/bridgeContract.json"
@@ -143,7 +175,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.social-networking</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSRequiresAquaSystemAppearance</key><false/>
@@ -161,6 +193,19 @@ ${PERMISSION_XML}
 </plist>
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >&2
+
+# A development build takes this machine's development identity, if one was
+# made and the caller names no certificate. A release identity never does:
+# signed with a certificate of one machine it could not be updated by a
+# build from anywhere else.
+if [[ "$IDENTITY" == "dev" && -z "${MAC_SIGN_P12:-}" && -z "${MAC_SIGN_P12_PASSWORD:-}" ]]; then
+  DEV_IDENTITY="$("$(dirname "$SELF")/dev-identity.sh" --where)"
+  if [[ -s "$DEV_IDENTITY/identity.p12" && -s "$DEV_IDENTITY/password" ]]; then
+    MAC_SIGN_P12="$(base64 < "$DEV_IDENTITY/identity.p12")"
+    MAC_SIGN_P12_PASSWORD="$(cat "$DEV_IDENTITY/password")"
+    export MAC_SIGN_P12 MAC_SIGN_P12_PASSWORD
+  fi
+fi
 
 # Signed last, over the finished bundle, so the Info.plist and the resources
 # are bound to the signature.

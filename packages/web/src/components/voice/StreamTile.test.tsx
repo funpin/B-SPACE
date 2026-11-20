@@ -93,3 +93,40 @@ describe('StreamTile context menu', () => {
     expect(order).not.toContain('mute-user');
   });
 });
+
+describe('StreamTile while its sharer has no picture to send', () => {
+  function paused(userId: string, isLocal: boolean): StreamTileType {
+    const tile = streamTile(userId, isLocal);
+    return { ...tile, participant: { ...tile.participant, screenSharePaused: true } };
+  }
+
+  it('says so to a viewer who is watching, in place of the offer to watch', () => {
+    const { getByTestId, container } = render(<StreamTile tile={paused('bob', false)} stats={null} />);
+
+    expect(getByTestId('stream-tile-paused').textContent).toContain('bob');
+    expect(container.querySelector('[data-testid="stream-tile-placeholder"] button')).toBeNull();
+  });
+
+  it('still offers the stream to someone who is not watching it', () => {
+    useVoiceStore.setState({ watchingStreams: new Set() });
+
+    const { getByTestId, container } = render(<StreamTile tile={paused('bob', false)} stats={null} />);
+
+    expect(getByTestId('stream-tile-paused')).toBeTruthy();
+    expect(container.querySelector('[data-testid="stream-tile-placeholder"] button')).not.toBeNull();
+  });
+
+  it('tells the sharer that viewers do not see the window', () => {
+    const { getByTestId, queryByTestId } = render(<StreamTile tile={paused('me', true)} stats={null} />);
+
+    expect(getByTestId('stream-tile-paused-own')).toBeTruthy();
+    expect(queryByTestId('stream-tile-paused')).toBeNull();
+  });
+
+  it('says nothing of it for a share that has a picture', () => {
+    const { queryByTestId } = render(<StreamTile tile={streamTile('bob', false)} stats={null} />);
+
+    expect(queryByTestId('stream-tile-paused')).toBeNull();
+    expect(queryByTestId('stream-tile-paused-own')).toBeNull();
+  });
+});

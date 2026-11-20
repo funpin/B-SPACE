@@ -10,6 +10,15 @@ import { useUIStore } from '../stores/uiStore';
 import { openScreenShareSetup } from '../stores/screenShareSetupStore';
 import i18n from '../i18n';
 import { isElectron, getElectronAPI } from '../platform/platform';
+import {
+  acquireNativeScreenCapture, canCaptureNatively, isNativeScreenCapture, reconfigureNativeScreenCapture,
+  type NativeCaptureLimits,
+} from '../platform/nativeCapture/nativeScreenCapture';
+import { acquireNativeSystemAudio, canCaptureSystemAudioNatively } from '../platform/nativeCapture/nativeSystemAudio';
+import {
+  dropNativeStage, isNativeStagedShare, stageNativeShare, type StagedShare,
+} from '../platform/nativeShare/nativeScreenShare';
+import { canShareNativelyInThisCall, isNativeShareLive, publishNativeShare, stopNativeShare } from './nativeShare';
 import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import { startKeyframeWatchdog } from './keyframeWatchdog';
 import { isSoftwareH264Encoder, noteSoftwareH264, resolveScreenShareCodec, type ScreenShareCodec } from './screenShareCodec';
@@ -252,6 +261,23 @@ export function resolveNativeOverdrive(
 // Overdrive — forces bitrate/resolution/framerate on RTCRtpSender
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether this engine takes only the ceiling (bitrate and frame rate) of the
+ * sender parameters. WebKit does: given the priorities and the degradation
+ * preference Chromium takes, `setParameters` rejects the whole call with
+ * "Attempted to set an unimplemented parameter of RtpParameters", and the
+ * ceiling is not applied either. The only way to learn what an engine
+ * implements is to ask, so the full set is tried once; when the engine
+ * refuses it and then takes the ceiling alone, only the ceiling is written
+ * for as long as the page lives.
+ */
+let _ceilingOnly = false;
+
+/** Test seam: forget what the engine was found to take. */
+export function resetOverdriveSupportForTests(): void {
+  _ceilingOnly = false;
+}
+
 export async function applyOverdrive(
   room: Room,
   source: Track.Source,
@@ -269,29 +295,46 @@ export async function applyOverdrive(
     const sender = senders.find(s => s.track?.id === pubMediaTrack?.id);
     if (!sender) return false;
 
-    const params = sender.getParameters();
-    if (!params.encodings?.length) return false;
-    // Before LiveKit finishes configuring the sender, Chromium can expose one
-    // empty placeholder encoding. Any values written there are replaced by
-    // LiveKit's sendEncodings, so report "not ready" and let the bounded
-    // scheduler retry after negotiation advances.
-    if (params.encodings.length === 1 && Object.keys(params.encodings[0]!).length === 0) {
-      return false;
+    /** Reads the parameters afresh (a write needs the latest read) and writes them back. */
+    const write = async (ceilingOnly: boolean): Promise<boolean> => {
+      const params = sender.getParameters();
+      if (!params.encodings?.length) return false;
+      // Before LiveKit finishes configuring the sender, Chromium can expose one
+      // empty placeholder encoding. Any values written there are replaced by
+      // LiveKit's sendEncodings, so report "not ready" and let the bounded
+      // scheduler retry after negotiation advances.
+      if (params.encodings.length === 1 && Object.keys(params.encodings[0]!).length === 0) {
+        return false;
+      }
+
+      // Target the highest-quality layer. With simulcast, encodings[0] is the
+      // lowest layer; our overdrive must hit the top layer so the custom bitrate
+      // slider controls the full-resolution stream, not the quarter-res one.
+      // For non-simulcast tracks (single encoding), length - 1 === 0.
+      const idx = params.encodings.length - 1;
+      params.encodings[idx]!.maxBitrate = options.maxBitrate;
+      params.encodings[idx]!.maxFramerate = options.maxFramerate;
+      if (!ceilingOnly) {
+        params.encodings[idx]!.priority = 'high';
+        params.encodings[idx]!.networkPriority = 'high';
+        (params as any).degradationPreference = options.degradationPreference;
+      }
+
+      await sender.setParameters(params);
+      return true;
+    };
+
+    if (_ceilingOnly) return await write(true);
+    try {
+      return await write(false);
+    } catch (err) {
+      // An engine that does not implement one of the parameters says so
+      // with an OperationError; anything else is a failure of this call.
+      if ((err as { name?: unknown } | null)?.name !== 'OperationError') throw err;
+      const applied = await write(true);
+      if (applied) _ceilingOnly = true;
+      return applied;
     }
-
-    // Target the highest-quality layer. With simulcast, encodings[0] is the
-    // lowest layer; our overdrive must hit the top layer so the custom bitrate
-    // slider controls the full-resolution stream, not the quarter-res one.
-    // For non-simulcast tracks (single encoding), length - 1 === 0.
-    const idx = params.encodings.length - 1;
-    params.encodings[idx]!.maxBitrate = options.maxBitrate;
-    params.encodings[idx]!.maxFramerate = options.maxFramerate;
-    params.encodings[idx]!.priority = 'high';
-    params.encodings[idx]!.networkPriority = 'high';
-    (params as any).degradationPreference = options.degradationPreference;
-
-    await sender.setParameters(params);
-    return true;
   } catch (err) {
     console.warn('[ScreenShare] Failed to apply overdrive:', err);
     return false;
@@ -323,12 +366,49 @@ function buildCaptureConstraints(config: ScreenShareConfig, opts: ScreenShareBui
   };
 }
 
+/** What a native capture is limited to: the configured size, or the source's own. */
+function nativeCaptureLimits(capture: ScreenShareBuildResult['capture']): NativeCaptureLimits {
+  // Native mode: no size limit, so the source is captured at its own size.
+  if (capture.width > 0 && capture.height > 0) {
+    return { maxWidth: capture.width, maxHeight: capture.height, frameRate: capture.frameRate };
+  }
+  return { frameRate: capture.frameRate };
+}
+
+/**
+ * Makes a capture that already runs follow the configured size and rate: the
+ * staged preview when the quality drawer changes, the live share when the
+ * settings do. A browser's capture is constrained; the native macOS shell's is
+ * started again at the new size behind the same track.
+ *
+ * @param minFrameRate a floor for a published capture; a preview has none.
+ */
+export async function applyCaptureLimits(
+  track: MediaStreamTrack,
+  capture: ScreenShareBuildResult['capture'],
+  minFrameRate?: number,
+): Promise<void> {
+  if (isNativeScreenCapture(track)) {
+    await reconfigureNativeScreenCapture(track, nativeCaptureLimits(capture));
+    return;
+  }
+  const frameRate: ConstrainDouble = minFrameRate === undefined
+    ? { ideal: capture.frameRate }
+    : { ideal: capture.frameRate, min: minFrameRate };
+  // Native mode: frame rate only — never pass 0 to width/height.
+  await track.applyConstraints(capture.width > 0 && capture.height > 0
+    ? { width: { ideal: capture.width }, height: { ideal: capture.height }, frameRate }
+    : { frameRate });
+}
+
 // ---------------------------------------------------------------------------
 // Stage — capture without publishing.
 //
 // Every screen share starts here, on every platform. Browsers open their native
 // prompt; Electron's main process answers the request from the renderer's
-// preselected source (see ScreenShareSetup). The returned stream is previewed
+// preselected source (see ScreenShareSetup); the native macOS shell captures
+// the picked source itself and the stream comes from
+// platform/nativeCapture. The returned stream is previewed
 // in the setup screen and only reaches the room via publishScreenShare(), so
 // cancelling the setup never sends a frame.
 // ---------------------------------------------------------------------------
@@ -400,10 +480,35 @@ async function captureDisplayMedia(constraints: DisplayMediaStreamOptions): Prom
   return stream;
 }
 
-/** Must run inside a user gesture in browsers (getDisplayMedia requires transient activation). */
-export async function stageScreenCapture(): Promise<MediaStream> {
+/**
+ * Must run inside a user gesture in browsers (getDisplayMedia requires transient activation).
+ *
+ * @param sourceId the source picked in the app's own list, when there is
+ *   one. The native macOS shell captures exactly that; everywhere else the
+ *   source is the desktop app's preselection or the browser's prompt.
+ */
+export async function stageScreenCapture(sourceId?: string | null): Promise<StagedShare> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
+  // Where the shell publishes the share itself there is no stream to hold:
+  // the source is staged, and the shell previews it over the page.
+  if (sourceId && canShareNativelyInThisCall()) return stageNativeShare(sourceId);
+  if (sourceId && canCaptureNatively()) {
+    const stream = await acquireNativeScreenCapture(sourceId, nativeCaptureLimits(opts.capture));
+    const video = stream.getVideoTracks()[0];
+    if (video) video.contentHint = opts.contentHint;
+    // The system's sound is a capture of its own there. Without it the
+    // share still has its picture, so it goes on and says what is missing.
+    if (config.shareAudio && canCaptureSystemAudioNatively()) {
+      try {
+        stream.addTrack(await acquireNativeSystemAudio());
+      } catch (err) {
+        console.warn('[ScreenShare] The native system-audio capture did not start:', err);
+        useUIStore.getState().addToast(i18n.t('voice:screenPicker.audioCaptureFailed'), 'warning', 8000);
+      }
+    }
+    return stream;
+  }
   if (!isScreenCaptureSupported()) {
     throw new DOMException('getDisplayMedia is not available', 'NotSupportedError');
   }
@@ -445,21 +550,26 @@ export async function stageScreenCapture(): Promise<MediaStream> {
  * track is local only, so there is no SFU renegotiation. Lets the setup screen
  * reflect quality changes in the preview before anything is sent.
  */
-export async function applyStagedCaptureConfig(stream: MediaStream): Promise<void> {
+export async function applyStagedCaptureConfig(stream: StagedShare): Promise<void> {
+  // A source the shell previews is shown as it is; the quality is the share's.
+  if (isNativeStagedShare(stream)) return;
   const track = stream.getVideoTracks()[0];
   if (!track || track.readyState !== 'live') return;
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
-  const constraints = buildCaptureConstraints(config, opts).video;
   try {
-    if (typeof constraints === 'object') await track.applyConstraints(constraints);
+    await applyCaptureLimits(track, opts.capture);
   } catch (err) {
     console.warn('[ScreenShare] Failed to apply staged constraints:', err);
   }
   track.contentHint = opts.contentHint;
 }
 
-export function stopStagedCapture(stream: MediaStream | null | undefined): void {
+export function stopStagedCapture(stream: StagedShare | null | undefined): void {
+  if (isNativeStagedShare(stream)) {
+    dropNativeStage();
+    return;
+  }
   stream?.getTracks().forEach((t) => t.stop());
 }
 
@@ -518,11 +628,13 @@ export interface PublishScreenShareOptions {
 
 export async function publishScreenShare(
   room: Room,
-  stream: MediaStream,
+  stream: StagedShare,
   options: PublishScreenShareOptions = {},
 ): Promise<boolean> {
   const config = useVoiceStore.getState().screenShareConfig;
   const opts = buildScreenShareOptions(config);
+  // The shell publishes it: the page hands over what was staged.
+  if (isNativeStagedShare(stream)) return publishNativeShare(room, stream, config, opts);
   const needsH264SdpPatch = opts.publish.videoCodec === 'h264';
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack || videoTrack.readyState !== 'live') return false;
@@ -697,16 +809,18 @@ function liveOrNull(track: MediaStreamTrack | null): MediaStreamTrack | null {
  * Whether loopback audio can be added later, without a prompt, to a share of
  * this source: only the desktop app can, only for a source it listed itself
  * (picker mode `'app'`; a portal or an unknown mode would prompt again), and
- * only on a build that can preselect. The setup screen asks the same question
- * before Start.
+ * only on a build that can preselect. The native macOS shell captures the
+ * system's sound apart from the picture, so there it can whenever the shell
+ * has that capture. The setup screen asks the same question before Start.
  */
 export function canAddScreenShareAudioLater(
   sourceId: string | null,
   pickerMode: ScreenSharePickerMode | null,
 ): boolean {
-  return sourceId !== null
-    && pickerMode === 'app'
-    && isElectron()
+  if (sourceId === null || pickerMode !== 'app') return false;
+  // The native shell's preselection arms nothing: its sound is its own capture.
+  if (canCaptureNatively()) return canCaptureSystemAudioNatively();
+  return isElectron()
     && isScreenCaptureSupported()
     && typeof getElectronAPI()?.preselectScreenSource === 'function';
 }
@@ -803,9 +917,11 @@ function settleWithin<T>(promise: Promise<T>, ms: number, discard: (late: T) => 
 /**
  * Take loopback audio for the running share: preselect the same source with
  * audio, capture it again, and keep only the audio track. The main process
- * answers a preselected request without a picker.
+ * answers a preselected request without a picker. In the native macOS shell
+ * the system's sound is a capture of its own and no source is involved.
  */
 async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTrack> {
+  if (canCaptureNatively()) return acquireNativeSystemAudio();
   const api = getElectronAPI();
   if (!api?.preselectScreenSource) throw new DOMException('Source preselection is not available', 'NotSupportedError');
   const ownFree = await acquireAppExcludedSystemAudio();
@@ -961,19 +1077,7 @@ export function scheduleScreenShareOverdrive(room: Room): void {
       if (!captureConfigured) {
         captureConfigured = true;
         try {
-          if (freshOpts.capture.width > 0 && freshOpts.capture.height > 0) {
-            // Standard mode: apply resolution + frameRate together
-            await mediaTrack.applyConstraints({
-              width: { ideal: freshOpts.capture.width },
-              height: { ideal: freshOpts.capture.height },
-              frameRate: { ideal: freshOpts.capture.frameRate, min: 15 },
-            });
-          } else {
-            // Native mode: apply frameRate only — never pass 0 to width/height
-            await mediaTrack.applyConstraints({
-              frameRate: { ideal: freshOpts.capture.frameRate, min: 15 },
-            });
-          }
+          await applyCaptureLimits(mediaTrack, freshOpts.capture, 15);
           mediaTrack.contentHint = freshOpts.contentHint;
         } catch (err) {
           // Capture constraints and sender parameters are independent. A browser
@@ -1157,6 +1261,11 @@ function watchKeyframes(room: Room, trackId: string): void {
 // ---------------------------------------------------------------------------
 
 export async function stopScreenShare(room: Room): Promise<void> {
+  // A share the shell publishes has no publication of the page's to take down.
+  if (isNativeShareLive()) {
+    stopNativeShare();
+    return;
+  }
   // Sent first and not awaited: a stop must not wait on the data channel.
   // Viewers handle the message on either side of the removal.
   announceShare(room, 'stream_stop');

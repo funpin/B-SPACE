@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Track } from 'livekit-client';
 import { getActiveRoom } from './useLiveKit';
 import { discoverPeerConnections } from '../utils/livekitInternals';
+import { sharerIdentityOf } from '../utils/streamParticipant';
+import { useNativeShareStore } from '../utils/nativeShare';
 
 // ── Types ──
 
@@ -252,14 +254,16 @@ export function useTrackStats(enabled: boolean): TrackStatsSnapshot | null {
 
       // Remote tracks
       for (const [, rp] of room.remoteParticipants) {
-        const name = parseUsername(rp.identity);
+        // A stream participant's tracks are its owner's share (utils/streamParticipant).
+        const identity = sharerIdentityOf(rp);
+        const name = parseUsername(identity);
         for (const pub of rp.trackPublications.values()) {
           const mst = pub.track?.mediaStreamTrack;
           if (mst) {
             identityMap.set(mst.id, {
               source: mapSource(pub.source),
               direction: 'recv',
-              participantIdentity: rp.identity,
+              participantIdentity: identity,
               participantName: name,
             });
           }
@@ -568,6 +572,47 @@ export function useTrackStats(enabled: boolean): TrackStatsSnapshot | null {
       const totalPackets = totalPacketsReceived + totalPacketsLost;
       if (totalPackets > 0) {
         network.packetLoss = (totalPacketsLost / totalPackets) * 100;
+      }
+
+      // ── Step E2: A share the native shell publishes ──
+      // The page sends nothing of it; the shell says what it sends. The
+      // page's own tile receives the share back, which is not a stream
+      // this user watches: that track is left out.
+      const shellShare = useNativeShareStore.getState().stats;
+      const ownIdentity = room.localParticipant.identity;
+      const ownShareBack = (track: { direction: string; participantIdentity: string | null; source: string }) =>
+        track.direction === 'recv' && track.participantIdentity === ownIdentity
+        && (track.source === 'screen_share' || track.source === 'screen_share_audio');
+      const dropOwnShareBack = <T extends Parameters<typeof ownShareBack>[0]>(tracks: T[]) => {
+        for (let index = tracks.length - 1; index >= 0; index--) {
+          const track = tracks[index];
+          if (track && ownShareBack(track)) tracks.splice(index, 1);
+        }
+      };
+      dropOwnShareBack(videoTracks);
+      dropOwnShareBack(audioTracks);
+      if (shellShare) {
+        videoTracks.push({
+          key: 'native-share',
+          direction: 'send',
+          source: 'screen_share',
+          participantIdentity: null,
+          participantName: null,
+          bitrate: shellShare.bitrate / 1000,
+          codec: shellShare.codec.split('/')[1] ?? shellShare.codec,
+          encoderImpl: shellShare.encoder || null,
+          width: shellShare.width || null,
+          height: shellShare.height || null,
+          fps: shellShare.frameRate,
+          qualityLimitation: shellShare.limitedBy ?? null,
+          simulcastLayer: null,
+          packetLoss: null,
+          jitter: null,
+          qpSumDelta: null,
+          nackCountDelta: null,
+          pliCountDelta: null,
+          freezeCountDelta: null,
+        });
       }
 
       // ── Step F: Filter a dynacast-paused simulcast backup codec track ──

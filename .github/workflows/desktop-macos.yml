@@ -68,10 +68,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The package has to be built by an Xcode toolchain: built by the Command
+      # Line Tools, LiveKit's library compiles and then crashes when a share
+      # joins a call, which nothing here would notice. scripts/toolchain.sh
+      # makes the scripts refuse the Command Line Tools; this step shows what
+      # the plain `swift` of the steps below is.
       - name: Toolchain
         run: |
+          xcode-select -p
           swift --version
           sw_vers
+
+      # LiveKit's library brings WebRTC as one archive for every Apple
+      # platform, about 690 MB, which SwiftPM would otherwise download on
+      # every run. Its download cache is kept, keyed by the pinned versions.
+      - name: Cache SwiftPM downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('packages/desktop-macos/Package.resolved') }}
 
       - name: Build
         run: swift build

@@ -695,6 +695,9 @@ Two cases from the first pass are worth keeping in mind:
   does not support the macOS and Windows legs of the build matrix. For the same
   reason `desktop-macos.yml` (one macOS job) and `desktop-test-build.yml` (a
   macOS and a Windows job) have no such step at all.
+  `desktop-macos.yml` keeps SwiftPM's download cache between runs
+  (`actions/cache`, keyed by `Package.resolved`): LiveKit's library brings
+  WebRTC as one archive of about 690 MB for every Apple platform.
 - Least-privilege `permissions:` per workflow/job.
 - SBOM + SLSA provenance are attached to the published container image at push
   (`.github/workflows/docker-publish.yml`), alongside a report-only Trivy scan
@@ -771,7 +774,7 @@ the pipeline the code runs in". The bot's verdict encodes exactly that split:
 |-----|-------------|---------------------|
 | CI workflows | `.github/workflows/**`, `.github/actions/**`, including the previous name of a rename | yes |
 | Install-time code | `.pnpmfile.cjs` and `.npmrc` at any depth, `pnpm-workspace.yaml`, `packages/patches/**`; and any `package.json` whose `scripts.*`, `pnpm.*` or `packageManager` changed (a dependency bump alone does not count) | yes |
-| Build recipes | everything under `deploy/` except `.env.example`: the Dockerfile and its ignore file, the compose files, the Caddyfile, the entrypoint and the install, update, migrate, backup, restore and deploy scripts; `packages/desktop/electron-builder.yml`, `packages/desktop/scripts/**`; `packages/desktop-macos/Package.swift` (a SwiftPM manifest is code the runner executes) and `packages/desktop-macos/scripts/**` | yes |
+| Build recipes | everything under `deploy/` except `.env.example`: the Dockerfile and its ignore file, the compose files, the Caddyfile, the entrypoint and the install, update, migrate, backup, restore and deploy scripts; `packages/desktop/electron-builder.yml`, `packages/desktop/scripts/**`; `packages/desktop-macos/Package.swift` (a SwiftPM manifest is code the runner executes), `packages/desktop-macos/Package.resolved` (which commit of each dependency the build fetches: LiveKit's library from the project's fork `funpin/client-sdk-swift`, and the binary WebRTC framework it brings) and `packages/desktop-macos/scripts/**` | yes |
 | Scanner configuration | `.github/codeql/**`, `.github/security/osv-scanner.toml`, `.github/security/trivyignore`, `.github/security/zap-rules.tsv`, `.gitleaks.toml` | yes |
 | `pnpm-lock.yaml` | new package names vs. version bumps vs. removals; entries whose resolution is not exactly `{integrity: ...}` with a bare semver (git, tarball URL, directory, `file:`); importer specifiers new at head that point outside the registry; `overrides` and `patchedDependencies` blocks | only `overrides` and `patchedDependencies` |
 

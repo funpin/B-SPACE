@@ -344,6 +344,9 @@ export class BackspaceApiClient {
   readonly livekit: {
     token: (channelId: string) => Promise<LiveKitTokenResponse>;
     dmToken: (dmChannelId: string) => Promise<LiveKitTokenResponse>;
+    /** The token of the user's stream participant (voice.md, "The stream participant"). */
+    streamToken: (channelId: string) => Promise<LiveKitTokenResponse>;
+    dmStreamToken: (dmChannelId: string) => Promise<LiveKitTokenResponse>;
   };
 
   readonly settings: {
@@ -763,6 +766,10 @@ export class BackspaceApiClient {
         request<LiveKitTokenResponse>('POST', '/livekit/token', { channelId }),
       dmToken: (dmChannelId: string) =>
         request<LiveKitTokenResponse>('POST', '/livekit/token', { dmChannelId }),
+      streamToken: (channelId: string) =>
+        request<LiveKitTokenResponse>('POST', '/livekit/token', { channelId, purpose: 'stream' }),
+      dmStreamToken: (dmChannelId: string) =>
+        request<LiveKitTokenResponse>('POST', '/livekit/token', { dmChannelId, purpose: 'stream' }),
     };
 
     this.settings = {

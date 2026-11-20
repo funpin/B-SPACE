@@ -102,6 +102,55 @@ UI affordances:
 
 **Identity format:** `{userId}:{username}`, TTL: 1 hour, Room: `{channelId}` or `dm-{dmChannelId}`
 
+### The stream participant
+
+A native client that publishes its screen share from the shell (one hardware encode, no second encode in the page) joins the room a second time, as the user's **stream participant**. LiveKit admits an identity once per room, so the stream participant has a token of its own: `POST /livekit/token` with `purpose: 'stream'` (`generateStreamToken` in `routes/livekit.ts`).
+
+| | Voice token | Stream token |
+|---|---|---|
+| Identity | `{userId}:{username}` | `stream.{userId}:{username}` (`streamIdentityOf`) |
+| Attributes | none | `streamOf`: the owner's identity (`STREAM_OF_ATTRIBUTE`) |
+| May publish | per SPEAK and STREAM | `SCREEN_SHARE`, `SCREEN_SHARE_AUDIO` only |
+| May subscribe, send data | yes | no |
+| May change its own metadata and attributes | no | no |
+| Time to join | 1 hour | 10 minutes (asked for when a share starts; LiveKit renews it for a participant that is in) |
+| Guards | membership, CONNECT | the same, and STREAM (`403 voice_stream_forbidden`) |
+
+The shared helpers are in `packages/shared/src/streamParticipant.ts`. `streamOwnerOf(attributes)` is the one way a client tells whose stream a participant is: the attribute is signed into the token by the server and no token lets a participant change its attributes, so it cannot be forged; the identity prefix is there only to keep the two identities apart and is not what a client trusts. A client that does not know about stream participants sees one more participant, named after the user, with a screen share.
+
+A voice token's answer carries `streamTokens: true`; a client offers the shell's own share only when the server that issued its voice token said so.
+
+**The viewer's side (every client).** Nothing in the client shows a stream participant: its share is its owner's share. `utils/streamParticipant.ts` is the one place that says so, and everything that goes from a participant to a share or back goes through it:
+
+| Where | What it does with a stream participant |
+|---|---|
+| `updateParticipants` (`useLiveKit`) | never lists it; its `ScreenShare` and `ScreenShareAudio` publications become its owner's `isScreenSharing`, `screenTrack`, `lkScreenTrack` and `screenAudioTrack`. One whose owner is not in the room is nobody. The owner's own client is folded the same way (its stream participant is a remote participant to its page too) |
+| `setStreamSubscription(room, identity, …)` | subscribes to the share of `identity` on every participant that can carry it (`shareCarriersOf`): the user's own and the user's stream participant |
+| `TrackPublished`, `TrackUnpublished` | the share's lifecycle (sound joining a watched share, the republish bridge, the resume memory, the end of a share) runs under the owner's identity (`sharerIdentityOf`). Anything but a share from a stream participant is never subscribed to |
+| `ParticipantConnected`, `ParticipantDisconnected` | it is not a person: no watch announcement and no deafen notice go to it, and its leaving evicts no viewer, pointer or voice status. An owner who leaves while the stream participant still publishes ends the share for the viewer |
+| `DataReceived` | ignored from it (its token sends none): the owner's page speaks for the share |
+| `ConnectionQualityChanged` | kept under `streamQualityKey(owner)`, next to the owner's own; `StreamTile` shows the share's connection when there is one |
+| `useTrackStats` | a received track of it is listed under its owner |
+
+Everything keyed by a sharer (the watcher set, pointers, the overlay flag, the resume memory, the republish tracker) stays keyed by the owner's identity. That is also the identity data messages are addressed to and come from, because recipients are taken from the folded participant list: a pointer on a native client's share goes to the owner's page, never to the stream participant, and no protocol changed.
+
+`dev-stream-viewer.html` is the workbench for this: it joins a real LiveKit room as a viewer with a pasted token and shows which participant is whose stream, what a watch by the owner's identity subscribes to, and what the engine is given (codec, size, frame rate, the sound's source). Measured with it on 2026-11-19 against the native package's `StreamProbe`: a Chromium viewer decodes the H.265 share a native client publishes at 2560x1440 and 59 frames a second, and receives its sound as `screen_share_audio`.
+
+**The sharer's side (the native macOS shell).** `utils/nativeShare.ts` is the share as the call sees it from the page; `platform/nativeShare/` is the bridge. The page holds no stream: `stageScreenCapture` returns a `NativeStagedShare` (the source) where `canShareNativelyInThisCall()` says so, and `publishScreenShare`, `stopScreenShare` and the settings effect in `useLiveKit` hand over to `publishNativeShare`, `stopNativeShare` and `applyNativeShareConfig`.
+
+| Moment | What the page does |
+|---|---|
+| Joining a call | `useLiveKit.connect` records `voiceStore.streamTokenSource` when the voice token's answer said `streamTokens`. Null for a server without them and for a call whose token came by federation relay: a share there is the page's own (WebKit's capture) |
+| The setup screen | asks `getScreenSharePickerMode({ nativeShare: true })`; a picked tile starts the shell's live preview (`startNativeSharePreview`), and `useNativeSharePreviewFrame` keeps it over the preview box: measured once a frame, reported when it has come to rest, hidden while the box moves or the quality drawer lies over it |
+| Start | the stream token (`livekit.streamToken` / `dmStreamToken`), then `startNativeScreenShare` with the source and `nativeShareQuality(config)`: the size and rate of the user's settings, the bitrate ceiling of the matrix, a floor of a third of it (at most 3 Mbit/s, `nativeShareFloor`), H.265 unless the user chose H.264, the sound |
+| A setting changes | `nativeShareChange` says only what differs to `updateNativeScreenShare`; another codec is another publication, so the share is started again on the same source after a `stream_republish` |
+| The share's own tile | the local participant is folded like anyone: its stream participant's picture is subscribed to and watched (`TrackPublished`), so the sharer sees what viewers get. The sound is never fetched back |
+| The connection panel | `useNativeShareStore.stats`, from the shell's `stats` events, stands where a sent screen share's statistics do (`useTrackStats`); the share received back for the local tile is left out |
+| The source is not drawn | A window in another of Stage Manager's sets or on another desktop gives no frames. The share starts all the same (the shell hands the call a black picture of its size) and goes on, with its video track muted in the call while the source is hidden. Every client folds that into `ParticipantInfo.screenSharePaused` (a muted screen share publication of the sharer or of their stream participant), and the stream tile says in words that the sharer minimized or hid the window, in place of the offer to watch for someone who is watching; the sharer's own tile says viewers do not see it. `hidden` in the start's answer and `source-hidden` afterwards have the sharer's page say the same once, in a toast. On the setup screen the same is said beside the empty preview (`useNativeStageStore`). |
+| The share ends | by the user (`stream_stop` first, then the shell), by the shell (`ended`: a toast with the reason), with the call (`endNativeShareWithRoom`). `audio-ended` leaves the picture and turns the sound's state to `acquirable`. After a reconnect of either connection viewers are sent `stream_resume` |
+
+Not built yet: stream tokens for federated DM calls, whose tokens travel in the call relay rather than through this route (docs/superpowers/plans/2026-11-16-macos-native-client.md, section 12). Not verified yet: the sharer's side in the built app in a real call; a viewer that cannot decode H.265 (Firefox) getting the H.264 backup track.
+
 **Multi-tab:** Each user has one `voiceWs` binding. New tab → old socket gets `voice_disconnected { reason: 'displaced' }`
 
 **Transient reconnects:** Closing the voice-owning WebSocket starts a 60-second
@@ -451,6 +500,21 @@ Persist migration v15: version 14 wrote `codec: 'vp9'` into every saved config, 
 - H.264 uses an SDP profile override only during its publish negotiation; the
   hook is removed in `finally` so later camera or microphone negotiations are
   unaffected.
+- The override is for Chromium only (`hwOverdrive.appliesTo`, by the user
+  agent naming a Chrome or Chromium version). It rewrites Constrained Baseline
+  to Main so that Chromium picks its hardware encoder. WebKit (Safari, the
+  native macOS client) encodes H.264 in hardware as it is and refuses the
+  rewritten offer: `setLocalDescription` fails with "Failed to set local
+  video description recv parameters", the negotiation is lost and LiveKit
+  drops the participant the moment a share is published (seen in a call on
+  2026-11-19).
+- `applyOverdrive` writes the ceiling (bitrate, frame rate) to the sender with
+  `priority`, `networkPriority` and the degradation preference. WebKit
+  implements the ceiling and not the rest, and rejects a call that carries
+  the rest whole ("Attempted to set an unimplemented parameter of
+  RtpParameters"), so nothing was applied there. The full set is tried once;
+  when the engine refuses it with an `OperationError` and then takes the
+  ceiling alone, only the ceiling is written for as long as the page lives.
 - Selecting H.264 does not guarantee hardware encoding. The negotiated codec
   and `encoderImplementation` reported by WebRTC stats are shown in the
   connection inspector. If Chromium reports the OpenH264 software fallback,
@@ -869,10 +933,54 @@ Both surfaces are backed by the shared `useAudioDevices()` hook. The store field
 - Output devices are gated behind microphone permission (no separate output permission exists in browsers).
 - Returns `inputLabels` / `outputLabels` maps with disambiguation suffixes for duplicate names (e.g. `"USB Audio (1)"`, `"USB Audio (2)"`).
 
-### Output routing — `AudioContext.setSinkId`
-All audio (remote voice, screen-share audio, sound effects) flows through `AudioManager`'s master bus → `AudioContext.destination`. Output device switching is therefore done via `AudioContext.setSinkId(deviceId)`, NOT via LiveKit's `switchActiveDevice('audiooutput')` (which targets `<audio>` elements that are killed by `AppLayout`'s MutationObserver). Safari < 17 lacks `setSinkId` on AudioContext — `AudioOutputSection` detects this (once a real context exists) and falls back to OS default with an explanatory note.
+### Screen sharing in the native macOS client
 
-**Mobile platforms with no per-element output routing (iOS Safari):** `AudioOutputSection` feature-detects `'setSinkId' in HTMLMediaElement.prototype` at module load (cached). When false, the entire section is hidden — no header, no fallback copy. iOS users adjust audio routing via OS controls (Bluetooth menu, Control Center) and do not expect per-app output selection. Android Chrome ≥ 110 supports `setSinkId` and renders the picker normally. The detection runs before any hooks via an outer wrapper (`AudioOutputSection` → early-return-`null` → `AudioOutputSectionInner`) so the inner component's hook order remains stable.
+WebKit's `getDisplayMedia` cannot be told which source to take, gives 30 frames a second at point resolution and no system audio. The native macOS client (`packages/desktop-macos`) therefore captures the source itself and hands the frames to the page; the web client's side of that is `packages/web/src/platform/nativeCapture/`. In Electron and in browsers none of it runs: the bridge has no `startNativeScreenCapture`, and `canCaptureNatively()` is false.
+
+| File | What it does |
+|------|--------------|
+| `nativeScreenCapture.ts` | `canCaptureNatively()`; `acquireNativeScreenCapture(sourceId, limits)` starts a capture through the bridge, starts the worker and returns a `MediaStream` with one video track; `reconfigureNativeScreenCapture(track, limits)`; `isNativeScreenCapture(track)` |
+| `reader.worker.ts` | A module worker: connects to the shell's local WebSocket, says the token, decodes with `VideoDecoder`, writes the frames into a `VideoTrackGenerator` and transfers its track to the page. WebKit has `VideoTrackGenerator` in workers only |
+| `channelReader.ts` | The worker's logic, without a socket or a decoder: reads the format announcement and the frames, starts from a key frame, and catches up when the decoder falls behind |
+| `nativeSystemAudio.ts` | `canCaptureSystemAudioNatively()`; `acquireNativeSystemAudio()` starts a capture of the system's sound through the bridge and returns an audio track; `nativeSystemAudioStats(track)` for diagnostics |
+| `systemAudio.worker.ts` | A module worker: connects to the shell's local WebSocket, says the token, and passes the samples of each sound message to the audio thread on a port of their own |
+| `systemAudio.worklet.ts` | The audio worklet processor (`native-system-audio`): takes the samples from that port and plays them out through `PcmBuffer` |
+| `pcmBuffer.ts` | `PcmBuffer`, the reserve between the channel and the audio thread, and `soundOf`, which takes the samples out of a channel message |
+
+How it joins the rest of screen sharing (`utils/screenShare.ts`, `ScreenShareSetup`):
+
+- **Who picks the source.** The setup screen asks `getScreenSharePickerMode({ nativeCapture: true })` when `canCaptureNatively()`. The native shell answers `'app'` only to a client that says this, so a server with an older web client keeps WebKit's own picker.
+- **Staging.** A tile click calls `stageScreenCapture(sourceId)`. With native capture the stream comes from `acquireNativeScreenCapture`; the preselection (`preselectScreenSource`) is not armed, because there is no `getDisplayMedia` request for it to answer. The "Choose screen" path of the system picker has no source id and still uses `getDisplayMedia`.
+- **An ordinary track.** Preview, `publishScreenShare`, `republishScreenShare` (the track is reused) and `stopScreenShare` treat it as any other. `track.stop()` ends the native capture: the module puts its own `stop` on the track instance, since stopping a track fires no event. A capture that ends by itself (`onNativeScreenCaptureEnded`, or the channel closing) stops the track and dispatches `ended` on it, as a browser does when a shared window closes.
+- **Size and rate.** `applyCaptureLimits(track, capture, minFrameRate?)` is the one place a running capture is made to follow the configured size and rate (the staged preview, the settings effect in `useLiveKit`, and the overdrive pass). A browser's track is constrained with `applyConstraints`; a native one is reconfigured: a second capture of the same source is started with the new limits, the worker moves to its channel, the first is stopped. The track stays, so a published share is not republished. Limits it already has change nothing.
+- **Falling behind.** Nothing between the screen and the decoder drops a frame. When more than four frames wait in the decoder (`MOST_FRAMES_WAITING`), `ChannelReader` resets it, asks the shell for a key frame and skips what arrives before it; the same after a decoder error.
+- **System audio** is a capture of its own (`startNativeSystemAudio`), apart from the picture's: everything the Mac plays except the app itself, 48 kHz stereo. `acquireNativeSystemAudio()` builds an `AudioContext` at the capture's rate with one `AudioWorkletNode` connected to a `MediaStreamAudioDestinationNode` only (nothing reaches the speakers), and the track of that destination is the system-audio track. A worker reads the shell's channel and posts the samples straight to the worklet over a `MessageChannel`, so they never wait for the page's main thread; the worklet is built as a script of its own (`?worker&url`). `stageScreenCapture` adds the track to a native capture when System Audio is on; if the sound does not start, the share goes on with its picture and a toast says the audio failed. `canAddScreenShareAudioLater` is true for a natively captured source whenever the shell has the capture, and `acquireScreenShareAudio` takes it directly, so the System Audio switch works mid-stream as it does in Electron: off stops the track (and with it the shell's capture), on starts a new one. `track.stop()` ends the capture and closes the context; a capture that ends by itself fires `ended` on the track.
+- **`PcmBuffer`** keeps 60 ms in reserve (the shell sends 20 ms at a time) and plays nothing until it is there, at the start and after running dry. Playing starts from the reserve: what piled up before the audio thread took its first block is skipped. When more than 250 ms waits, the oldest sound is skipped down to the reserve. Sound is never stretched or resampled.
+- **What the note says.** The client asks `getSystemAudioCapability({ nativeAudio: true })` when it can take the capture, and the shell answers `excluded`; the stream settings then show the `excludedMac` note (viewers hear the Mac's sound, not the voice chat). A web client from before the capture is answered `unavailable`.
+- **Known hazard.** WebKit holds back a page that has been hidden for about half a minute, and an audio worklet's clock then loses several percent against real time, so sound is skipped a fifth of a second at a time (measured on a page that neither captured nor played anything; `packages/desktop-macos/README.md`, "The system's sound"). A page that plays audible sound is not held back, and a call does. Whether a share from a hidden window keeps time in a real call is not measured yet.
+
+The wire format, the encoder and the measurements are in `packages/desktop-macos/README.md` ("The local media channel", "Video on the channel", "Capturing the screen"). `dev-native-capture.html` is the workbench page: it runs this code in whatever shell it is opened in.
+
+### Output routing — `OutputRouter`
+All audio (remote voice, screen-share audio, sound effects) flows through `AudioManager`'s master bus (`masterBoost` → `masterCompressor`). What the compressor is connected to is decided by `OutputRouter` (`audio/outputRouter.ts`), which `AudioManager` creates with the context and which is the only thing that connects the bus to an output. LiveKit's `switchActiveDevice('audiooutput')` is not used: it targets LiveKit's own `<audio>` elements, which `AppLayout`'s MutationObserver kills.
+
+The router has three ways to work, chosen once from what the engine offers (`outputRoutingFor`):
+
+| Routing | Engine | How a device is reached |
+|---------|--------|-------------------------|
+| `context` | Chromium (browser, Electron) | `AudioContext.setSinkId(deviceId)`; the bus stays on `ctx.destination`. Unchanged from before the router |
+| `element` | WebKit (Safari, the native macOS client), Firefox: no `AudioContext.setSinkId`, but `HTMLMediaElement.setSinkId` | For the system default the bus plays on `ctx.destination` and nothing else is involved. For any other device the bus is connected to a `MediaStreamAudioDestinationNode` whose stream plays in an `<audio>` element (never attached to the document, marked `data-backspace="output"`) pointed at the device with `setSinkId`; the bus is disconnected from `ctx.destination` only after the element has started, so sound is on both devices for a moment and never on none |
+| `none` | iOS Safari | Nothing; the system routes sound |
+
+Rules of the `element` routing:
+
+- **A gesture may be required.** WebKit has a setting, `SpeakerSelectionRequiresUserGesture`, that is on by default in `WKWebView` on macOS 27.2 (read from its feature list). `setDevice` therefore reaches `setSinkId` before its first `await`, and callers invoke `AudioManager.setOutputDevice` straight from the click handler. A saved choice applied at start has no gesture: if `setSinkId` (or `play()`) rejects with `NotAllowedError`, sound stays on the default device, and the router applies the choice inside the user's next `pointerdown` or `keydown`. Whether WebKit really refuses a listed device outside a gesture has not been measured (an unknown device id is answered `NotFoundError` with or without one, and a listed id needs the microphone permission); the router works either way.
+- **The same choice arriving twice is asked once.** A pick reaches the router from the click and again from `AppLayout`'s effect on the saved setting; the second call has no gesture and would undo the first.
+- **A newer choice wins** over an answer that arrives late (a generation counter).
+- **A device that is gone** (`NotFoundError`) leaves sound on the default device and rejects; `pruneStaleDevices` then resets the saved choice.
+- The extra hop adds the element's playback buffer to the output delay; this is why the default device does not go through it. Whether WebKit's echo cancellation still sees sound played this way as the far end has not been measured: check with speakers on a non-default device before relying on it.
+
+**Platforms that can route nothing (iOS Safari):** `AudioOutputSection` asks `platformSupportsOutputSelection()`, which looks for `setSinkId` on `AudioContext.prototype` and `HTMLMediaElement.prototype`. When neither has it, the entire section is hidden — no header, no fallback copy. iOS users adjust audio routing via OS controls (Bluetooth menu, Control Center) and do not expect per-app output selection. Android Chrome ≥ 110 supports `setSinkId` and renders the picker normally. The detection runs before any hooks via an outer wrapper (`AudioOutputSection` → early-return-`null` → `AudioOutputSectionInner`) so the inner component's hook order remains stable.
 
 ### Touch-close on device pickers
 The Audio Input, Audio Output, and Video device dropdowns (`AudioInputSection.tsx`, `AudioOutputSection.tsx`, `VideoSection.tsx`) all listen for both `mousedown` AND `touchstart` (`{ passive: true }`) when implementing click-outside-to-close. iOS Safari does not synthesize `mousedown` reliably from a single tap; without the `touchstart` listener, mobile users would have to tap twice to dismiss an open popover.
@@ -884,7 +992,7 @@ Input device changes flow through `AudioManager.setInputDevice(deviceId)` (seria
 The global `devicechange` handler in `AppLayout.tsx` does four things on every event:
 1. **Prune** persisted IDs that no longer exist (`pruneStaleDevices`).
 2. **Re-acquire** the live mic stream when `inputDeviceId === 'default'` AND `AudioManager.hasActiveStream()`. Chromium does NOT migrate an existing `getUserMedia` track to the new OS-default — calling `setInputDevice('default')` triggers a fresh `getUserMedia` which picks up the new default; `syncMic` then republishes.
-3. **Re-apply** `setSinkId('')` when `outputDeviceId === 'default'`, for the analogous reason.
+3. **Re-apply** the default output (`setOutputDevice('default')`) when `outputDeviceId === 'default'`, for the analogous reason. Under the `context` routing this is `setSinkId('')`; under the `element` routing the context already follows the system default.
 4. **Toast** on a *new* `audioinput` group appearing (debounced 1s, deduped by `groupId` for 30s). Removals do not toast — the user already knows they unplugged it. Toast is informational ("AirPods Pro detected — choose it in Voice settings to switch") — never auto-switches; auto-switch would be a privacy/UX regression for users who deliberately keep a non-default device selected.
 
 ### Mic-track-loss recovery

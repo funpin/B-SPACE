@@ -937,13 +937,29 @@ export interface JoinSpaceRequest {
   inviteCode: string;
 }
 
+/**
+ * What a LiveKit token is for. `voice` (the default) is the user's own
+ * participant. `stream` is the second participant a native client publishes
+ * its screen share through (docs/systems/voice.md, "The stream participant").
+ */
+export type LiveKitTokenPurpose = 'voice' | 'stream';
+
+/** One of `channelId` (a space voice channel) and `dmChannelId` (a direct call). */
 export interface LiveKitTokenRequest {
-  channelId: string;
+  channelId?: string;
+  dmChannelId?: string;
+  purpose?: LiveKitTokenPurpose;
 }
 
 export interface LiveKitTokenResponse {
   token: string;
   url: string;
+  /**
+   * On a voice token: this server issues stream tokens (`purpose: 'stream'`).
+   * Absent on a server that does not know the purpose, which answers a
+   * request for one with a voice token.
+   */
+  streamTokens?: boolean;
 }
 
 export interface CreateDmRequest {
@@ -2093,6 +2109,7 @@ export interface TelemetryStatus {
   askDue: boolean;
 }
 
+export { STREAM_IDENTITY_PREFIX, STREAM_OF_ATTRIBUTE, streamIdentityOf, streamOwnerOf } from './streamParticipant.js';
 export type { DmSystemEvent } from './dmSystemEvents.js';
 export type { ChannelSystemEvent } from './channelSystemEvents.js';
 export type {

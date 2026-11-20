@@ -47,6 +47,7 @@
     "mac.tray.pointersOff": "Viewers' pointers are hidden",
     "mac.tray.stopCamera": "Turn off camera",
     "mac.tray.stopScreenShare": "Stop sharing",
+    "mac.capture.screen": "Screen {number}",
     "mac.permission.NSMicrophoneUsageDescription": "B:SPACE uses the microphone for voice channels and calls.",
     "mac.permission.NSCameraUsageDescription": "B:SPACE uses the camera for video in voice channels and calls.",
     "mac.permission.NSAudioCaptureUsageDescription": "B:SPACE needs access to system audio to share sound during screen sharing."
@@ -99,6 +100,7 @@
     "mac.tray.pointersOff": "Указки зрителей скрыты",
     "mac.tray.stopCamera": "Выключить камеру",
     "mac.tray.stopScreenShare": "Остановить демонстрацию",
+    "mac.capture.screen": "Экран {number}",
     "mac.permission.NSMicrophoneUsageDescription": "B:SPACE использует микрофон в голосовых каналах и звонках.",
     "mac.permission.NSCameraUsageDescription": "B:SPACE использует камеру для видео в голосовых каналах и звонках.",
     "mac.permission.NSAudioCaptureUsageDescription": "B:SPACE нужен доступ к системному звуку, чтобы передавать звук при показе экрана."
@@ -151,6 +153,7 @@
     "mac.tray.pointersOff": "Zeiger der Zuschauer sind ausgeblendet",
     "mac.tray.stopCamera": "Kamera ausschalten",
     "mac.tray.stopScreenShare": "Bildschirmfreigabe beenden",
+    "mac.capture.screen": "Bildschirm {number}",
     "mac.permission.NSMicrophoneUsageDescription": "B:SPACE verwendet das Mikrofon für Sprachkanäle und Anrufe.",
     "mac.permission.NSCameraUsageDescription": "B:SPACE verwendet die Kamera für Video in Sprachkanälen und Anrufen.",
     "mac.permission.NSAudioCaptureUsageDescription": "B:SPACE benötigt Zugriff auf den Systemton, um bei der Bildschirmfreigabe Ton zu übertragen."
@@ -203,6 +206,7 @@
     "mac.tray.pointersOff": "Ponteiros dos espectadores ocultos",
     "mac.tray.stopCamera": "Desligar a câmera",
     "mac.tray.stopScreenShare": "Parar de compartilhar",
+    "mac.capture.screen": "Tela {number}",
     "mac.permission.NSMicrophoneUsageDescription": "O B:SPACE usa o microfone em canais de voz e chamadas.",
     "mac.permission.NSCameraUsageDescription": "O B:SPACE usa a câmera para vídeo em canais de voz e chamadas.",
     "mac.permission.NSAudioCaptureUsageDescription": "O B:SPACE precisa de acesso ao áudio do sistema para compartilhar o som durante o compartilhamento de tela."
@@ -255,6 +259,7 @@
     "mac.tray.pointersOff": "隐藏观众指针",
     "mac.tray.stopCamera": "关闭摄像头",
     "mac.tray.stopScreenShare": "停止共享",
+    "mac.capture.screen": "屏幕 {number}",
     "mac.permission.NSMicrophoneUsageDescription": "B:SPACE 在语音频道和通话中使用麦克风。",
     "mac.permission.NSCameraUsageDescription": "B:SPACE 在语音频道和通话中使用摄像头传输视频。",
     "mac.permission.NSAudioCaptureUsageDescription": "B:SPACE 需要访问系统音频，以便在共享屏幕时共享声音。"

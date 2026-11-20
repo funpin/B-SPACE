@@ -12,13 +12,20 @@ and the measuring harness of stage 0.
 |--------|------------|
 | `BSpaceCore` | Logic with no AppKit or WebKit in it: navigation policy, the saved instance address, the bridge contract, the page-side bridge script, the router. Covered by `swift test` |
 | `BSpaceShell` | The window, the `WKWebView` and the native half of the bridge |
-| `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app` |
+| `BSpaceApp` | The application: starts `BSpaceShell`. `scripts/bundle.sh` wraps it into `B-SPACE.app`, or `B-SPACE Dev.app` for a development build |
 | `ContractCheck` | Drives `BSpaceShell` through the bridge contract check, or opens a live instance in it |
 | `WebKitProbe`, `ProbeSupport` | The measuring harness of stage 0 |
+| `CaptureProbe` | The stage 4 experiment: does a system audio capture that excludes an application leave out what its web view plays |
+| `StreamProbe` | The stage 4 experiment of plan section 12: publish a screen share into a LiveKit room from the shell's own capture, and print what WebRTC says about it |
 
 ## Requirements
 
-macOS 14 or newer and a Swift 6 toolchain. Command Line Tools are enough:
+To build and to run the tests: macOS 15 or newer and a Swift 6 toolchain.
+The app itself is released for macOS 26 and newer (decided on 2026-11-18;
+measured on 27.2 only): the bundle's `LSMinimumSystemVersion` says 26.0,
+and the system refuses to start it on anything older. The package is built
+for 15 because that is the newest `Package.swift` can name with the
+toolchain and SDK it is built by. Command Line Tools are enough:
 `swift build` and `swift test` work without Xcode. This is a SwiftPM package,
 not a pnpm workspace package, so `pnpm install` and the TypeScript checks do
 not touch it.
@@ -34,7 +41,7 @@ swift test
 scripts/bundle.sh --run
 ```
 
-builds `.build/app/dev/B-SPACE.app` and starts it. A development build has its
+builds `.build/app/dev/B-SPACE Dev.app` and starts it (a release identity builds `.build/app/release/B-SPACE.app`). A development build has its
 own bundle identifier (`com.backspace.desktop.dev`) and its own settings
 folder (`~/Library/Application Support/Backspace-Dev`), and does not claim the
 `backspace://` scheme: it runs beside the installed app without touching that
@@ -57,8 +64,28 @@ script fails unless the designated requirement then names the certificate's
 hash; that requirement is what keeps macOS permissions across updates (see
 "Stable signing identity" in
 [desktop-security.md](../../docs/systems/desktop-security.md)). Without them
-the signature is ad hoc, which is right for a development build.
-`MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+the signature is ad hoc. `MAC_SIGN_REQUIRED=1` refuses the ad hoc fallback.
+
+An ad hoc build is a new application to macOS every time it is rebuilt: the
+system tells it by the hash of its code, so the microphone, Screen Recording
+and Input Monitoring grants of the build before are refused to it while the
+privacy lists still show them switched on, and each has to be removed and
+given again. To work on the client without that,
+
+```bash
+scripts/dev-identity.sh
+```
+
+makes a self-signed code-signing certificate of this machine's own, once, in
+`~/Library/Application Support/Backspace-Dev-Signing` (readable by its owner
+alone, outside the repository). `bundle.sh` signs a development build with it
+whenever it is there and no certificate is named in the environment; a
+release identity never takes it. The first build signed with it is one more
+new application: clear the entries of the builds before with
+`tccutil reset All com.backspace.desktop.dev`, give the grants once, and
+they stay. `scripts/dev-identity.sh --remove` deletes the certificate.
+Whoever can read that folder can sign code macOS takes for the development
+build, with its grants; it has nothing to do with the project's certificate.
 
 `scripts/sign-selftest.sh` checks the certificate path without the project's
 certificate: it makes a throwaway one, builds the bundle signed with it,
@@ -176,6 +203,21 @@ Logic in `BSpaceCore/AppLaunch.swift`, the system calls in
   `--hidden`, or when the system opened it at login (the launch event says so)
   and `startMinimized` is on. The page loads and connects all the same. A
   launch by a link is never hidden.
+
+### What the page complains about
+
+A development build (`scripts/bundle.sh --identity dev`) writes the page's
+warnings and errors to `page.log` in its settings folder
+(`Application Support/Backspace-Dev`): what the web client logged with
+`console.warn` and `console.error`, errors nobody caught and promises nobody
+handled, one line each with the time, and a line for every page load. The
+file is started again when it passes a megabyte. The shipped app writes
+none (`ShellEnvironment.pageLogURL` is nil for it).
+
+It is there because a build that is being tried has no inspector open, and
+the system's own log says nothing of what happens inside the page. In the
+first call the client was tried in, a share that dropped the sharer from the
+call left only this to read, and the file named the cause in one attempt.
 
 ### Language and the menu bar
 
@@ -494,6 +536,562 @@ begins and ends: push-to-talk with the window hidden. The logic is in
   `keybind-portal-status` answers null and `keybind-portal-retry` does
   nothing.
 
+### The microphone and the camera
+
+A web view asks the shell before it asks the system
+(`requestMediaCapturePermissionFor`). Left unanswered, WebKit shows its own
+question on top of the system's, again on every page load. The shell answers
+by `MediaCapturePolicy`:
+
+- the page of the window, asking for itself, is granted; the only question
+  the user then sees is the system's, once, with the text from the string
+  catalog (`mac.permission.*`, written into the bundle);
+- a frame inside the page is denied, whatever its origin: an embedded player
+  has no business with the microphone. The Electron build grants every
+  request (it sets no permission handler);
+- the shell's own pages (the instance picker, recovery) are denied.
+
+Each answer goes to the log (`[media] the page asked for the microphone:
+granted`). Not seen on the built app yet: the system's question and a working
+microphone and camera in a call.
+
+Choosing the output device is the web client's part: WebKit has no
+`AudioContext.setSinkId`, so the client plays its mix through a media element
+pointed at the device (`OutputRouter`; "Output routing" in
+[voice.md](../../docs/systems/voice.md)).
+
+### What can be shared
+
+`get-screen-sources` answers with every display and every ordinary window,
+each with a picture, in the shape the web client's stream setup screen reads
+(`ScreenSource.bridgeValue`). Ids are spelled as the Electron build spells
+them, `screen:<display id>:0` and `window:<window id>:0`: the client
+remembers the id shared last time.
+
+- **The list** comes from ScreenCaptureKit (`SystemScreenSourceLister`).
+  Displays first, then windows in the system's order. A window is listed
+  when `ScreenSourceRules.isListed` says so: an application's, on the
+  ordinary level, on screen, titled, at least 48 points on each side, and
+  not the system's furniture. The last rule is there for Stage Manager,
+  which keeps a small titled copy of every window in its strip on the
+  ordinary level: without it each of those windows is listed twice (seen on
+  a machine with Stage Manager on: 15 windows, 5 after the rule).
+- **Pictures** are taken at once for all of them (`SCScreenshotManager`),
+  fitted into 320 by 180 pixels with the proportions kept, never enlarged,
+  as PNG. A window's application icon is drawn at 32 pixels. A source the
+  system would not photograph is left out.
+- **Names.** A window is called by its title. A display is called by its
+  own name ("Built-in Retina Display"), where the Electron build says
+  "Screen 1"; `mac.capture.screen` is for a display the system has no name
+  for.
+- **Who may ask, and how often** (`ScreenSourceGate`, the rule of the
+  Electron build's `screenSharePolicy.ts`): the pictures are of the user's
+  screen and the page is a server's code. New pictures are taken only while
+  the app's window is the one the user works in, and no more often than once
+  a second; otherwise the page gets the list it had. Requests that arrive
+  while a list is being made share it. A list is not carried to another
+  page.
+- **Permission.** Without Screen Recording the list is empty and the system
+  is asked once (`CGRequestScreenCaptureAccess`).
+- **A window in the Stage Manager strip** is listed at the size it has
+  there, and the system reports that size for its content too. What a
+  capture of such a window carries has to be looked at when the capture
+  exists.
+
+On this machine the real list (1 display, 5 windows) took 0.44 s and reached
+the page as 258 KB of JSON; with 15 windows, 0.88 s and 411 KB.
+
+The web client does not ask for the list yet: it has to say that it can take
+a native capture before `get-screen-share-picker-mode` answers `'app'` (see
+"Capturing the screen").
+
+### The local media channel
+
+Captured video and sound reach the page over a WebSocket on the loopback
+address (`LocalMediaChannel`). A page served over `https` may open nothing
+less than `wss://`: `ws://127.0.0.1` and a custom URL scheme are refused as
+mixed content (measured in the audit). The server's Content Security Policy
+already allows it (`connect-src wss:`).
+
+- **The certificate.** Nobody can issue one for `127.0.0.1`, so every channel
+  makes its own (`LocalIdentity`): a fresh P-256 key and a version 3
+  certificate signed with it, for the address `127.0.0.1`, a TLS server's,
+  written in DER by the package itself. The system turns a key and a
+  certificate into a TLS server's identity only through a PKCS#12 file, so
+  one is written in memory (triple DES and HMAC-SHA1 with the key derivation
+  of RFC 7292: the form everything reads) and imported with
+  `kSecImportToMemoryOnly`. No keychain is touched and nothing is
+  written to disk.
+- **Trust.** Nothing trusts that certificate except the shell's own web view:
+  when a TLS server shows its certificate, the navigation delegate vouches
+  for it only if the address is `127.0.0.1`, the port is that of a channel
+  the shell has open, and the certificate is that channel's, byte for byte.
+  Everything else is decided by the system as before.
+- **Who may speak** (`MediaChannelGate`). Any program of the machine can
+  connect to a loopback port. A handshake from an origin other than the
+  page's is refused. Then the first message has to be the token the shell
+  gave the page, 32 random bytes; it works once, a wrong guess does not spend
+  it, and nothing that connects after it was used is heard, even when that
+  connection is gone. A connection that says nothing for five seconds is
+  closed.
+- **A slow page.** A message is dropped, and `send` says so, when 4 MB
+  already wait to be sent: old frames are worth nothing.
+- **One page.** A channel is opened for the page the window shows
+  (`openMediaChannel`; the shell's own pages get none) and closed when the
+  window shows another.
+
+Measured on the shell (`--check media-channel`, macOS 27.2.1): 240 messages
+of 40 KB at 60 a second reach the page 0.2 ms after they leave at the median,
+1.8 ms at the 95th percentile, 4.8 ms at most. The same from a page with an
+`https` origin, on a bench: 0.5, 3.1 and 8.2 ms.
+
+The page gets the address and the token from `startNativeScreenCapture`
+(see "Capturing the screen").
+
+### Video on the channel
+
+What the channel carries is described by `MediaWire`. Text messages are JSON
+and say what is coming; binary messages are the media.
+
+- **The format** is announced before the first frame and whenever it changes:
+  `{"type":"video","codec":"avc1.64002a","width":1920,"height":1080,"description":"<base64>"}`.
+  `codec` and `description` (the `avcC` decoder configuration record) are
+  what WebCodecs' `VideoDecoder.configure` takes.
+- **A frame** is a binary message: one byte for what it is (1 a key frame,
+  2 a frame that needs the ones before it), eight bytes for when it was
+  captured (milliseconds since 1970, a little-endian double, the page's
+  `Date.now()` clock), then one H.264 access unit with each NAL unit behind
+  its length in four bytes, as VideoToolbox makes it.
+- **The page may ask** for a key frame with `{"type":"keyframe"}` when its
+  decoder lost its place.
+
+`VideoEncoder` makes the frames: H.264 High profile on the hardware encoder,
+in real time, with no frame reordering, about 0.12 bits a pixel
+(`VideoShape.bitsPerSecond`: 15 Mbit/s at 1080p60, 27 at 1440p60, 43 at
+3024 by 1964; the page decodes it and the browser encodes it again for the
+call, so this stream is kept well above what the call carries). A key frame
+is made at the start, when the page asks, and at least every ten seconds.
+
+Two things were found by measuring, and both differ from what the audit's
+prototype did:
+
+- **The low-latency rate control is not used.** Asking for it
+  (`EnableLowLatencyRateControl`) selects another encoder,
+  `h264.rtvc`, in place of the hardware one, `ave.avc`. On macOS 27.2.1, 180
+  frames at 60 a second:
+
+  | Size | Hardware encoder: frames out, time inside | Low-latency: frames out, time inside | Low-latency: the call blocks |
+  |------|-------------------------------------------|--------------------------------------|------------------------------|
+  | 1920 by 1080 | 60 a second, 18 ms | 39 a second, 124 ms | 25 ms a frame |
+  | 2560 by 1440 | 60 a second, 23 ms | 34 a second, 28 ms | 28 ms a frame |
+  | 3024 by 1964 | 60 a second, 35 ms | 29 a second, 163 ms | 32 ms a frame |
+
+  With the hardware encoder the call returns in 0.1 ms.
+- **The stream is made to say that its frames come in order**
+  (`H264ParameterSets`). The hardware encoder does not reorder frames and
+  does not say so, and a decoder that is not told assumes the worst its
+  level allows: WebKit's held 4 frames at 1080p, 12 at 1440p and 7 at 3024
+  by 1964 before showing the first. The sequence parameter set in the
+  decoder configuration record is rewritten to carry
+  `bitstream_restriction_flag` with `max_num_reorder_frames` of zero, and
+  nothing else in it changes. Choosing another profile does not help
+  (Baseline, Constrained Baseline, Main and Constrained High were tried).
+
+Measured end to end on the shell (`--check video-pipe --size <w>x<h>`, run by
+hand: it measures this machine's hardware encoder): 300 frames the check
+draws, a busy picture, 60 a second, through the encoder and the channel to a
+worker of the page that decodes them (`VideoDecoder`) into a track
+(`VideoTrackGenerator`) the page plays, which is how the web client will do
+it. From a frame being made to its being decoded in the page, after the
+first second, over several runs on a machine that was busy with other work
+(load average 10 to 17):
+
+| Size | Frames a second in the page | Median | 95th percentile | With the decoder left to guess (median) |
+|------|----------------------------:|-------:|----------------:|----------------------------------------:|
+| 1920 by 1080 | 60 | 23 to 26 ms | 36 to 63 ms | 90 ms |
+| 2560 by 1440 | 60 | 28 to 31 ms | 40 to 79 ms | 230 ms |
+| 3024 by 1964 | 58 to 61 | 42 to 46 ms | 51 to 115 ms | 161 ms |
+
+The encoder gave back no frame and the channel dropped none. The 95th
+percentile is mostly the key frame the page asks for half way through: it
+is large and arrives late, and the frames behind it queue.
+
+**A page that falls behind catches up.** Nothing on the way drops a frame,
+so a decoder that is slower than the stream for a moment would stay late
+for good, and later with every such moment: at 3024 by 1964, on the busy
+machine, one run in three ended with 30 frames waiting in the decoder and
+frames 0.8 s late. The reader therefore watches the decoder's queue: more
+than four frames waiting, and it resets the decoder, asks the shell for a
+key frame and skips what arrives before it. In the runs where that
+happened (once in a run, 10 or 11 frames skipped of 300) the latest frame
+was 0.16 to 0.22 s late. The check's page does this; the web client's
+reader has to do the same.
+
+What feeds the encoder is in "Capturing the screen".
+
+### Capturing the screen
+
+A capture starts when the page calls `startNativeScreenCapture({ sourceId,
+maxWidth, maxHeight, frameRate })` with an id from the list of sources. The
+shell opens a local media channel, starts the capture and the encoder, and
+answers with an id for the capture, the channel's address, its token and the
+size and rate of the video that will come; the page connects and decodes.
+`stopNativeScreenCapture(id)` ends it, and so does the window showing
+another page. A page may have up to four at once: while a share runs, the
+stream setup screen previews the source the user is about to switch to, and
+a change of size starts the new capture before it stops the old one.
+
+- **The capture** is ScreenCaptureKit's (`SystemScreenCapturer`): a display
+  by its id, or one window apart from the desktop. The video has the
+  source's own size in pixels, fitted into what was asked for with the
+  proportions kept and both sides even (`VideoShape.encodedSize`; a 3456 by
+  2234 display asked for at 1080p is 1670 by 1080), in the pixel format the
+  hardware encoder takes without a conversion, with the pointer in it. The
+  size is decided when the share starts: a window resized later is scaled
+  into it.
+- **A screen that stands still.** The system sends a frame only when
+  something changed. A page that connects a moment after the capture
+  started, or a decoder that asks for a key frame, would wait for the next
+  change with nothing to show, so the session (`CaptureSession`) keeps the
+  last frame and encodes it again as a key frame when the screen has not
+  changed within 50 ms of being asked.
+- **A frame that could not be sent** (the page reads too slowly, or has not
+  connected yet) breaks the chain the following frames depend on, so the
+  next one is made a key frame.
+- **The capture ending by itself** (the window was closed, the display
+  unplugged, the permission taken away) closes it, and the page hears
+  `onNativeScreenCaptureEnded` with its id.
+- **Refusals** say why: `bad-request` (no source named), `no-permission`
+  (no Screen Recording; the system has been asked), `no-source`,
+  `unsupported` (a shell that does not capture), `too-many`, `failed`.
+- **Who picks the source.** `getScreenSharePickerMode({ nativeCapture: true
+  })` answers `'app'`: a web client that says it can take a native capture
+  is shown the app's own list. Without the argument the answer is
+  `'system'`: a client from before native capture calls `getDisplayMedia`
+  and WebKit shows its own picker (plan, 5.5).
+
+Checked on the shell with a screen the check makes up (`--check capture`,
+part of `contract-check.sh`): the picker mode by what the client says; a
+request without a source, and for one that is gone; a share fitted into what
+was asked for and decoded in the page; a screen standing still giving a
+picture to a page that connects late and to a decoder that asks; two
+captures at once, each stopped by its id, and a fifth refused; the three
+ways a capture ends.
+
+The real screen (`--check capture-system`, by hand, macOS 27.2.1): the main
+display, 3456 by 2234, asked for at 1080p and 60 frames a second, was
+captured at 1670 by 1080; in five seconds of ordinary work on screen the
+page decoded 249 frames, 51.5 a second while the screen changed, each 20 ms
+after it was captured at the median, 38 ms at the 95th percentile, 59 ms at
+most; no frame was skipped.
+
+**The web client's side** is `packages/web/src/platform/nativeCapture/`
+(change 4 of the plan). `nativeScreenCapture.ts` starts a capture and
+returns an ordinary stream with one video track; a module worker
+(`reader.worker.ts`) connects to the channel, decodes with `VideoDecoder`
+and writes into a `VideoTrackGenerator`, which WebKit has in workers only;
+`channelReader.ts` is its logic, the catch-up rule included (see "Video on
+the channel"). Stopping the track ends the capture; a capture that ends by
+itself fires `ended` on the track; another size or rate is a second
+capture of the same source behind the same track. The stream setup screen
+passes `nativeCapture: true` when it asks who picks the source, and stages
+the picked tile through it instead of `getDisplayMedia`. The details are in
+"Screen sharing in the native macOS client" in
+[voice.md](../../docs/systems/voice.md).
+
+That code was run in the shell (`--check capture-web`, by hand: it needs the
+web package's dev server and its workbench page
+`dev-native-capture.html`) with a screen the check makes up: the track plays
+in a video element at 1152 by 720, goes on playing, follows other limits to
+640 by 400 behind the same track while the first capture stops, says when
+the capture ends, stops the capture when stopped, and reports a source that
+is gone.
+
+Not done: a share in a real call (through LiveKit, watched from another
+client), processor load and the comparison with the Electron build are
+not measured.
+
+### The shell's own share
+
+The share the app is meant to have (plan section 12): the shell joins the
+call itself, as the user's stream participant, and publishes what it captures
+with one hardware encode. The page decides (which call, with which stream
+token, what to share, at what quality) and the shell does it; nothing of the
+share passes through the page. It replaces the path above, where the picture
+went to the page over the local channel and was encoded a second time there;
+that path is still in the tree and goes once the new one has been through a
+call.
+
+| Piece | Where | What it is |
+|---|---|---|
+| `ScreenShareRequest`, `ScreenShareUpdate`, `ScreenShareReply`, `ScreenShareEvent`, `ScreenShareStats` | `BSpaceCore/ScreenShare.swift` | What the page and the shell say to each other, with the bounds a request is brought into. A call server is a `wss://` address, or `ws://` to this machine only |
+| `ScreenSharePublisher` | `BSpaceShell/ScreenShare.swift` | A share's connection to a call, as a protocol: join, publish video, take frames, change the encoding, publish and unpublish sound, leave |
+| `ShareSession` | the same file | One share: the capture, the sound, the publisher, and their order. The capture is prepared first, so a missing permission or a source that is gone is said before the call hears of anything. A change of source, size or rate starts a new capturer whose frames take over when it runs, and the track is not published again. A window that changes size is followed, as in the capture path |
+| `LiveKitSharePublisher` | `BSpaceShell/LiveKitSharePublisher.swift` | The real connection, through the fork of LiveKit's library (below). The library's mode without devices, so nothing opens a microphone; H.265 keeps an H.264 backup track; sound at 128 kbit/s; WebRTC's adaptation switched off (it reads the hardware encoder's latency as load and cuts 60 frames a second to 40) |
+
+Bridge members: `startNativeScreenShare`, `updateNativeScreenShare`,
+`stopNativeScreenShare`, `onNativeScreenShareEvent`, and for the preview
+`startNativeSharePreview`, `setNativeSharePreviewFrame`,
+`stopNativeSharePreview`, all `nativeOnly`;
+`docs/systems/desktop.md` has their arguments and answers. One share per
+window. `getScreenSharePickerMode({ nativeShare: true })` answers `app` when
+the shell can publish.
+
+Checks:
+
+- `--check share` (in `contract-check.sh`): the session through the bridge
+  with a screen, a system and a call the check makes up. What is refused
+  and before what is made for it, what the call is handed, what each change
+  touches and leaves, every way a share ends, and that it goes with its page.
+- `--check share-live --url wss://… --token-file <stream token> [--seconds 20]
+  [--codec h265]` (by hand): the same start through the bridge with the real
+  publisher into a real room, a made-up screen and sound, a change of bitrate
+  in the middle; prints what the connection reports. Watch the room with
+  `StreamProbe --watch`. Measured on 2026-11-19: 1920 by 1200 at 60 frames a
+  second for 70 seconds, hardware H.265, the viewer at 60 to 61 with no
+  freeze, sound at 128 kbit/s as screen share audio.
+
+The app bundle carries the library's two frameworks in
+`Contents/Frameworks` (`bundle.sh` copies them and adds the search path,
+`sign.sh` signs them before the app); the bundle is 46 MB with them.
+`scripts/toolchain.sh` makes `bundle.sh` and `contract-check.sh` build with
+Xcode's toolchain: built by the Command Line Tools the library compiles and
+then crashes when a share joins a call.
+
+### The rate of a capture
+
+ScreenCaptureKit does not give the rate it is asked for. Asked to leave a
+sixtieth of a second between frames on a display that refreshes 120 times a
+second it gives about 57 frames a second, 42 for 45 and 29 for 30 (the first
+share in a real call arrived at 53 and at 28): a frame that comes a hair
+before its time is skipped, and the next is a whole refresh later. Asked for
+a shorter interval it gives more than the rate, by an amount that depends
+on the display.
+
+So `SystemScreenCapturer` asks for frames with room to spare (three
+quarters of the rate's interval, `frameIntervalFactor`) and `FramePacer`
+(`BSpaceCore`) picks the rate's own out of them: a schedule that moves by
+whole intervals, so a frame taken a little early or late does not shift
+the ones after it, and a screen that stood still is not made up for. It
+covers the share, the preview and the capture path alike.
+
+`--check capture-rate-system` (by hand: a small window that changes at
+every refresh, and the system's recording indicator) counts the frames
+three ways. On 2026-11-20, on the built-in display at 120 Hz:
+
+| Asked for | The system, for the rate itself | The system, with room to spare | The capturer |
+|---|---|---|---|
+| 60 | 56.9 | 73.8 | 59.7 |
+| 45 | 42.3 | 57.5 | 45.1 |
+| 30 | 29.2 | 38.6 | 30.0 |
+
+### The live preview of a source
+
+Before a share starts, the stream setup screen shows the picked source live.
+The shell draws it: a capture at a preview's size (`SharePreview`, at most
+1280 by 800 at 30 frames a second) whose frames are handed, as they are, to
+an `AVSampleBufferDisplayLayer` in a view over the web view
+(`SystemSharePreview`). No encoder, no copy, and nothing of it passes through
+the page, so it does not stutter when the page is busy, which the preview of
+the capture path did.
+
+The page says which source (`startNativeSharePreview`) and where its preview
+box is (`setNativeSharePreviewFrame`, viewport coordinates and a corner
+radius; `SharePreviewFrame` reads and bounds it). The view lies over the
+page: what the page draws over its box would be covered, so the page hides
+the picture (a frame of `null`) while the box moves or something of its own
+is over it. Clicks go through to the page. The preview ends with
+`stopNativeSharePreview`, with its source (`preview-ended` on the share's
+event channel) and with its page.
+
+### A source the system does not draw
+
+A window in another of Stage Manager's sets, or on another desktop, is
+listed as on screen and is not drawn: ScreenCaptureKit answers a capture of
+it with one sample whose status is `suspended` and no picture, and nothing
+more until the window comes to the screen. (Not every such window: one
+that goes on drawing, a video playing in it, gives frames all the same.
+The system's status is what is gone by, not a guess from the window
+list.) The first share of such a window in a real call did not start: the
+library takes a track's size from its first frame, waited ten seconds for
+one and gave up.
+
+`ScreenCapturer.onHidden` says when the system stops drawing the source
+and when it draws it again, and `isHidden` what it last said.
+`ShareSession` hands the call a black picture of the source's size
+(`BlankFrame`) for a capture that is hidden before it gave any, so the
+share is published and in the call when the user switches to the window;
+the same after a change of source, so that viewers do not go on seeing
+the source before.
+
+Viewers are not left to take a black or a standing picture for a fault.
+For as long as the source is hidden the video is paused in the call
+(`ScreenSharePublisher.setVideoPaused`, the library's mute of the track):
+the call's server tells every viewer's client, those who join later
+included, nothing of the video is sent, and the stream tile says that the
+sharer minimized or hid the window (`ParticipantInfo.screenSharePaused`
+in the web client). The sound goes on. The picture is back about a
+second after the window is drawn again. The page is told in
+the start's answer (`hidden`) and by `source-hidden` afterwards, and for
+the preview by `hidden` and `preview-hidden`: the setup screen says in
+words that the window is not open on the screen, and a share says it
+once in a toast.
+
+`--check share` covers it with a made-up source that gives no frames, and
+its made-up connection now waits for a first frame as the library does.
+`--check share-live` with `--hidden-from`, `--hidden-until` or
+`--starts-hidden yes` does the same through the real library into a real
+room; watched from `StreamProbe --watch` on 2026-11-20, the viewer got no
+frames while the source was hidden and 60 a second again a second after.
+
+Checks: `--check share` covers the preview through the bridge with a
+presenter that only remembers where it was put; `--check
+share-preview-system` (by hand) puts the real layer in a small window on the
+screen, feeds it made-up frames, captures the window and measures that a
+picture is there (16 to 234 of 255 in brightness on 2026-11-19; a layer that
+draws nothing is one flat colour).
+
+### The system's sound
+
+A share can carry what the Mac plays: everything except this app, so that
+viewers do not hear themselves through the call. It is a capture of its own,
+apart from the picture's, for two reasons. The System Audio switch turns it
+on and off while a share runs, and the picture must not stop for that. And
+one ScreenCaptureKit filter cannot keep the app's window in the picture and
+the app's sound out of the audio: the sound follows the applications the
+filter names.
+
+`SystemSoundCapturer` (`SystemAudioCapture.swift`) is a ScreenCaptureKit
+stream of the main display with this app in the filter's excluded
+applications, `capturesAudio` on, 48 kHz in two channels. A stream cannot be
+of sound alone, so it also takes a picture two pixels wide once a second,
+which nobody reads. The app is found among the applications the system
+lists by its process id; the system counts the sound of the web view's
+helper processes as the app's (measured with CaptureProbe, below). That holds
+for an app started the usual way. One started from a terminal has its
+helpers counted as the terminal's and hears itself: a development build run
+that way sends the call back to its viewers.
+
+`SystemAudioSession` puts the samples on a local media channel of its own:
+the format as a text message when the page connects
+(`{"type":"audio","sampleRate":48000,"channels":2}`), then binary messages
+of kind 3 whose payload is 32-bit little-endian floats, frame after frame,
+each channel's sample in turn (`SystemAudio.interleaved` lays the system's
+one-array-a-channel samples out that way). Samples from before the page
+connected go nowhere, and samples the channel cannot take are dropped:
+sound that is late is worth less than a gap.
+
+The bridge has three members for it, all `nativeOnly`:
+
+| Member | What it does |
+|--------|--------------|
+| `startNativeSystemAudio()` | Starts a capture. Answers `{ ok: true, id, url, token, sampleRate, channels }` or `{ ok: false, reason }` with `no-permission`, `unsupported`, `too-many` or `failed`. Up to four at once |
+| `stopNativeSystemAudio(id)` | Ends that capture and closes its channel |
+| `onNativeSystemAudioEnded(cb)` | A capture ended by itself; the callback gets `{ id }` |
+
+`getSystemAudioCapability` is answered by what the client says it takes, as
+the picker mode is: `{ nativeAudio: true }` gives `excluded`, anything else
+`unavailable`. A web client from before this capture uses WebKit's
+`getDisplayMedia`, which gives a share no system audio, and its stream
+settings say so.
+
+The web client's side is in `packages/web/src/platform/nativeCapture/`
+(`nativeSystemAudio.ts`, a worker that reads the channel, an audio worklet
+that plays the samples into a track); see "Screen sharing in the native
+macOS client" in [voice.md](../../docs/systems/voice.md).
+
+Checked on the shell with a system the check makes up, a tone on each
+channel (`--check system-audio`, in `contract-check.sh`): the capability
+answers, the format, both tones on their own sides at the level they were
+made at, the three ways a capture ends, the limit of four. The web client's
+own code was run on it (`--check capture-web`): a meter in the page hears
+440 Hz on the left and 880 Hz on the right of the track at the level they
+were made at.
+
+The real system (`--check system-audio-system`, by hand, macOS 27.2.1):
+48,000 frames a second in pieces of 960 frames (a fiftieth of a second),
+sent whether anything plays or not, at most 32 ms apart, the oldest sample
+50 ms old when the page read it. With a 440 Hz tone played at 0.003 by the
+check's own page, the channel carried 440 Hz at a level of 0.0021 (the tone's
+root mean square) and so did the track the web client's code made of it,
+with 27 ms waiting in its buffer, nothing skipped, and no gap in three
+seconds.
+
+**A page nobody sees.** The window of a check is never shown, and WebKit
+holds back a page that has been hidden for about half a minute: timers in
+its workers drop to ten a second, and the clock of an audio worklet loses
+between 3 and 19 percent against the wall clock (`--check audio-clock`, by
+hand; for the first half minute every arrangement tried keeps exact time:
+one context or two at once, at the same rate or at different ones, a worklet
+fed by the page or by a worker, with or without something listening to its
+stream). Sound then piles up in the web client's buffer and is skipped a
+fifth of a second at a time. A page that plays something audible is not held
+back: the run with the tone above kept time. In a call the page captures a
+microphone and plays the other side, which should keep it awake when the
+window is hidden or behind the game being shared; that is not measured, and
+it is the first thing to look at when a share is tried in a real call.
+
+Not done: a share with sound in a real call; the app's own sound left out
+of a capture the app itself runs (the experiment used a capture by another
+process); whether a running audio router (SoundSource) doubles the sound,
+which `getAudioRouters` would warn about and still answers with nothing.
+
+### Viewers' pointers
+
+Viewers of a share can point at it. In the app their pointers are drawn on
+the stream tile; the sharer is looking at the real desktop, so the shell
+draws them there, over the display being shared. The page owns the state
+and sends the whole list on every change (`setStreamPointerOverlay`,
+`endStreamPointerOverlay`: members the Electron build already had, and the
+web client needed no change).
+
+- **The list** is checked as the Electron build checks it
+  (`OverlayPointers.sanitized`): at most 32 pointers, each with an id and a
+  place inside the picture; a name is cut to 64 UTF-16 units; a colour that
+  is not a plain `rgb(…)` is replaced.
+- **The display** is the one the share shows (`PointerOverlayTarget`). The
+  shell knows which captures run, not which is published, so the pointers
+  go on the display of the newest capture of a whole display that still
+  runs. A share of a window has none, as in the Electron build. While the
+  stream setup screen previews another display the pointers are on that
+  one, and come back when the preview is dropped.
+- **The window** (`SystemPointerOverlay`) is a borderless, non-activating
+  panel the size of the display: transparent, above everything
+  (`.screenSaver`), on every Space and over full-screen applications, out
+  of Mission Control, never key, and it ignores the mouse. It is shown
+  while there are pointers and ordered out when there are none. The arrow,
+  the name's tag and the ring of a click have the Electron overlay's shapes,
+  sizes and timings; the name is set in the system font.
+- **Out of the share.** A capture of a display names the panel in its
+  content filter (`ScreenCaptureRequest.excludedWindows`, filled in by the
+  shell, never by the page), so viewers do not see each pointer twice. The
+  panel is made, not shown, when such a capture starts, and kept for as
+  long as the shell runs: the captures know it by its window number. It
+  also has the sharing type that asks the system to keep it out of captures
+  the shell does not run (the system's picker).
+- **`onStreamPointerOverlayCaptured`** is never sent: it is the Electron
+  build's report that Windows put the overlay into the picture after all.
+
+Checked on the shell with a screen and an overlay the check makes up
+(`--check pointer-overlay`, in `contract-check.sh`): what the page sends is
+checked on the way, the pointers go on the display a share shows and
+nowhere without one, the capture is asked to leave the overlay's window
+out, and the pointers go when pointing ends, with the share and with the
+page.
+
+The real overlay over the real main display (`--check
+pointer-overlay-system`, by hand, macOS 27.2.1), in three captures of that
+display. An overlay made not to hide itself is in a capture that leaves
+nothing out, and is not in one that names its window: the filter works by
+itself. The overlay as the app makes it is not in a capture that leaves
+nothing out either: on this system ScreenCaptureKit honours the window's
+sharing type too. The same check writes a picture of the pointers alone,
+drawn off screen, which is how their look was compared with the page's.
+
+Not looked at on the screen by a person: the panel over a full-screen
+application and across Spaces, with Stage Manager on, and that a click goes
+through it. Not tried in a real call, with real viewers pointing.
+
 ### The bridge
 
 `window.backspace` is built from `packages/desktop/src/bridgeContract.json`,
@@ -505,8 +1103,9 @@ to WebKit and sends the shell's events back.
 
 A member marked `nativeOnly` exists in this shell alone, for something this
 shell does differently from the Electron build: `setDragRegions` (see
-"Dragging the window") and `openKeybindPermissionSettings` (see "Global
-keybinds").
+"Dragging the window"), `openKeybindPermissionSettings` (see "Global
+keybinds"), and `startNativeScreenCapture`, `stopNativeScreenCapture` and
+`onNativeScreenCaptureEnded` (see "Capturing the screen").
 
 Every call channel of the contract has to be answered before the first page
 loads, or the app stops at launch. Channels whose feature is not ported yet
@@ -580,7 +1179,38 @@ the same; a combination with a modifier and a mouse button work; an
 empty list stops the listening; a list that cannot be read changes nothing;
 the page's request opens the permission's settings; a listener the system
 will not start is reported; another page starts with no keybinds. No real
-key is listened to there. Then it loads
+key is listened to there. The list of what can be shared (`--check
+sources`) is checked with a list the check makes up: a focused window gets
+it in the shape the web client reads; a second request within a second and
+a window that is not focused get the list they had; two requests at once
+share one listing; another page starts with nothing. The screen is not
+looked at there: `--check sources-system`, run by hand, asks the system
+once and prints how many displays and windows it gave and how large their
+pictures are, never a name, a title or a picture. The local media channel
+(`--check media-channel`) is checked on a page served from the loopback
+address: a window with no page gets no channel; a connection that says a
+wrong token is closed and hears nothing; the one that says the token gets
+240 messages of 40 KB at 60 a second, and the check prints how long they
+took; what the page says back reaches the shell; the token works once; a
+channel the shell did not open is not trusted by the page; the channel
+closes with its page. `--check video-pipe`, run by hand, sends frames the
+check draws through the encoder and the channel to a decoder in a worker
+of the page and prints how long they took (see "Video on the channel").
+A share (`--check capture`) is started through the bridge with a screen
+the check makes up; `--check capture-system`, run by hand, captures
+the real main display for a few seconds; `--check capture-web`, run by
+hand against the web package's dev server, runs the web client's own
+capture code in the shell (see "Capturing the screen").
+The system's sound (`--check system-audio`) is asked for through the
+bridge with a system the check makes up; `--check system-audio-system`,
+run by hand, captures the real system's sound for a few seconds, and
+`--check audio-clock`, run by hand, measures how an audio context's clock
+runs in the web view (see "The system's sound").
+Viewers' pointers (`--check pointer-overlay`) are sent through the bridge
+with a screen and an overlay the check makes up; `--check
+pointer-overlay-system`, run by hand, draws the real overlay on the main
+display for a few seconds and captures it (see "Viewers' pointers").
+Then it loads
 `contract/harness.html`, and lets that page use the bridge the
 way a client does: it reads every member, calls each one, subscribes to every
 event, and the driver then sends one event on each channel. The run fails
@@ -703,3 +1333,155 @@ any browser for comparison.
 To look at a page of the web client itself, start Vite (`pnpm dev:web`) and
 point `--url` at `http://localhost:5173/dev-voice-grid.html` or any other
 workbench page.
+
+## CaptureProbe
+
+The experiment stage 4 starts with. The client streams system audio next to a
+voice call. If the call's own sound came back through the capture, everybody
+in the stream would hear themselves, so the capture has to leave the
+application out. A web view does not play in the application's process,
+though: WebKit's helper processes do. Does excluding the application exclude
+them?
+
+The probe opens a page that plays four quiet tones, one through each way a
+page makes sound, records system audio with ScreenCaptureKit under each way of
+leaving an application out, and reports which tones each recording holds. A
+second copy of the probe, in a bundle with another identifier, plays the same
+four paths at other frequencies: it is "some other application", and, started
+through LaunchServices whatever the probe itself was started by, it is the
+subject of the question.
+
+```bash
+# From packages/desktop-macos. About fifty seconds of quiet tones.
+scripts/capture-probe.sh -- --gain 0.02
+scripts/capture-probe.sh --open -- --request-permission   # under the probe's own permission
+scripts/capture-probe.sh --help
+```
+
+It needs the Screen Recording permission: the terminal application's when run
+as above, its own with `--open`. A tone counts as present when the recording
+holds it within 3 dB of the level it was played at, and as absent when it is
+10 dB or more below; a capture records an application at the level the
+application gave its sound, whatever the output volume.
+
+### What it showed
+
+macOS 27.2.1, 2026-11-18, probe started from a terminal, second copy started
+through LaunchServices. Level of each tone in the recording, in dB relative to
+full scale; the tones were played at -34.
+
+| Capture | Probe: Web Audio | Probe: file | Probe: live stream | Second copy: Web Audio | Second copy: file | Second copy: live stream |
+|---------|-----------------:|------------:|-------------------:|-----------------------:|------------------:|-------------------------:|
+| Nothing excluded | -34 | -34 | -34 | -34 | -34 | -34 |
+| `excludesCurrentProcessAudio` | -34 | -34 | -34 | -34 | -34 | -34 |
+| Probe in `excludingApplications` | -34 | -34 | -34 | -34 | -34 | -34 |
+| Both of the above | -34 | -34 | -34 | -34 | -34 | -34 |
+| Only the other applications included | -138 | -136 | -112 | -34 | -34 | -34 |
+| Second copy in `excludingApplications` | -34 | -34 | -34 | **-139** | **-113** | **-115** |
+| Neither copy included | -160 | -160 | -160 | -160 | -160 | -160 |
+| Nothing excluded, again | -34 | -34 | -34 | -34 | -34 | -34 |
+
+- **An application started the ordinary way is excluded together with its web
+  view's sound.** With the second copy in the content filter's list of
+  excluded applications, none of its three tones is in the recording, and the
+  probe's own tones still are. The system counts the sound of WebKit's helpers
+  as the sound of the application they work for. The hypothesis of the plan
+  holds, and the Core Audio process tap is not needed.
+- **It follows the responsible process, not the bundle.** The probe itself,
+  started from a terminal, keeps all its tones under both ways of excluding
+  it: its helpers answer to the terminal's application. A client started from
+  a terminal (`swift run`, the bundle's executable by path) will hear itself
+  in its own stream; one started from Finder, the Dock, at login or by `open`
+  will not.
+- **A list of included applications works too**, and in both cases: leaving an
+  application out of the list removes its web view's sound even for the
+  terminal-started probe. It is the stricter filter, but it also drops
+  everything that is not an application, and an application started after
+  the capture began has to be added to it.
+- The system does not list WebKit's helpers as applications of their own, so
+  they cannot be excluded one by one.
+
+Not answered by this run:
+
+- **A track that arrived over WebRTC.** The two peer connections in the page
+  did not reach each other on this machine (ICE failed with host candidates
+  only; the machine's tunnel). The live-stream path stands in for it: a remote
+  track reaches its element as a stream as well. A call on the test instance
+  has to confirm it.
+- **`excludesCurrentProcessAudio` for an application started the ordinary
+  way.** It can only be read from inside such an application, which needs the
+  probe's own Screen Recording permission (`--open`). The client does not
+  depend on it: it names itself in `excludingApplications`.
+- **The client itself.** The same has to be seen once on the built client,
+  when its capture exists.
+
+One thing about the page: a short file played on a loop is not a reliable
+tone. The element started it up to thirteen seconds late or sat at zero while
+reporting that it played; a file longer than the run plays from the start.
+
+## StreamProbe
+
+The experiment behind section 12 of the plan: can the shell publish a screen
+share into a call by itself, through LiveKit's Swift library, with one
+hardware encode. It joins a room with a token read from a file, publishes a
+video track fed with frames of its own (made up, or a real display through
+`SystemScreenCapturer`) and, when asked, a sound track fed with ready
+samples, and prints once a second the encoder, the frame rate, the bitrate,
+the network path and the process's CPU as WebRTC reports them. Started with
+`--watch` and a viewer's token it joins the same room as a viewer, in a
+process of its own, and prints what arrives.
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build --product StreamProbe
+.build/debug/StreamProbe --url wss://<livekit> --token-file <publisher token> \
+    --width 2560 --height 1440 --fps 60 --codec h265 --audio tone
+.build/debug/StreamProbe --url wss://<livekit> --token-file <viewer token> --watch
+```
+
+`--degradation resolution|framerate|balanced|disabled` is what WebRTC may
+give up when it thinks the encoder is overloaded. Run for more than 40
+seconds to see it: with the default (`resolution`) WebRTC cuts 60 frames a
+second to 40 at about that point, "limited by cpu", taking the hardware
+encoder's 39 ms a frame of latency for load while the process uses a few
+percent of a core; with `disabled` the share stays at 60. The shell
+publishes with it disabled.
+
+`--floor <kbit/s>` gives the encoding a bitrate floor, `--rebitrate <kbit/s>`
+changes the ceiling in the middle of the run on the same track, and the
+sound is published as screen share audio: all three come from the fork
+below.
+
+Build it with Xcode's toolchain: the same sources built with Command Line
+Tools (Swift 6.1.2) crash when joining a room. `--source display` shows the
+system's recording indicator and sends the main display to the room;
+`--audio tone` feeds a made-up tone to the room only, nothing is played on
+the machine; `--change` halves the frame rate and then the frame size in the
+middle of the run. The tokens are minted by hand on a test server, and the
+run is by hand too: nothing here is part of the app or of
+`contract-check.sh`. What it measured is in the plan, section 12.11.
+
+## The LiveKit library
+
+The package depends on the project's fork of LiveKit's Swift SDK,
+`funpin/client-sdk-swift`, pinned in `Package.swift` to a commit of its
+`b-space` branch: upstream release 2.19.0 plus three additions the shell's
+screen share needs, which upstream's public API does not have.
+
+| Addition | Why |
+|---|---|
+| `LocalAudioTrack.createTrack(name:source:options:reportStatistics:)` | Upstream labels every local audio track `microphone`. The stream participant's token allows only `screen_share` and `screen_share_audio`, and viewers have to tell a share's sound from a voice |
+| `VideoEncoding.minBitrate` | A floor the encoder keeps while the bandwidth estimate is lower. Without it an estimate that starts low makes the encoder drop frames for seconds (measured: 2 to 30 frames a second instead of 60, in about one start of seven) |
+| `LocalTrackPublication.set(videoEncoding:)` | A new bitrate ceiling, floor and frame rate ceiling for a published track without publishing it again, for the quality controls during a share |
+
+The fork's `FORK.md` says the same in the library's terms and how the first
+addition relates to upstream's own draft. To move to a newer upstream
+release: rebase `b-space` onto its tag, run the library's
+`VideoEncodingsTests`, build this package with Xcode's toolchain, run
+`StreamProbe` against a LiveKit server with a token that allows only the two
+screen share sources (sound, `--floor`, `--rebitrate`), and only then change
+the revision in `Package.swift`. `Package.resolved` is committed.
+
+The library brings two dynamic frameworks, `LiveKitWebRTC` (29 MB for both
+architectures) and `RustLiveKitFFI` (3 MB); putting them into the app bundle
+and signing them is not done yet. SwiftPM downloads WebRTC for every Apple
+platform at once, a 686 MB archive, on a clean build.

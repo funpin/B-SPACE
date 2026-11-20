@@ -210,7 +210,7 @@
   },
   "packages/web/src/audio/AudioManager.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 2
     }
   },
   "packages/web/src/components/JoinPage.tsx": {

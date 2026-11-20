@@ -1,7 +1,10 @@
 import AppKit
 import BSpaceCore
 import BSpaceShell
+import CoreMedia
+import CoreVideo
 import Network
+import VideoToolbox
 import WebKit
 
 // Runs the bridge contract check against the real shell: the same window
@@ -103,6 +106,118 @@ import WebKit
 // cannot be read changes nothing; the page's request opens the permission's
 // settings; a listener the system will not start is reported; another page
 // starts with no keybinds. No real key is listened to.
+//
+// With --check sources it checks the list of what can be shared on the real
+// shell, with a list the check makes up: a focused window gets it in the
+// shape the web client reads, a second request within a second and a window
+// that is not focused get the list they had, two requests at once share one
+// listing, and another page starts with nothing. The screen is not looked at.
+//
+// With --check sources-system it asks the system once for the real list and
+// prints how many displays and windows there are and how large their
+// pictures are; no name, title or picture is printed. It needs the Screen
+// Recording permission and is not part of contract-check.sh.
+//
+// With --check media-channel it checks the local channel captured media
+// reach the page on, on the real shell and a page served from the loopback
+// address: a window with no page gets none; a connection that says a wrong
+// token is closed and hears nothing; the one that says the token gets 240
+// messages of 40 KB at 60 a second, and how long they took is printed; what
+// the page says back reaches the shell; the token works once; a channel the
+// shell did not open is not trusted; the channel closes with its page.
+//
+// With --check video-pipe [--size 1920x1080] it sends 300 frames the check
+// draws itself, at 60 a second, through the encoder and the local channel
+// to a worker of the page that decodes them into a track, the way the web
+// client will: every frame has to be decoded, in the announced format, with
+// no decoder error; the page's request for a key frame has to be honoured;
+// a page that falls behind throws away what waits and starts again from a
+// frame it asks for, and the check says how often that happened;
+// how long a frame takes from being made to being decoded is printed.
+// Nothing of the screen is captured. It measures the machine's hardware
+// encoder and is not part of contract-check.sh.
+//
+// With --check capture it starts shares through the bridge, as the web client
+// will, with a screen the check makes up: who picks the source is answered
+// by what the client says it can do; a request without a source or for one
+// that is gone starts nothing; a share is fitted into what was asked for and
+// decoded in the page; a screen standing still gives a picture to a page that
+// connects late and to a decoder that asks; a share ends when the page stops
+// it, when the capture ends by itself (the page is told) and with its page.
+// The real screen is not captured.
+//
+// With --check system-audio it asks for the system's sound through the
+// bridge, as the web client will, with a system the check makes up (a tone
+// on each channel): what a share carries of the app's own playback is
+// answered by what the client says it takes; the samples reach the page in
+// the announced format with each channel's tone on its own side; the capture
+// ends when the page stops it, by itself (the page is told) and with its
+// page; no more than a few run at once. The real system is not captured.
+//
+// With --check system-audio-system [--seconds 4] [--url <the workbench page>]
+// [--tone 0.003] it captures the real system's sound for a few seconds and
+// reports how it arrives in a page: frames a second, the size of the pieces,
+// the longest wait between two, the level. With --url it then has the web
+// client's own code on the workbench page take the same capture and reports
+// how its audio thread kept up. With --tone the page plays a 440 Hz tone at
+// that level ON THE SPEAKERS while it captures, and the check fails if the
+// capture does not hear it. It needs the permission to record the screen
+// and shows the system's recording indicator; nothing captured is kept.
+// Run by hand; it is not part of contract-check.sh.
+//
+// With --check pointer-overlay it sends viewers' pointers through the bridge,
+// as the web client does, with a screen and an overlay the check makes up:
+// what the page sends is checked; the pointers are drawn over the display a
+// share shows and nowhere without one; the capture of that display is asked
+// to leave the overlay's window out; the pointers go when pointing ends,
+// with the share and with the page. Nothing is drawn on the real screen.
+//
+// With --check pointer-overlay-system [--out picture.png] it draws two
+// pointers with the real overlay IN THE MIDDLE OF THE MAIN DISPLAY for a few
+// seconds and captures that display three times: an overlay that does not
+// hide itself, without and with its window left out by the capture, and the
+// overlay as the app makes it in a capture that leaves nothing out. It says
+// whether each capture shows the pointer, and fails unless the first does
+// and the second does not. It needs the
+// permission to record the screen and shows the system's recording
+// indicator; nothing captured is kept. With --out it also writes a picture
+// of the pointers alone, drawn off screen. Run by hand; it is not part of
+// contract-check.sh.
+//
+// With --check capture-window-system it opens a small window of its own ON
+// THE SCREEN for a few seconds, captures it through ScreenCaptureKit and
+// makes it larger while it is captured: the video has to start at the
+// window's own size, the system has to say once that the size changed, and
+// frames of the new size have to follow. It needs the permission to record
+// the screen and shows the system's recording indicator; only the sizes of
+// the frames are read. Run by hand; it is not part of contract-check.sh.
+//
+// With --check audio-clock [--seconds 2] it measures how fast the clock of
+// an audio context runs in the shell's web view against the wall clock:
+// for one context and for two at once at the same and at different rates,
+// and for a worklet that is fed sound a hundred times a second by the page
+// or by a worker while something listens to its stream or nothing does.
+// The window of a check is never shown, so the later rows also show what
+// WebKit does to a page nobody has seen for half a minute. Nothing is
+// played. Run by hand; it is not part of contract-check.sh.
+//
+// With --check capture-web [--url http://localhost:5173/dev-native-capture.html]
+// it loads the web package's workbench page from a running Vite server and
+// has the web client's own capture code (its worker included) take a capture
+// of a screen the check makes up: the track plays in a video element at the
+// size asked for, follows other limits behind the same track, says when the
+// capture ends, stops the capture when it is stopped, and reports a source
+// that is gone. Then the same for the system's sound (a tone on each
+// channel, made up by the check): the web client's worker and audio worklet
+// play it into a track, on which a meter in the page hears each tone on its
+// own side at the level it was made at. It needs the dev server and is not
+// part of contract-check.sh.
+//
+// With --check capture-system [--size 1920x1080] [--frame-rate 60]
+// [--seconds 5] it captures the main display for a few seconds through the
+// whole path and prints the size, how many frames the page decoded and how
+// long they took. The pictures go no further than the page of the check. It
+// needs the Screen Recording permission and is not part of contract-check.sh.
 //
 // With --check electron-profile --profile <folder> it reads the localStorage of
 // an Electron profile the way the import does and prints, for every origin,
@@ -942,6 +1057,3420 @@ func checkNotifications() -> Never {
         ? "notifications: asked for with the page's origin, clicks back to the same origin only, badge set and cleared"
         : "notifications: \(problems.count) problem(s)")
     exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A list of sources the check makes up; counts how often it is asked.
+final class CheckScreenSourceLister: ScreenSourceLister {
+    var sources: [ScreenSource] = []
+    private(set) var asked = 0
+    /// Holds the answers back until `answer()` is called.
+    var holdsAnswers = false
+    private var held: [() -> Void] = []
+
+    func listSources(completion: @escaping ([ScreenSource]) -> Void) {
+        asked += 1
+        let sources = self.sources
+        if holdsAnswers {
+            held.append { completion(sources) }
+        } else {
+            DispatchQueue.main.async { completion(sources) }
+        }
+    }
+
+    func answer() {
+        let answers = held
+        held = []
+        answers.forEach { $0() }
+    }
+}
+
+func checkSources() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let lister = CheckScreenSourceLister()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil,
+            screenSources: lister
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var focused = true
+    shell.isWindowFocused = { focused }
+
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(until: { hasEnded }), loadError == nil else {
+            fail("the local page did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func listed() -> [[String: Any]]? {
+        page("return await window.backspace.getScreenSources();") as? [[String: Any]]
+    }
+    func ids(_ list: [[String: Any]]?) -> [String]? {
+        list?.compactMap { $0["id"] as? String }
+    }
+
+    let picture = Data([0x89, 0x50, 0x4e, 0x47])
+    let display = ScreenSource(kind: .display(1), name: "Built-in Display", thumbnailPNG: picture)
+    let window = ScreenSource(kind: .window(4821), name: "Notes", thumbnailPNG: picture, appIconPNG: Data([1, 2, 3]))
+    lister.sources = [display, window]
+    load(address)
+
+    // 1. A focused window gets the list, in the shape the web client reads.
+    let first = listed()
+    if lister.asked != 1 || ids(first) != ["screen:1:0", "window:4821:0"] {
+        problems.append("the first request listed \(String(describing: ids(first))) after \(lister.asked) listing(s)")
+    }
+    if let source = first?.last {
+        if source["name"] as? String != "Notes" || source["isScreen"] as? Bool != false
+            || source["thumbnailDataUrl"] as? String != "data:image/png;base64,iVBORw=="
+            || source["appIconDataUrl"] as? String != "data:image/png;base64,AQID" {
+            problems.append("a window reached the page as \(source)")
+        }
+    }
+    if let source = first?.first, source["isScreen"] as? Bool != true || !(source["appIconDataUrl"] is NSNull) {
+        problems.append("a display reached the page as \(source)")
+    }
+
+    // 2. Asked again at once, the page gets the list it had: no new pictures.
+    lister.sources = [display]
+    if ids(listed()) != ["screen:1:0", "window:4821:0"] || lister.asked != 1 {
+        problems.append("a second request within a second took new pictures (\(lister.asked) listings)")
+    }
+
+    // 3. After a second it gets a new one.
+    RunLoop.main.run(until: Date().addingTimeInterval(ScreenSourceGate.cacheInterval + 0.1))
+    if ids(listed()) != ["screen:1:0"] || lister.asked != 2 {
+        problems.append("a request a second later did not take new pictures (\(lister.asked) listings)")
+    }
+
+    // 4. A window that is not focused gets the list it had, however long ago.
+    focused = false
+    lister.sources = [display, window]
+    RunLoop.main.run(until: Date().addingTimeInterval(ScreenSourceGate.cacheInterval + 0.1))
+    if ids(listed()) != ["screen:1:0"] || lister.asked != 2 {
+        problems.append("a window that is not focused took new pictures (\(lister.asked) listings)")
+    }
+
+    // 5. Two requests while one list is being made share it.
+    focused = true
+    lister.holdsAnswers = true
+    _ = page("""
+        window.__lists = [];
+        window.backspace.getScreenSources().then((list) => window.__lists.push(list.length));
+        window.backspace.getScreenSources().then((list) => window.__lists.push(list.length));
+        return true;
+        """)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    lister.answer()
+    lister.holdsAnswers = false
+    if !wait(5, until: { (page("return window.__lists;") as? [Int])?.count == 2 })
+        || page("return window.__lists;") as? [Int] != [2, 2] || lister.asked != 3 {
+        problems.append("two requests at once were answered \(String(describing: page("return window.__lists;"))) after \(lister.asked) listings, expected one listing for both")
+    }
+
+    // 6. Another page starts with nothing: unfocused, it gets no list at all.
+    focused = false
+    load(URL(string: origin + "/next")!)
+    if ids(listed()) != [] || lister.asked != 3 {
+        problems.append("another page was given the list made for the one before it")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "sources: listed for a focused window, at most once a second, shared by requests made at once, not carried to another page"
+        : "sources: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+func checkMediaChannel() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment,
+            showsWindow: false,
+            websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(),
+            notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(until: { hasEnded }), loadError == nil else {
+            fail("the local page did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// The page's side: connects, says `token` first, counts what arrives
+    /// until `expected` messages have or the connection closes.
+    let pageScript = """
+        window.channel = (url, token, expected) => new Promise((resolve) => {
+          const out = { opened: false, messages: 0, bytes: 0, delays: [] };
+          let socket;
+          try { socket = new WebSocket(url); } catch (error) { out.error = error.name; resolve(out); return; }
+          socket.binaryType = 'arraybuffer';
+          window.socket = socket;
+          const finish = () => {
+            const d = out.delays.sort((a, b) => a - b);
+            delete out.delays;
+            if (d.length) { out.p50 = d[Math.floor(d.length / 2)]; out.p95 = d[Math.floor(d.length * 0.95)]; out.max = d[d.length - 1]; }
+            resolve(out);
+          };
+          socket.onopen = () => { out.opened = true; if (token !== null) socket.send(token); if (expected === 0) setTimeout(finish, 600); };
+          socket.onmessage = (event) => {
+            out.messages += 1;
+            out.bytes += event.data.byteLength;
+            out.delays.push(Date.now() - new DataView(event.data).getFloat64(0, true));
+            if (out.messages === expected) finish();
+          };
+          socket.onclose = () => { out.closed = true; finish(); };
+          // Long: the sender is a timer on the check's own run loop, and on
+          // a slow machine (a CI runner) 240 turns of it took more than
+          // twelve seconds. A count that is reached ends the wait at once.
+          setTimeout(finish, 60000);
+        });
+        return true;
+        """
+    func open() -> (LocalMediaChannel, LocalMediaChannel.Endpoint) {
+        var opened: (LocalMediaChannel, LocalMediaChannel.Endpoint)?
+        var failure: LocalMediaChannel.Failure?
+        shell.openMediaChannel { result in
+            switch result {
+            case .success(let made): opened = (made.channel, made.endpoint)
+            case .failure(let reason): failure = reason
+            }
+        }
+        guard wait(10, until: { opened != nil || failure != nil }), let opened else {
+            fail("the media channel did not open: \(String(describing: failure))")
+        }
+        return opened
+    }
+    func connect(_ endpoint: LocalMediaChannel.Endpoint, token: String?, expected: Int) -> [String: Any] {
+        let said = token.map { "'\($0)'" } ?? "null"
+        return page("return await window.channel('\(endpoint.url)', \(said), \(expected));") as? [String: Any] ?? [:]
+    }
+
+    // 0. A window that shows no page of a server gets no channel.
+    var refusal: LocalMediaChannel.Failure?
+    shell.openMediaChannel { result in
+        if case .failure(let reason) = result { refusal = reason }
+    }
+    if !wait(5, until: { refusal != nil }) || refusal != .noPage {
+        problems.append("a window with no page was given a media channel (\(String(describing: refusal)))")
+    }
+
+    load(address)
+    _ = page(pageScript)
+    let (channel, endpoint) = open()
+    var connected = 0
+    var disconnected = 0
+    var heard: [Data] = []
+    channel.onClientConnected = { connected += 1 }
+    channel.onClientDisconnected = { disconnected += 1 }
+    channel.onMessage = { heard.append($0) }
+
+    if !endpoint.url.hasPrefix("wss://127.0.0.1:") || endpoint.token.count != 64 {
+        problems.append("the page would be told to connect to \(endpoint.url) with a token of \(endpoint.token.count) characters")
+    }
+    if channel.send(Data([1, 2, 3])) {
+        problems.append("a message was sent with nobody connected")
+    }
+
+    // 1. A connection that says the wrong thing, or nothing it should, is closed
+    //    and hears nothing; neither spends the token.
+    let wrong = connect(endpoint, token: String(repeating: "0", count: 64), expected: 0)
+    if wrong["opened"] as? Bool != true || wrong["closed"] as? Bool != true || wrong["messages"] as? Int != 0 || connected != 0 {
+        problems.append("a connection with a wrong token ended as \(wrong)")
+    }
+
+    // 2. The one that says the token gets the channel: 240 messages of 40 KB,
+    //    60 a second, each stamped with the moment it left.
+    var report: [String: Any]?
+    shell.webView.callAsyncJavaScript(
+        "return await window.channel('\(endpoint.url)', '\(endpoint.token)', 240);", arguments: [:], in: nil, in: .page
+    ) { result in
+        if case .success(let value) = result { report = value as? [String: Any] }
+    }
+    guard wait(10, until: { connected == 1 }) else {
+        fail("the page said the token and was not let in")
+    }
+    var sent = 0
+    var dropped = 0
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
+        var message = Data(count: 40_000)
+        var stamp = Date().timeIntervalSince1970 * 1000
+        withUnsafeBytes(of: &stamp) { message.replaceSubrange(0..<8, with: $0) }
+        if !channel.send(message) { dropped += 1 }
+        sent += 1
+        if sent == 240 { timer.invalidate() }
+    }
+    _ = wait(70, until: { report != nil })
+    timer.invalidate()
+    let messages = report?["messages"] as? Int ?? 0
+    let p95 = report?["p95"] as? Double ?? -1
+    if messages != 240 || report?["bytes"] as? Int != 240 * 40_000 || dropped != 0 {
+        problems.append("the page got \(messages) of 240 messages (\(dropped) dropped): \(String(describing: report))")
+    }
+    // A loose bound: the number itself is printed, and a busy machine
+    // must not fail the check.
+    if p95 < 0 || p95 > 250 {
+        problems.append("95 of 100 messages should arrive within 250 ms, took \(p95)")
+    }
+
+    // 3. What the page says after the token reaches the shell.
+    _ = page("window.socket.send(new Uint8Array([7, 8, 9])); return true;")
+    if !wait(5, until: { !heard.isEmpty }) || heard != [Data([7, 8, 9])] {
+        problems.append("the shell heard \(heard.map { [UInt8]($0) }) from the page, expected one message")
+    }
+
+    // 4. The token works once: a second connection that says it is closed.
+    let second = connect(endpoint, token: endpoint.token, expected: 0)
+    if second["closed"] as? Bool != true || connected != 1 {
+        problems.append("a second connection with the same token ended as \(second)")
+    }
+
+    // 5. A channel the shell did not open is not trusted: the page cannot
+    //    reach it at all.
+    var stranger: LocalMediaChannel?
+    var strangerEndpoint: LocalMediaChannel.Endpoint?
+    do {
+        let made = try LocalMediaChannel(pageOrigin: origin)
+        stranger = made
+        made.start { result in
+            if case .success(let endpoint) = result { strangerEndpoint = endpoint }
+        }
+    } catch {
+        problems.append("another channel could not be made: \(error)")
+    }
+    if wait(5, until: { strangerEndpoint != nil }), let strangerEndpoint {
+        let untrusted = connect(strangerEndpoint, token: strangerEndpoint.token, expected: 0)
+        if untrusted["opened"] as? Bool != false {
+            problems.append("the page reached a channel whose certificate the shell does not vouch for: \(untrusted)")
+        }
+    } else {
+        problems.append("another channel did not start")
+    }
+    stranger?.stop()
+
+    // 6. Another page: the channel closes, and nothing can connect to it.
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { disconnected == 1 }) {
+        problems.append("the channel outlived its page")
+    }
+    _ = page(pageScript)
+    let after = connect(endpoint, token: endpoint.token, expected: 0)
+    if after["opened"] as? Bool != false {
+        problems.append("the next page reached the channel of the page before it: \(after)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    let p50 = report?["p50"] as? Double ?? -1
+    let longest = report?["max"] as? Double ?? -1
+    print(problems.isEmpty
+        ? "media channel: only the token opens it, once; 240 messages of 40 KB at 60 a second took \(String(format: "%.1f", p50)) ms at the median, \(String(format: "%.1f", p95)) at the 95th percentile, \(String(format: "%.1f", longest)) at most; closed with its page"
+        : "media channel: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// Frames the check draws itself: squares that slide a little every frame,
+/// with a line of noise every `noiseEvery` rows, so that every frame differs
+/// from the last and the encoder has something to do. Nothing of the screen
+/// is in them.
+final class CheckFrameSource {
+    let width: Int
+    let height: Int
+    /// One row in this many is noise that changes with every frame: 32 is a
+    /// busy picture, 4 one that no bitrate carries well.
+    private let noiseEvery: Int
+    private var pool: CVPixelBufferPool?
+    private let noise: [UInt8]
+    /// One row of stripes, long enough to be read from any offset.
+    private let stripes: [UInt8]
+    /// How far along `stripes` the pattern repeats.
+    private static let stripePeriod = 64 * 256
+
+    init(width: Int, height: Int, noiseEvery: Int) {
+        self.width = width
+        self.height = height
+        self.noiseEvery = max(1, noiseEvery)
+        var state: UInt64 = 0x9e37_79b9_7f4a_7c15
+        stripes = (0..<(width + Self.stripePeriod)).map { UInt8(truncatingIfNeeded: ($0 / 64) * 37) }
+        noise = (0..<((1 << 16) + width)).map { _ in
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return UInt8(truncatingIfNeeded: state >> 56)
+        }
+        CVPixelBufferPoolCreate(nil, nil, [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+        ] as CFDictionary, &pool)
+    }
+
+    func frame(_ index: Int) -> CVPixelBuffer? {
+        guard let pool else { return nil }
+        var made: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        guard let buffer = made else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        if let luma = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)?.assumingMemoryBound(to: UInt8.self) {
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+            // Rows are copied, not computed: the check has to keep up with
+            // sixty frames a second at any size.
+            noise.withUnsafeBufferPointer { noise in
+                stripes.withUnsafeBufferPointer { stripes in
+                    for y in 0..<height {
+                        let row = luma + y * stride
+                        if y % noiseEvery == 0 {
+                            memcpy(row, noise.baseAddress! + ((y * 131 + index * 7919) & 0xffff), width)
+                        } else {
+                            // Squares that slide eight pixels a frame.
+                            memcpy(row, stripes.baseAddress! + (index * 8 + 64 * (y / 64)) % Self.stripePeriod, width)
+                        }
+                    }
+                }
+            }
+        }
+        if let chroma = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
+            memset(chroma, 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * CVPixelBufferGetHeightOfPlane(buffer, 1))
+        }
+        return buffer
+    }
+}
+
+/// The page's side of native capture, as the web client will have it: a
+/// worker reads the channel, decodes, and writes the frames into a track it
+/// hands to the page.
+let videoPipePage = """
+    const workerSource = `
+      let decoder = null, writer = null, socket = null, writes = true, configuration = null, catchingUp = false;
+      const stats = { formats: [], decoded: 0, delays: [], errors: [], firstAt: 0, lastAt: 0, keyFrames: 0, deltaFrames: 0, mostQueued: 0, fellBehind: 0, skipped: 0 };
+      // More frames than this waiting to be decoded means the page cannot
+      // keep up; what waits is thrown away and decoding starts again from
+      // a frame asked for, so that being late never adds up.
+      const mostWaiting = 4;
+      function configure(message) {
+        if (decoder) decoder.close();
+        stats.formats.push({ codec: message.codec, width: message.width, height: message.height });
+        decoder = new VideoDecoder({
+          output: (frame) => {
+            const now = Date.now();
+            stats.decoded += 1;
+            stats.delays.push(now - frame.timestamp / 1000);
+            if (!stats.firstAt) stats.firstAt = now;
+            stats.lastAt = now;
+            if (!writes) { frame.close(); return; }
+            writer.write(frame).then(() => frame.close(), (error) => { stats.errors.push('write: ' + error.name); frame.close(); });
+          },
+          error: (error) => stats.errors.push('decode: ' + error.name + ' ' + error.message),
+        });
+        configuration = {
+          codec: message.codec, codedWidth: message.width, codedHeight: message.height,
+          description: Uint8Array.from(atob(message.description), (c) => c.charCodeAt(0)),
+          optimizeForLatency: true,
+        };
+        decoder.configure(configuration);
+      }
+      onmessage = (event) => {
+        if (event.data.ask === 'stats') { stats.queued = decoder ? decoder.decodeQueueSize : -1; postMessage({ stats }); return; }
+        if (event.data.ask === 'keyframe') { socket.send(JSON.stringify({ type: 'keyframe' })); return; }
+        writes = event.data.sink !== 'none';
+        const generator = new VideoTrackGenerator();
+        writer = generator.writable.getWriter();
+        postMessage({ track: generator.track }, [generator.track]);
+        socket = new WebSocket(event.data.url);
+        socket.binaryType = 'arraybuffer';
+        socket.onopen = () => socket.send(event.data.token);
+        socket.onmessage = (message) => {
+          if (typeof message.data === 'string') { configure(JSON.parse(message.data)); return; }
+          const view = new DataView(message.data);
+          const key = view.getUint8(0) === 1;
+          if (key) stats.keyFrames += 1; else stats.deltaFrames += 1;
+          stats.mostQueued = Math.max(stats.mostQueued, decoder.decodeQueueSize);
+          if (!catchingUp && decoder.decodeQueueSize > mostWaiting) {
+            stats.fellBehind += 1;
+            stats.skipped += decoder.decodeQueueSize;
+            catchingUp = true;
+            decoder.reset();
+            decoder.configure(configuration);
+            socket.send(JSON.stringify({ type: 'keyframe' }));
+          }
+          if (catchingUp) {
+            if (!key) { stats.skipped += 1; return; }
+            catchingUp = false;
+          }
+          decoder.decode(new EncodedVideoChunk({
+            type: key ? 'key' : 'delta',
+            timestamp: Math.round(view.getFloat64(1, true) * 1000),
+            data: new Uint8Array(message.data, 9),
+          }));
+        };
+      };
+    `;
+    // The shell waits for a web client to say it started.
+    window.backspace.rendererReady();
+    window.startPipe = (url, token, sink) => new Promise((resolve, reject) => {
+      const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
+      window.pipeWorker = worker;
+      worker.onerror = (event) => reject(new Error(event.message));
+      worker.onmessage = (event) => {
+        if (!event.data.track) return;
+        const video = document.createElement('video');
+        video.muted = true;
+        video.srcObject = new MediaStream([event.data.track]);
+        document.body.appendChild(video);
+        video.play().catch(() => {});
+        window.pipeVideo = video;
+        resolve(event.data.track.kind);
+      };
+      worker.postMessage({ url, token, sink });
+    });
+    window.pipeStats = () => new Promise((resolve) => {
+      window.pipeWorker.onmessage = (event) => {
+        if (!event.data.stats) return;
+        const stats = event.data.stats;
+        // The first second is the decoder starting up; what a share feels
+        // like is the rest.
+        const d = stats.delays.slice(60).sort((a, b) => a - b);
+        const first = stats.delays.slice(0, 60);
+        resolve({
+          startUpMax: first.length ? Math.max(...first) : -1,
+          formats: stats.formats, decoded: stats.decoded, errors: stats.errors,
+          keyFrames: stats.keyFrames, deltaFrames: stats.deltaFrames, queued: stats.queued, mostQueued: stats.mostQueued,
+          fellBehind: stats.fellBehind, skipped: stats.skipped,
+          p50: d.length ? d[Math.floor(d.length / 2)] : -1,
+          p95: d.length ? d[Math.floor(d.length * 0.95)] : -1,
+          max: d.length ? d[d.length - 1] : -1,
+          framesPerSecond: stats.decoded > 1 ? (stats.decoded - 1) * 1000 / (stats.lastAt - stats.firstAt) : 0,
+          videoWidth: window.pipeVideo.videoWidth, videoHeight: window.pipeVideo.videoHeight,
+        });
+      };
+      window.pipeWorker.postMessage({ ask: 'stats' });
+    });
+    return true;
+    """
+
+/// Frames the check draws, through the encoder and the channel, to a decoder
+/// in a worker of the page and into a track. `size` is "1920x1080".
+func checkVideoPipe(size: String, sink: String, noiseEvery: Int) -> Never {
+    let parts = size.split(separator: "x").compactMap { Int($0) }
+    guard parts.count == 2, parts[0] >= 16, parts[1] >= 16, parts[0] % 2 == 0, parts[1] % 2 == 0 else {
+        fail("--size takes a width and a height in even pixels, as in 1920x1080")
+    }
+    let (width, height) = (parts[0], parts[1])
+    let framesPerSecond = 60
+    let frameCount = 300
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+
+    var opened: (channel: LocalMediaChannel, endpoint: LocalMediaChannel.Endpoint)?
+    shell.openMediaChannel { result in
+        if case .success(let made) = result { opened = made }
+    }
+    guard wait(10, until: { opened != nil }), let (channel, endpoint) = opened else {
+        fail("the media channel did not open")
+    }
+    var connected = false
+    channel.onClientConnected = { connected = true }
+
+    let encoder: VideoEncoder
+    do {
+        encoder = try VideoEncoder(settings: .init(width: width, height: height, framesPerSecond: framesPerSecond))
+    } catch {
+        fail("the encoder could not be made: \(error)")
+    }
+    let counters = NSLock()
+    var sentBytes = 0
+    var dropped = 0
+    var formats: [MediaWire.VideoFormat] = []
+    encoder.onFormat = { format in
+        counters.lock()
+        formats.append(format)
+        counters.unlock()
+        channel.send(text: format.message)
+    }
+    encoder.onFrame = { message in
+        let wasSent = channel.send(message)
+        counters.lock()
+        if wasSent { sentBytes += message.count } else { dropped += 1 }
+        counters.unlock()
+    }
+    channel.onMessage = { message in
+        if MediaWire.Request(message: message) == .keyFrame {
+            encoder.requestKeyFrame()
+        }
+    }
+
+    _ = page(videoPipePage)
+    let kind = page("return await window.startPipe('\(endpoint.url)', '\(endpoint.token)', '\(sink)');") as? String
+    if kind != "video" {
+        problems.append("the page got no video track from its worker (\(String(describing: kind)))")
+    }
+    guard wait(10, until: { connected }) else { fail("the page's worker did not connect to the channel") }
+
+    // Sixty frames a second from a thread of their own, as a capture gives them.
+    let source = CheckFrameSource(width: width, height: height, noiseEvery: noiseEvery)
+    let feeding = DispatchQueue(label: "check-frames")
+    let timer = DispatchSource.makeTimerSource(queue: feeding)
+    var fed = 0
+    var isDone = false
+    var drawing = 0.0
+    var handing = 0.0
+    let started = Date()
+    timer.schedule(deadline: .now(), repeating: 1.0 / Double(framesPerSecond), leeway: .milliseconds(1))
+    timer.setEventHandler {
+        let beforeDrawing = CACurrentMediaTime()
+        guard fed < frameCount, let frame = source.frame(fed) else {
+            timer.cancel()
+            encoder.finish()
+            DispatchQueue.main.async { isDone = true }
+            return
+        }
+        let beforeHanding = CACurrentMediaTime()
+        encoder.encode(
+            frame, presentationTime: CMTime(value: CMTimeValue(fed), timescale: CMTimeScale(framesPerSecond)),
+            capturedAt: Date().timeIntervalSince1970 * 1000
+        )
+        drawing += beforeHanding - beforeDrawing
+        handing += CACurrentMediaTime() - beforeHanding
+        fed += 1
+        // Half way through, the page asks for a frame to start from.
+        if fed == frameCount / 2 {
+            DispatchQueue.main.async {
+                shell.webView.evaluateJavaScript("window.pipeWorker.postMessage({ ask: 'keyframe' });", completionHandler: nil)
+            }
+        }
+    }
+    timer.resume()
+    guard wait(30, until: { isDone }) else { fail("the frames were not all encoded in 30 s") }
+    let took = Date().timeIntervalSince(started)
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: a frame took %.1f ms to draw and %.1f ms to hand to the encoder (%@)\n",
+        drawing * 1000 / Double(frameCount), handing * 1000 / Double(frameCount),
+        encoder.isHardware ? "hardware" : "software"
+    ).utf8))
+    // The page may still be decoding what it was sent.
+    var stats: [String: Any] = [:]
+    let patience = Date().addingTimeInterval(10)
+    repeat {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        stats = page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    } while (stats["decoded"] as? Int ?? 0) + (stats["skipped"] as? Int ?? 0) < frameCount && Date() < patience
+    FileHandle.standardError.write(Data("ContractCheck: page: received \((stats["keyFrames"] as? Int ?? 0) + (stats["deltaFrames"] as? Int ?? 0)), "
+        .appending("most queued in the decoder \(stats["mostQueued"] ?? "?"), still queued \(stats["queued"] ?? "?")\n").utf8))
+    let decoded = stats["decoded"] as? Int ?? 0
+    let errors = stats["errors"] as? [String] ?? []
+    let p50 = stats["p50"] as? Double ?? -1
+    let p95 = stats["p95"] as? Double ?? -1
+    let longest = stats["max"] as? Double ?? -1
+    let rate = stats["framesPerSecond"] as? Double ?? 0
+    let keyFrames = stats["keyFrames"] as? Int ?? 0
+    counters.lock()
+    let (bytes, lost, announced) = (sentBytes, dropped, formats)
+    counters.unlock()
+
+    if announced.count != 1 || announced.first?.width != width || announced.first?.height != height {
+        problems.append("the encoder announced \(announced.map { "\($0.codec) \($0.width)x\($0.height)" }), expected one format of \(width)x\(height)")
+    }
+    if !errors.isEmpty {
+        problems.append("the page's decoder reported \(errors.prefix(3))")
+    }
+    let givenUp = encoder.framesDropped
+    let fellBehind = stats["fellBehind"] as? Int ?? 0
+    let skipped = stats["skipped"] as? Int ?? 0
+    // A decoder that is reset also loses the frames it was working on,
+    // which nothing counts: a few frames for each time the page fell behind.
+    let accounted = decoded + skipped + givenUp
+    if lost != 0 || accounted > frameCount || accounted < frameCount - 8 * fellBehind {
+        problems.append("\(decoded) of \(frameCount) frames were decoded in the page; the encoder gave back \(givenUp), the channel dropped \(lost), the page skipped \(skipped)")
+    }
+    // A page that falls behind now and then on a busy machine is what the
+    // skipping is for; one that skips a tenth of the frames cannot keep up.
+    if skipped > frameCount / 10 {
+        problems.append("the page fell behind \(fellBehind) time(s) and skipped \(skipped) of \(frameCount) frames")
+    }
+    if givenUp > frameCount / 20 {
+        problems.append("the encoder gave back \(givenUp) of \(frameCount) frames without encoding them")
+    }
+    if keyFrames < 2 + fellBehind {
+        problems.append("the page asked for a key frame and got none (\(keyFrames) key frame(s) in all)")
+    }
+    if stats["videoWidth"] as? Int != width || stats["videoHeight"] as? Int != height {
+        problems.append("the page's video element shows \(String(describing: stats["videoWidth"]))x\(String(describing: stats["videoHeight"])), expected \(width)x\(height)")
+    }
+    // A decoder that is not told the frames come in order holds four to
+    // twelve of them: 90 ms and more. A frame asked for half way through
+    // is large and late, which is why this looks at the median.
+    if p50 < 0 || p50 > 80 {
+        problems.append("after the first second half of the frames should be in the page within 80 ms of being made, took \(p50)")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    let startUp = stats["startUpMax"] as? Double ?? -1
+    let megabits = Double(bytes) * 8 / took / 1_000_000
+    print(String(
+        format: "video pipe %dx%d: %d frames in %.2f s, %@, %.1f Mbit/s; in the page %.1f frames/s, "
+            + "made-to-decoded after the first second %.0f ms at the median, %.0f at the 95th percentile, "
+            + "%.0f at most (%.0f at most in the first second); %d key frames, %d frames given back by the encoder; "
+            + "the page fell behind %d time(s) and skipped %d frames%@",
+        width, height, decoded, took, announced.first?.codec ?? "no format", megabits, rate, p50, p95, longest, startUp,
+        keyFrames, givenUp, fellBehind, skipped,
+        problems.isEmpty ? "" : "; \(problems.count) problem(s)"
+    ))
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A screen the check makes up: 1920 by 1200, showing frames the check draws.
+/// It changes for `movingFrames` frames and then stands still.
+final class CheckScreenCapturer: ScreenCapturer {
+    var onEnded: (() -> Void)?
+    var onSourceResized: ((_ width: Int, _ height: Int) -> Void)?
+    var onHidden: ((Bool) -> Void)?
+    private(set) var isHidden = false
+    /// A source the system does not draw when the capture begins, as a
+    /// window in another of Stage Manager's sets: it gives no frame and
+    /// says so a moment after it began, until `show()`.
+    private let startsHidden: Bool
+    /// Whether frames are held back; read by the timer on its own queue.
+    private var holdsFrames = false
+    private(set) var request: ScreenCaptureRequest?
+    private(set) var isStopped = false
+    /// The sizes the video was changed to after it started.
+    private(set) var resizedTo: [(width: Int, height: Int)] = []
+    private let movingFrames: Int
+    /// How busy the made-up picture is, see `CheckFrameSource`.
+    private let noiseEvery: Int
+    /// What draws the frames: replaced when the video changes its size,
+    /// and read by the timer on its own queue.
+    private let sourceLock = NSLock()
+    private var source: CheckFrameSource?
+    private var timer: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "check-screen")
+
+    init(movingFrames: Int, noiseEvery: Int = 32, hidden: Bool = false) {
+        self.movingFrames = movingFrames
+        self.noiseEvery = noiseEvery
+        startsHidden = hidden
+        holdsFrames = hidden
+    }
+
+    /// The system draws the source again.
+    func show() { say(hidden: false) }
+
+    /// The system stops drawing the source.
+    func hide() { say(hidden: true) }
+
+    private func say(hidden: Bool) {
+        sourceLock.lock()
+        holdsFrames = hidden
+        sourceLock.unlock()
+        isHidden = hidden
+        onHidden?(hidden)
+    }
+
+    func prepare(
+        _ request: ScreenCaptureRequest,
+        completion: @escaping (Result<(width: Int, height: Int), ScreenCaptureFailure>) -> Void
+    ) {
+        self.request = request
+        guard case .display(1) = request.source else {
+            DispatchQueue.main.async { completion(.failure(.noSource)) }
+            return
+        }
+        let size = VideoShape.encodedSize(width: 1920, height: 1200, maxWidth: request.maxWidth, maxHeight: request.maxHeight)
+        source = CheckFrameSource(width: size.width, height: size.height, noiseEvery: noiseEvery)
+        DispatchQueue.main.async { completion(.success(size)) }
+    }
+
+    func begin(frame: @escaping (CVPixelBuffer, CMTime, Double) -> Void, completion: @escaping (Bool) -> Void) {
+        guard let request, source != nil else {
+            completion(false)
+            return
+        }
+        var sent = 0
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 1.0 / Double(request.framesPerSecond), leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self, movingFrames] in
+            guard let self else { return }
+            self.sourceLock.lock()
+            let source = self.source
+            let held = self.holdsFrames
+            self.sourceLock.unlock()
+            if held { return }
+            guard sent < movingFrames, let picture = source?.frame(sent) else {
+                timer.cancel()
+                return
+            }
+            frame(picture, CMClockGetTime(CMClockGetHostTimeClock()), Date().timeIntervalSince1970 * 1000)
+            sent += 1
+        }
+        self.timer = timer
+        timer.resume()
+        DispatchQueue.main.async { [weak self] in
+            completion(true)
+            // After the answer, as the system may: whoever waits for a
+            // first frame is already waiting.
+            DispatchQueue.main.async {
+                guard let self, self.startsHidden, !self.isStopped else { return }
+                self.say(hidden: true)
+            }
+        }
+    }
+
+    func resize(width: Int, height: Int) {
+        resizedTo.append((width, height))
+        let next = CheckFrameSource(width: width, height: height, noiseEvery: noiseEvery)
+        sourceLock.lock()
+        source = next
+        sourceLock.unlock()
+    }
+
+    func stop() {
+        isStopped = true
+        timer?.cancel()
+    }
+
+    func endByItself() {
+        timer?.cancel()
+        onEnded?()
+    }
+
+    /// The made-up source has another size, as a window that was resized.
+    func sourceBecame(width: Int, height: Int) {
+        onSourceResized?(width, height)
+    }
+}
+
+/// The sound of a system the check makes up: 440 Hz on the left, 880 Hz on
+/// the right, a hundredth of a second at a time.
+final class CheckSystemAudioCapturer: SystemAudioCapturer {
+    var onEnded: (() -> Void)?
+    private(set) var isStopped = false
+    private var timer: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "check-system-audio")
+
+    static let framesAtATime = 480
+    static let level = 0.25
+    static let tones = (left: 440.0, right: 880.0)
+
+    func start(
+        format: MediaWire.AudioFormat,
+        samples: @escaping (Data, Double) -> Void,
+        completion: @escaping (ScreenCaptureFailure?) -> Void
+    ) {
+        var sent = 0
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(1))
+        timer.setEventHandler {
+            var left = [Float32](repeating: 0, count: Self.framesAtATime)
+            var right = left
+            for index in 0..<Self.framesAtATime {
+                let time = Double(sent + index) / Double(format.sampleRate)
+                left[index] = Float32(Self.level * sin(2 * .pi * Self.tones.left * time))
+                right[index] = Float32(Self.level * sin(2 * .pi * Self.tones.right * time))
+            }
+            sent += Self.framesAtATime
+            let payload = left.withUnsafeBufferPointer { leftSamples in
+                right.withUnsafeBufferPointer { rightSamples in
+                    SystemAudio.interleaved([leftSamples, rightSamples], channels: format.channels)
+                }
+            }
+            if let payload {
+                samples(payload, Date().timeIntervalSince1970 * 1000)
+            }
+        }
+        self.timer = timer
+        timer.resume()
+        DispatchQueue.main.async { completion(nil) }
+    }
+
+    func stop() {
+        isStopped = true
+        timer?.cancel()
+    }
+
+    func endByItself() {
+        timer?.cancel()
+        onEnded?()
+    }
+}
+
+/// A page that reads a channel's sound and says what it heard: how many
+/// frames, how often each channel rose through zero, the loudest sample.
+let audioPipePage = """
+    window.audioPipe = (url, token) => new Promise((resolve) => {
+      const state = {
+        formats: [], messages: 0, kinds: [], frames: 0, left: 0, right: 0, peak: 0,
+        misshapen: 0, furthestFromNow: 0, closed: false,
+        smallest: 0, largest: 0, longestGap: 0, squares: 0,
+      };
+      let lastLeft = 0;
+      let lastRight = 0;
+      let lastAt = 0;
+      window.audioState = state;
+      const socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+      window.audioSocket = socket;
+      socket.onopen = () => socket.send(token);
+      socket.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          state.formats.push(JSON.parse(event.data));
+          resolve(true);
+          return;
+        }
+        const view = new DataView(event.data);
+        const kind = view.getUint8(0);
+        if (!state.kinds.includes(kind)) state.kinds.push(kind);
+        state.messages += 1;
+        state.furthestFromNow = Math.max(state.furthestFromNow, Math.abs(Date.now() - view.getFloat64(1, true)));
+        const body = event.data.slice(9);
+        if (body.byteLength === 0 || body.byteLength % 8 !== 0) {
+          state.misshapen += 1;
+          return;
+        }
+        const samples = new Float32Array(body);
+        for (let index = 0; index < samples.length; index += 2) {
+          const left = samples[index];
+          const right = samples[index + 1];
+          if (lastLeft <= 0 && left > 0) state.left += 1;
+          if (lastRight <= 0 && right > 0) state.right += 1;
+          lastLeft = left;
+          lastRight = right;
+          state.peak = Math.max(state.peak, Math.abs(left), Math.abs(right));
+          state.squares += left * left + right * right;
+        }
+        const count = samples.length / 2;
+        state.frames += count;
+        state.smallest = state.smallest === 0 ? count : Math.min(state.smallest, count);
+        state.largest = Math.max(state.largest, count);
+        const now = performance.now();
+        if (lastAt > 0) state.longestGap = Math.max(state.longestGap, now - lastAt);
+        lastAt = now;
+      };
+      socket.onclose = () => {
+        state.closed = true;
+        resolve(false);
+      };
+    });
+    return true;
+    """
+
+/// The system's sound through the bridge, as the web client will ask for
+/// it, with a system the check makes up.
+func checkSystemAudio() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckSystemAudioCapturer] = []
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                capturers.append(capturer)
+                return capturer
+            }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start() -> [String: Any] {
+        page("window.sound = await window.backspace.startNativeSystemAudio(); return window.sound;") as? [String: Any] ?? [:]
+    }
+    func heard() -> [String: Any] {
+        page("return window.audioState;") as? [String: Any] ?? [:]
+    }
+
+    load(address)
+    _ = page(audioPipePage)
+    _ = page("""
+        window.endedIDs = [];
+        window.backspace.onNativeSystemAudioEnded((event) => { window.endedIDs.push(event && event.id); });
+        return true;
+        """)
+
+    // 1. What a share's system audio carries of the app's own playback: left
+    //    out, for a client that takes the native capture; no system audio at
+    //    all for one that does not.
+    let capabilities = page("""
+        return [
+          await window.backspace.getSystemAudioCapability({ nativeAudio: true }),
+          await window.backspace.getSystemAudioCapability(true),
+          await window.backspace.getSystemAudioCapability(),
+        ];
+        """) as? [String]
+    if capabilities != ["excluded", "unavailable", "unavailable"] {
+        problems.append("the capabilities were \(String(describing: capabilities)), expected excluded for a client that takes the native capture and unavailable otherwise")
+    }
+
+    // 2. The sound, as it was made: both channels, each with its own tone.
+    let sound = start()
+    if sound["ok"] as? Bool != true || sound["sampleRate"] as? Int != 48_000 || sound["channels"] as? Int != 2
+        || (sound["url"] as? String)?.hasPrefix("wss://127.0.0.1:") != true || (sound["id"] as? String ?? "").isEmpty {
+        problems.append("the capture was answered \(sound.filter { $0.key != "token" }), expected 48000 Hz in 2 channels")
+    }
+    if page("return await window.audioPipe(window.sound.url, window.sound.token);") as? Bool != true {
+        problems.append("the page was not told the format of the sound")
+    }
+    _ = wait(8, until: { heard()["frames"] as? Int ?? 0 >= 48_000 })
+    let first = heard()
+    let frames = first["frames"] as? Int ?? 0
+    let seconds = Double(frames) / 48_000
+    let leftTone = seconds > 0 ? Double(first["left"] as? Int ?? 0) / seconds : 0
+    let rightTone = seconds > 0 ? Double(first["right"] as? Int ?? 0) / seconds : 0
+    let format = (first["formats"] as? [[String: Any]])?.first
+    if format?["type"] as? String != "audio" || format?["sampleRate"] as? Int != 48_000 || format?["channels"] as? Int != 2 {
+        problems.append("the format announced was \(String(describing: format))")
+    }
+    if frames < 48_000 || first["kinds"] as? [Int] != [3] || first["misshapen"] as? Int != 0
+        || first["messages"] as? Int != frames / CheckSystemAudioCapturer.framesAtATime {
+        problems.append("the page read \(frames) frames in \(first["messages"] ?? "?") messages of kinds \(first["kinds"] ?? "?"), \(first["misshapen"] ?? "?") of them misshapen")
+    }
+    if abs(leftTone - CheckSystemAudioCapturer.tones.left) > 3 || abs(rightTone - CheckSystemAudioCapturer.tones.right) > 6
+        || abs((first["peak"] as? Double ?? 0) - CheckSystemAudioCapturer.level) > 0.01 {
+        problems.append(String(
+            format: "the page heard %.0f Hz on the left and %.0f Hz on the right at %.3f, expected 440 and 880 at 0.25",
+            leftTone, rightTone, first["peak"] as? Double ?? 0
+        ))
+    }
+    if first["furthestFromNow"] as? Double ?? .infinity > 2_000 {
+        problems.append("the samples are stamped \(first["furthestFromNow"] ?? "?") ms away from the page's clock")
+    }
+
+    // 3. The page stops it, by its id, and is not told that it ended.
+    let running = capturers.last
+    _ = page("window.backspace.stopNativeSystemAudio(window.sound.id); return true;")
+    if !wait(5, until: { running?.isStopped == true }) || !wait(5, until: { heard()["closed"] as? Bool == true }) {
+        problems.append("stopNativeSystemAudio left the capture running or its channel open")
+    }
+    if page("return window.endedIDs;") as? [String] != [] {
+        problems.append("the page was told that a capture it stopped itself had ended")
+    }
+
+    // 4. The capture ends by itself: the page is told which.
+    let lost = start()
+    capturers.last?.endByItself()
+    if !wait(5, until: { page("return window.endedIDs;") as? [String] == [lost["id"] as? String ?? "?"] }) {
+        problems.append("the page was not told which capture ended")
+    }
+
+    // 5. A page may have a few at once, and no more.
+    let made = capturers.count
+    var answers: [[String: Any]] = []
+    for _ in 0...SystemAudio.mostAtOnce {
+        answers.append(start())
+    }
+    if answers.dropLast().contains(where: { $0["ok"] as? Bool != true })
+        || answers.last?["reason"] as? String != "too-many" {
+        problems.append("\(SystemAudio.mostAtOnce) captures at once should start and one more be refused; got \(answers.map { $0["ok"] ?? $0 })")
+    }
+
+    // 6. Another page: the captures of the one before it stop.
+    let leftBehind = Array(capturers[made...])
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { leftBehind.allSatisfy(\.isStopped) }) {
+        problems.append("a capture of the system's sound outlived its page")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "system audio: started through the bridge, both channels reach the page as they were made; stopped by its id, by itself or with its page; a client that does not take it is told there is none"
+        : "system audio: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real system's sound, for a few seconds, through the channel to a page;
+/// and, given the address of the web package's workbench page, through the
+/// web client's own worker and audio worklet as well. The system shows that
+/// the screen is being recorded while it runs. Nothing that was captured is
+/// kept or printed: only how much of it there was and how loud.
+func checkSystemAudioSystem(seconds: Double, workbench: String?, tone: Double?) -> Never {
+    var problems: [String] = []
+    // A tone for the capture to hear, played by the page itself. A check
+    // started from a terminal is not left out of its own capture (its web
+    // view's helpers count as the terminal's), which is what makes this work.
+    let playTone = tone.map { level in
+        """
+        window.toneContext = new AudioContext();
+        const oscillator = window.toneContext.createOscillator();
+        oscillator.frequency.value = 440;
+        const gain = window.toneContext.createGain();
+        gain.gain.value = \(level);
+        oscillator.connect(gain);
+        gain.connect(window.toneContext.destination);
+        oscillator.start();
+        await window.toneContext.resume();
+        return true;
+        """
+    }
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var timings = RecoveryTimings()
+    // Neither page is a web client that says it started.
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            systemAudioCapturer: { SystemSoundCapturer() },
+            recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        var loadError: Error?
+        shell.onMainFrameLoadEnded = { error in
+            hasEnded = true
+            loadError = error
+        }
+        shell.load(url)
+        guard wait(30, until: { hasEnded }), loadError == nil else {
+            fail("\(url.absoluteString) did not load: \(loadError?.localizedDescription ?? "no answer")")
+        }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    func number(_ state: [String: Any], _ key: String) -> Double {
+        state[key] as? Double ?? 0
+    }
+
+    // 1. What the shell sends, as it arrives in a page.
+    load(address)
+    _ = page(audioPipePage)
+    if let playTone { _ = page(playTone) }
+    let reply = page("window.sound = await window.backspace.startNativeSystemAudio(); return window.sound;") as? [String: Any] ?? [:]
+    guard reply["ok"] as? Bool == true else {
+        fail("the capture did not start: \(reply["reason"] ?? "no answer")")
+    }
+    guard page("return await window.audioPipe(window.sound.url, window.sound.token);") as? Bool == true else {
+        fail("the page was not told the format of the sound")
+    }
+    _ = wait(5, until: { number(page("return window.audioState;") as? [String: Any] ?? [:], "frames") > 0 })
+    let began = page("return window.audioState;") as? [String: Any] ?? [:]
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    let heard = page("return window.audioState;") as? [String: Any] ?? [:]
+    _ = page("window.backspace.stopNativeSystemAudio(window.sound.id); return true;")
+
+    let frames = number(heard, "frames") - number(began, "frames")
+    let level = number(heard, "frames") > 0 ? (number(heard, "squares") / (number(heard, "frames") * 2)).squareRoot() : 0
+    print(String(
+        format: "the channel: %.0f frames a second in %.0f messages of %.0f to %.0f frames, at most %.0f ms apart; the oldest sample was %.0f ms from the page's clock; level %.4f, peak %.4f; the left channel rose through zero %.0f times a second",
+        frames / seconds, number(heard, "messages"), number(heard, "smallest"), number(heard, "largest"),
+        number(heard, "longestGap"), number(heard, "furthestFromNow"), level, number(heard, "peak"),
+        number(heard, "frames") > 0 ? number(heard, "left") / (number(heard, "frames") / 48_000) : 0
+    ))
+    if let tone, level < tone / 4 {
+        problems.append(String(format: "a tone was played at %.4f and the capture heard %.4f", tone, level))
+    }
+    if heard["kinds"] as? [Int] != [3] || number(heard, "misshapen") != 0 {
+        problems.append("the messages were of kinds \(heard["kinds"] ?? "?"), \(heard["misshapen"] ?? "?") of them misshapen")
+    }
+    if frames < 48_000 * seconds * 0.9 || frames > 48_000 * seconds * 1.1 {
+        problems.append(String(format: "%.0f frames a second arrived, expected 48000", frames / seconds))
+    }
+
+    // 2. The same through the web client's own code.
+    if let workbench, let url = URL(string: workbench) {
+        load(url)
+        func sound(_ call: String) -> [String: Any] {
+            page("return await window.nativeCaptureWorkbench.\(call)();") as? [String: Any] ?? [:]
+        }
+        guard wait(30, until: { page("return !!window.nativeCaptureWorkbench;") as? Bool == true }) else {
+            fail("the workbench page did not start")
+        }
+        if let playTone { _ = page(playTone) }
+        let started = sound("startSound")
+        if started["phase"] as? String != "running" {
+            problems.append("the web client did not start the sound: \(started)")
+        }
+        _ = wait(5, until: { number(sound("soundState"), "received") > 0 })
+        let first = sound("soundState")
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        let last = sound("soundState")
+        _ = sound("stopSound")
+        let arrived = number(last, "received") - number(first, "received")
+        print(String(
+            format: "the web client: %.0f frames in %.1f s and the time two questions took, %.0f waiting (%.0f ms), %.0f skipped, ran dry %.0f time(s); the track's level %.4f left, %.4f right, at %.0f Hz",
+            arrived, seconds, number(last, "waiting"), number(last, "waiting") / 48, number(last, "skipped"),
+            number(last, "ranDry"), number(last, "levelLeft"), number(last, "levelRight"), number(last, "toneLeft")
+        ))
+        if let tone, number(last, "levelLeft") < tone / 4 {
+            problems.append(String(format: "a tone was played at %.4f and the web client's track carries %.4f", tone, number(last, "levelLeft")))
+        }
+        if arrived < 48_000 * seconds * 0.9 || last["trackState"] as? String != "live" {
+            problems.append("the web client's audio thread took in \(arrived) frames; the track was \(last["trackState"] ?? "?")")
+        }
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "system audio, the real system: the sound arrives at the rate and in the shape announced"
+        : "system audio, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// How fast the clock of an audio context runs in this web view, against
+/// the wall clock, for the ways a page can build one. Nothing is played: no
+/// context is given anything audible.
+func checkAudioClock(seconds: Double) -> Never {
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    var timings = RecoveryTimings()
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil, recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    var answer: Result<Any, Error>?
+    shell.webView.callAsyncJavaScript("""
+        const worklet = URL.createObjectURL(new Blob([`
+          registerProcessor('clock-probe', class extends AudioWorkletProcessor {
+            process() { return true; }
+          });
+        `], { type: 'text/javascript' }));
+        const withWorklet = async (options) => {
+          const context = new AudioContext(options);
+          await context.audioWorklet.addModule(worklet);
+          const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+          node.connect(context.createMediaStreamDestination());
+          return context;
+        };
+        const variants = {
+          'default rate, nothing connected': async () => new AudioContext(),
+          'two at once: default rate; 48 kHz with a worklet': async () => [new AudioContext(), await withWorklet({ sampleRate: 48000 })],
+          'two at once: default rate; default rate with a worklet': async () => [new AudioContext(), await withWorklet()],
+          'two at once: 48 kHz; 48 kHz with a worklet': async () => [new AudioContext({ sampleRate: 48000 }), await withWorklet({ sampleRate: 48000 })],
+          'two at once: 48 kHz with a worklet; default rate listening to its stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            const stream = context.createMediaStreamDestination();
+            node.connect(stream);
+            const listener = new AudioContext();
+            listener.createMediaStreamSource(stream.stream).connect(listener.createAnalyser());
+            return [context, listener];
+          },
+          '48 kHz, a source into a stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            const source = context.createConstantSource();
+            source.offset.value = 0;
+            source.connect(context.createMediaStreamDestination());
+            source.start();
+            return context;
+          },
+          '48 kHz, a worklet into a stream': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            return context;
+          },
+          '48 kHz, a worklet into a stream and, silenced, into the output': async () => {
+            const context = new AudioContext({ sampleRate: 48000 });
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            const silence = context.createGain();
+            silence.gain.value = 0;
+            node.connect(silence);
+            silence.connect(context.destination);
+            return context;
+          },
+          'default rate, a worklet into a stream': async () => {
+            const context = new AudioContext();
+            await context.audioWorklet.addModule(worklet);
+            const node = new AudioWorkletNode(context, 'clock-probe', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            node.connect(context.createMediaStreamDestination());
+            return context;
+          },
+        };
+        const results = [];
+        for (const [name, make] of Object.entries(variants)) {
+          try {
+            const contexts = [await make()].flat();
+            for (const context of contexts) await context.resume();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const clocksThen = contexts.map((context) => context.currentTime);
+            const wallThen = performance.now();
+            await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+            const wall = (performance.now() - wallThen) / 1000;
+            contexts.forEach((context, index) => {
+              results.push({
+                name: contexts.length > 1 ? name + ' [' + (index + 1) + ']' : name,
+                rate: context.sampleRate, state: context.state, clock: context.currentTime - clocksThen[index], wall,
+              });
+            });
+            for (const context of contexts) await context.close();
+          } catch (error) {
+            results.push({ name, error: String(error) });
+          }
+        }
+        return { results, visibility: document.visibilityState };
+        """, arguments: ["seconds": seconds], in: nil, in: .page) { answer = $0 }
+    guard wait(seconds * 12 + 30, until: { answer != nil }), case .success(let value)? = answer,
+          let report = value as? [String: Any], let results = report["results"] as? [[String: Any]] else {
+        fail("the page did not answer")
+    }
+    print("the page is \(report["visibility"] ?? "?")")
+    for result in results {
+        if let error = result["error"] as? String {
+            print("\(result["name"] ?? "?"): \(error)")
+        } else {
+            let clock = result["clock"] as? Double ?? 0
+            let wall = result["wall"] as? Double ?? 1
+            print(String(
+                format: "%@: %.0f Hz, %@, the clock moved %.2f s in %.2f s (%.0f%%)",
+                result["name"] as? String ?? "?", result["rate"] as? Double ?? 0, result["state"] as? String ?? "?",
+                clock, wall, clock / wall * 100
+            ))
+        }
+    }
+
+    // 2. A worklet that is fed sound the way a capture feeds it: a hundred
+    //    pieces a second, from the page or straight from a worker, with or
+    //    without another context listening to its stream. The clock is read
+    //    on the audio thread itself.
+    var fedAnswer: Result<Any, Error>?
+    shell.webView.callAsyncJavaScript("""
+        const blob = (source) => URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+        const worklet = blob(`
+          registerProcessor('fed-probe', class extends AudioWorkletProcessor {
+            constructor(options) {
+              super();
+              this.tone = options.processorOptions && options.processorOptions.tone;
+              this.phase = 0;
+              this.pieces = 0;
+              this.blocks = 0;
+              const take = () => { this.pieces += 1; };
+              this.port.onmessage = (event) => {
+                if (event.data.port) event.data.port.onmessage = take;
+                else if (event.data.ask) this.port.postMessage({ clock: currentTime, wall: Date.now(), blocks: this.blocks, pieces: this.pieces });
+                else take();
+              };
+            }
+            process(inputs, outputs) {
+              this.blocks += 1;
+              if (this.tone) {
+                const [left, right] = outputs[0];
+                for (let index = 0; index < left.length; index++) {
+                  left[index] = right[index] = 0.25 * Math.sin(this.phase);
+                  this.phase += 2 * Math.PI * 440 / sampleRate;
+                }
+              }
+              return true;
+            }
+          });
+        `);
+        const feeder = blob(`
+          let target = null;
+          onmessage = (event) => {
+            target = event.data.port || self;
+            setInterval(() => {
+              const piece = new Float32Array(960);
+              target.postMessage(piece.buffer, [piece.buffer]);
+            }, 10);
+          };
+        `);
+        const ask = (node) => new Promise((resolve) => {
+          node.port.onmessage = (event) => resolve(event.data);
+          node.port.postMessage({ ask: true });
+        });
+        const run = async (name, { from, listener, tone }) => {
+          const context = new AudioContext({ sampleRate: 48000 });
+          await context.audioWorklet.addModule(worklet);
+          const node = new AudioWorkletNode(context, 'fed-probe', {
+            numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { tone: !!tone },
+          });
+          const stream = context.createMediaStreamDestination();
+          node.connect(stream);
+          let worker = null;
+          if (from === 'worker') {
+            const pair = new MessageChannel();
+            node.port.postMessage({ port: pair.port2 }, [pair.port2]);
+            worker = new Worker(feeder);
+            worker.postMessage({ port: pair.port1 }, [pair.port1]);
+          } else if (from === 'page') {
+            worker = new Worker(feeder);
+            worker.onmessage = (event) => node.port.postMessage(event.data, [event.data]);
+            worker.postMessage({});
+          }
+          let listening = null;
+          let sending = [];
+          let element = null;
+          if (listener === 'context' || listener === 'context at 48 kHz') {
+            listening = new AudioContext(listener === 'context' ? undefined : { sampleRate: 48000 });
+            listening.createMediaStreamSource(stream.stream).connect(listening.createAnalyser());
+            await listening.resume();
+          } else if (listener === 'peer connection') {
+            const from = new RTCPeerConnection();
+            const to = new RTCPeerConnection();
+            sending = [from, to];
+            from.addTrack(stream.stream.getAudioTracks()[0], stream.stream);
+            await from.setLocalDescription(await from.createOffer());
+            await to.setRemoteDescription(from.localDescription);
+            await to.setLocalDescription(await to.createAnswer());
+            await from.setRemoteDescription(to.localDescription);
+          } else if (listener === 'element') {
+            element = new Audio();
+            element.muted = true;
+            element.srcObject = stream.stream;
+            await element.play().catch(() => {});
+          }
+          await context.resume();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const then = await ask(node);
+          await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+          const now = await ask(node);
+          // Both clocks read on the audio thread, at the same moment.
+          const wall = (now.wall - then.wall) / 1000;
+          if (worker) worker.terminate();
+          if (listening) await listening.close();
+          sending.forEach((connection) => connection.close());
+          if (element) element.srcObject = null;
+          await context.close();
+          return { name, wall, clock: now.clock - then.clock, blocks: now.blocks - then.blocks, pieces: now.pieces - then.pieces };
+        };
+        const results = [];
+        results.push(await run('fed nothing', {}));
+        results.push(await run('fed nothing, playing a tone into its stream', { tone: true }));
+        results.push(await run('fed by a worker, playing a tone into its stream', { from: 'worker', tone: true }));
+        results.push(await run('fed nothing, with another context listening', { listener: 'context' }));
+        results.push(await run('fed by the page', { from: 'page' }));
+        results.push(await run('fed by a worker', { from: 'worker' }));
+        results.push(await run('fed by a worker, with another context listening', { from: 'worker', listener: 'context' }));
+        results.push(await run('fed by a worker, with another context at 48 kHz listening', { from: 'worker', listener: 'context at 48 kHz' }));
+        results.push(await run('fed by the page, with another context listening', { from: 'page', listener: 'context' }));
+        results.push(await run('fed by a worker, its track given to a peer connection', { from: 'worker', listener: 'peer connection' }));
+        results.push(await run('fed by a worker, its stream in a muted audio element', { from: 'worker', listener: 'element' }));
+        results.push(await run('fed by a worker, again', { from: 'worker' }));
+        return results;
+        """, arguments: ["seconds": seconds], in: nil, in: .page) { fedAnswer = $0 }
+    guard wait(seconds * 16 + 60, until: { fedAnswer != nil }), case .success(let fedValue)? = fedAnswer,
+          let fed = fedValue as? [[String: Any]] else {
+        fail("the page did not answer about a worklet that is fed")
+    }
+    for result in fed {
+        let clock = result["clock"] as? Double ?? 0
+        let wall = result["wall"] as? Double ?? 1
+        print(String(
+            format: "a worklet %@: its clock moved %.3f s in %.3f s (%.1f%%), %.0f blocks, %.0f pieces taken in",
+            result["name"] as? String ?? "?", clock, wall, clock / wall * 100,
+            result["blocks"] as? Double ?? 0, result["pieces"] as? Double ?? 0
+        ))
+    }
+    exit(0)
+}
+
+/// Stands in for the window that draws viewers' pointers: it remembers what
+/// it was asked to draw and where, and gives display 1 a window number.
+final class CheckPointerOverlay: PointerOverlayPresenter {
+    static let windowNumber: UInt32 = 4242
+    private(set) var shown: [(pointers: [OverlayPointer], display: UInt32?)] = []
+
+    func windowNumber(forDisplay display: UInt32) -> UInt32? {
+        display == 1 ? Self.windowNumber : nil
+    }
+
+    func show(_ pointers: [OverlayPointer], onDisplay display: UInt32?) {
+        shown.append((pointers, display))
+    }
+}
+
+/// Viewers' pointers through the bridge, as the web client sends them, with
+/// a screen and an overlay the check makes up.
+func checkPointerOverlay() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    let overlay = CheckPointerOverlay()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 30)
+                capturers.append(capturer)
+                return capturer
+            },
+            pointerOverlay: overlay
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    /// What the overlay was asked to draw last, once it has been asked
+    /// `times` times.
+    func last(after times: Int) -> (pointers: [OverlayPointer], display: UInt32?)? {
+        guard wait(5, until: { overlay.shown.count >= times }) else { return nil }
+        return overlay.shown.last
+    }
+    let alice = OverlayPointer(
+        id: "alice", name: "Alice", color: OverlayColor(red: 110, green: 91, blue: 239),
+        x: 0.25, y: 0.75, isIdle: false, ping: 0
+    )
+
+    load(address)
+
+    // 1. Pointers with no share of a display: kept, and drawn nowhere. What
+    //    the page sends is checked on the way: an entry out of the picture
+    //    is left out, a colour that cannot be read is replaced.
+    _ = page("""
+        window.backspace.setStreamPointerOverlay([
+          { id: 'alice', name: 'Alice', color: 'rgb(110 91 239)', x: 0.25, y: 0.75, idle: false, ping: 0 },
+          { id: 'off', name: 'Off the picture', color: 'rgb(1 2 3)', x: 1.5, y: 0.5, idle: false, ping: 0 },
+          { id: 'bob', name: 'Bob', color: 'url(x)', x: 0.5, y: 0.5, idle: true, ping: 12 },
+        ]);
+        return true;
+        """)
+    let bob = OverlayPointer(id: "bob", name: "Bob", color: .fallback, x: 0.5, y: 0.5, isIdle: true, ping: 12)
+    if let first = last(after: 1) {
+        if first.pointers != [alice, bob] || first.display != nil {
+            problems.append("with no share the overlay was asked for \(first.pointers.map(\.id)) on display \(String(describing: first.display))")
+        }
+    } else {
+        problems.append("the pointers the page sent did not reach the overlay")
+    }
+
+    // 2. A share of a display: its capture leaves the overlay's window out,
+    //    and the pointers the page sent before go on that display.
+    var asked = overlay.shown.count
+    let share = page("window.share = await window.backspace.startNativeScreenCapture({ sourceId: 'screen:1:0', frameRate: 30 }); return window.share;") as? [String: Any] ?? [:]
+    if share["ok"] as? Bool != true || capturers.last?.request?.excludedWindows != [CheckPointerOverlay.windowNumber] {
+        problems.append("the capture of the display was asked to leave out \(String(describing: capturers.last?.request?.excludedWindows)), expected the overlay's window")
+    }
+    if let now = last(after: asked + 1), now.pointers == [alice, bob], now.display == 1 {
+    } else {
+        problems.append("the pointers did not go on the shared display when its share started")
+    }
+
+    // 3. Another list replaces the first; the end of pointing clears it and
+    //    keeps the display.
+    asked = overlay.shown.count
+    _ = page("""
+        window.backspace.setStreamPointerOverlay([{ id: 'alice', name: 'Alice', color: 'rgb(110, 91, 239)', x: 0.25, y: 0.75 }]);
+        return true;
+        """)
+    if let now = last(after: asked + 1), now.pointers == [alice], now.display == 1 {
+    } else {
+        problems.append("a new list of pointers was not drawn in place of the old")
+    }
+    asked = overlay.shown.count
+    _ = page("window.backspace.endStreamPointerOverlay(); return true;")
+    if let now = last(after: asked + 1), now.pointers.isEmpty, now.display == 1 {
+    } else {
+        problems.append("endStreamPointerOverlay left pointers drawn")
+    }
+
+    // 4. The share stops: nothing is drawn on its display any more.
+    _ = page("window.backspace.setStreamPointerOverlay([{ id: 'alice', name: 'Alice', color: 'rgb(110 91 239)', x: 0.25, y: 0.75 }]); return true;")
+    _ = wait(5, until: { overlay.shown.last?.pointers == [alice] })
+    asked = overlay.shown.count
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
+    if let now = last(after: asked + 1), now.display == nil {
+    } else {
+        problems.append("the pointers stayed on a display whose share stopped")
+    }
+
+    // 5. Another page: its pointers go with it.
+    _ = page("window.share = await window.backspace.startNativeScreenCapture({ sourceId: 'screen:1:0', frameRate: 30 }); return true;")
+    _ = wait(5, until: { overlay.shown.last?.display == 1 && overlay.shown.last?.pointers == [alice] })
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { overlay.shown.last?.pointers.isEmpty == true && overlay.shown.last?.display == nil }) {
+        problems.append("pointers outlived the page that sent them")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "pointer overlay: the page's pointers are checked and drawn over the display its share shows, whose capture leaves the overlay out; they go when pointing ends, with the share and with the page"
+        : "pointer overlay: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real overlay over the real main display, and whether a real capture
+/// of that display sees it. Two pointers are drawn in the middle of the
+/// screen for a few seconds, and the system shows that the screen is being
+/// recorded. Nothing captured is kept: one frame of each capture is read for
+/// the colour of one tag and dropped.
+///
+/// With `--out`, a picture of the pointers alone (drawn off screen, on a plain
+/// ground) is written there as a PNG.
+func checkPointerOverlaySystem(pictureAt: String?) -> Never {
+    _ = NSApplication.shared
+    let magenta = OverlayColor(red: 255, green: 0, blue: 255)
+    // A name of spaces: a tag of one colour all over, with nothing written on it.
+    let pointers = [
+        OverlayPointer(id: "probe", name: String(repeating: " ", count: 40), color: magenta, x: 0.5, y: 0.5, isIdle: false, ping: 1),
+        OverlayPointer(id: "other", name: "Viewer", color: OverlayColor(red: 110, green: 91, blue: 239), x: 0.45, y: 0.45, isIdle: false, ping: 0),
+    ]
+    if let pictureAt {
+        let sample = [
+            OverlayPointer(id: "a", name: "Алиса", color: OverlayColor(red: 110, green: 91, blue: 239), x: 0.2, y: 0.25, isIdle: false, ping: 1),
+            OverlayPointer(id: "b", name: "Bob the Viewer", color: OverlayColor(red: 232, green: 188, blue: 104), x: 0.55, y: 0.55, isIdle: false, ping: 0),
+            OverlayPointer(id: "c", name: "", color: OverlayColor(red: 94, green: 200, blue: 140), x: 0.8, y: 0.3, isIdle: false, ping: 0),
+        ]
+        guard let png = SystemPointerOverlay.picture(of: sample, size: CGSize(width: 420, height: 200), scale: 2) else {
+            fail("the pointers could not be drawn into a picture")
+        }
+        do {
+            try png.write(to: URL(fileURLWithPath: pictureAt))
+        } catch {
+            fail("the picture could not be written to \(pictureAt): \(error.localizedDescription)")
+        }
+        print("a picture of three pointers is at \(pictureAt)")
+    }
+
+    let display = CGMainDisplayID()
+    guard let screen = NSScreen.screens.first(where: {
+        ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display
+    }) else { fail("the main display has no screen") }
+    // An overlay that does not ask the system to keep it out of captures:
+    // whatever hides it from one is then the capture's own filter.
+    let overlay = SystemPointerOverlay(hidesFromCaptures: false)
+    guard let number = overlay.windowNumber(forDisplay: display) else { fail("the overlay made no window for the main display") }
+    overlay.show(pointers, onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+
+    // Where the probe's tag is in a frame: it starts 17 points right of and
+    // below the point, and is 20 points high.
+    func showsTheTag(_ frame: CVPixelBuffer) -> Bool {
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        guard CVPixelBufferGetPlaneCount(frame) == 2, let base = CVPixelBufferGetBaseAddressOfPlane(frame, 1) else { return false }
+        let width = CVPixelBufferGetWidthOfPlane(frame, 1)
+        let height = CVPixelBufferGetHeightOfPlane(frame, 1)
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(frame, 1)
+        let perPoint = Double(width) / Double(screen.frame.width)
+        let left = Int((Double(screen.frame.width) * 0.5 + 17 + 6) * perPoint)
+        let right = Int((Double(screen.frame.width) * 0.5 + 17 + 60) * perPoint)
+        let top = Int((Double(screen.frame.height) * 0.5 + 17 + 5) * perPoint)
+        let bottom = Int((Double(screen.frame.height) * 0.5 + 17 + 15) * perPoint)
+        guard left >= 0, top >= 0, right < width, bottom < height, right > left, bottom > top else { return false }
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var magentaPixels = 0
+        var counted = 0
+        for y in top..<bottom {
+            for x in left..<right {
+                // Blue and red both far above the middle: magenta, whatever the brightness.
+                if bytes[y * stride + x * 2] > 170, bytes[y * stride + x * 2 + 1] > 170 {
+                    magentaPixels += 1
+                }
+                counted += 1
+            }
+        }
+        return counted > 0 && Double(magentaPixels) / Double(counted) >= 0.5
+    }
+
+    /// One frame of a capture of the main display that leaves `excluded` out.
+    func capturedTag(excluding excluded: [UInt32]) -> Bool? {
+        let capturer = SystemScreenCapturer()
+        var request = ScreenCaptureRequest(source: .display(display), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30)
+        request.excludedWindows = excluded
+        var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+        capturer.prepare(request) { prepared = $0 }
+        guard wait(10, until: { prepared != nil }), case .success? = prepared else {
+            if case .failure(let failure)? = prepared {
+                fail("the capture did not start: \(failure.rawValue)")
+            }
+            return nil
+        }
+        let lock = NSLock()
+        var seen: Bool?
+        var started: Bool?
+        capturer.begin(frame: { frame, _, _ in
+            let shows = showsTheTag(frame)
+            lock.lock()
+            seen = shows
+            lock.unlock()
+        }, completion: { started = $0 })
+        guard wait(10, until: { started != nil }), started == true else { return nil }
+        _ = wait(5, until: {
+            lock.lock()
+            defer { lock.unlock() }
+            return seen != nil
+        })
+        // The ring of the click keeps the screen changing: take the last word.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        capturer.stop()
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+
+    let without = capturedTag(excluding: [])
+    let with = capturedTag(excluding: [number])
+    overlay.show([], onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    // The overlay as the app makes it, in a capture that leaves nothing
+    // out: what a capture the shell does not run (the system's picker)
+    // would carry.
+    let asShipped = SystemPointerOverlay()
+    asShipped.show(pointers, onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+    let bySharingType = capturedTag(excluding: [])
+    asShipped.show([], onDisplay: display)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    func words(_ seen: Bool?) -> String {
+        switch seen {
+        case true?: return "shows the pointer"
+        case false?: return "does not show the pointer"
+        case nil: return "gave no frame"
+        }
+    }
+    print("an overlay that does not hide itself: a capture that leaves nothing out \(words(without)); a capture that leaves the overlay's window out \(words(with))")
+    print("the overlay as the app makes it, in a capture that leaves nothing out: the capture \(words(bySharingType))")
+    if with == false, without == true {
+        print("pointer overlay, the real screen: the overlay is drawn, and a capture that names its window leaves it out")
+        exit(0)
+    }
+    print("pointer overlay, the real screen: 1 problem(s)")
+    exit(1)
+}
+
+/// A real window of the check's own, captured through ScreenCaptureKit and
+/// resized while it is captured: does the system say that the window has
+/// another size, and do frames of the new size come once the capture is
+/// resized to it. A small window appears on the screen for a few seconds and
+/// the system shows that the screen is being recorded. Nothing captured is
+/// kept: only the sizes of the frames are read.
+func checkCaptureWindowSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 200, y: 300, width: 480, height: 320),
+        styleMask: [.titled, .resizable], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: a window that changes its size"
+    let pulse = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
+    pulse.autoresizingMask = [.width, .height]
+    pulse.wantsLayer = true
+    window.contentView = pulse
+    window.orderFrontRegardless()
+    // Something has to change in the window, or the system sends no frames.
+    var tick = 0
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
+        tick += 1
+        pulse.layer?.backgroundColor = CGColor(gray: CGFloat(tick % 30) / 30, alpha: 1)
+    }
+    defer { timer.invalidate() }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+
+    let capturer = SystemScreenCapturer()
+    let request = ScreenCaptureRequest(
+        source: .window(UInt32(window.windowNumber)), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30
+    )
+    var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    capturer.prepare(request) { prepared = $0 }
+    guard wait(10, until: { prepared != nil }), case .success(let first)? = prepared else {
+        if case .failure(let failure)? = prepared { fail("the capture did not start: \(failure.rawValue)") }
+        fail("the capture did not answer")
+    }
+    let lock = NSLock()
+    var frameSizes: [String] = []
+    var reported: [(width: Int, height: Int)] = []
+    capturer.onSourceResized = { width, height in
+        reported.append((width, height))
+        // As a session does: the video takes the window's own size.
+        let target = VideoShape.encodedSize(width: width, height: height, maxWidth: 8192, maxHeight: 8192)
+        capturer.resize(width: target.width, height: target.height)
+    }
+    var started: Bool?
+    capturer.begin(frame: { frame, _, _ in
+        let size = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.lock()
+        if frameSizes.last != size { frameSizes.append(size) }
+        lock.unlock()
+    }, completion: { started = $0 })
+    guard wait(10, until: { started != nil }), started == true else { fail("the capture did not begin") }
+
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let reportedBefore = reported.count
+    // The whole window is captured, its title bar included.
+    let scale = window.backingScaleFactor
+    func pixels(_ size: NSSize) -> String {
+        "\(Int((size.width * scale).rounded()))x\(Int((size.height * scale).rounded()))"
+    }
+    let expectedFirst = pixels(window.frame.size)
+    window.setContentSize(NSSize(width: 720, height: 480))
+    let expected = pixels(window.frame.size)
+    RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+    let reportedAfterGrowing = reported.count
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    capturer.stop()
+    window.orderOut(nil)
+    lock.lock()
+    let sizes = frameSizes
+    lock.unlock()
+
+    print("the video started at \(first.width)x\(first.height) for a window whose frame is \(expectedFirst) pixels")
+    print("the system reported a new size \(reported.count - reportedBefore) time(s) after the window grew: \(reported.dropFirst(reportedBefore).map { "\($0.width)x\($0.height)" }); before it, \(reportedBefore) time(s)")
+    print("the frames were, in order, \(sizes)")
+    var problems: [String] = []
+    if "\(first.width)x\(first.height)" != expectedFirst {
+        problems.append("the first size is not the window's own")
+    }
+    if reportedBefore != 0 {
+        problems.append("a size was reported for a window that had not changed")
+    }
+    if reported.last.map({ "\($0.width)x\($0.height)" }) != expected || sizes.last != expected {
+        problems.append("after the window grew the last size reported and the last frames should be \(expected)")
+    }
+    if reported.count != reportedAfterGrowing {
+        problems.append("sizes went on being reported after the window had stopped changing")
+    }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture of a window, the real system: the video starts at the window's own size and follows it when the window is resized"
+        : "capture of a window, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A share's connection to a call that goes nowhere: it remembers what it
+/// was handed, and says what the check tells it to.
+final class CheckSharePublisher: ScreenSharePublisher {
+    var onEvent: ((SharePublisherEvent) -> Void)?
+    /// What the check decides beforehand.
+    var connects = true
+    var publishes = true
+
+    private(set) var connectedTo: (url: String, token: String)?
+    private(set) var published: [(width: Int, height: Int, settings: SharePublication)] = []
+    private(set) var encodings: [(maxBitrate: Int, minBitrate: Int, framesPerSecond: Int)] = []
+    private(set) var audioPublished = 0
+    private(set) var audioUnpublished = 0
+    private(set) var isDisconnected = false
+    /// Every time the call was told the video is paused, or is not.
+    private(set) var pauses: [Bool] = []
+
+    /// What the frames' and the samples' queues write.
+    private let lock = NSLock()
+    private var frames = 0
+    private var lastFrame = ""
+    private var firstIsBlack: Bool?
+    private var blacks = 0
+    private var samples = 0
+
+    /// How long a track waits for its first frame before it is not
+    /// published. The library waits ten seconds.
+    static let patienceForAFrame: TimeInterval = 2
+
+    var framesSent: Int { lock.lock(); defer { lock.unlock() }; return frames }
+    /// Whether the first frame handed over was a black one; nil before it.
+    var firstFrameIsBlack: Bool? { lock.lock(); defer { lock.unlock() }; return firstIsBlack }
+    var blackFramesSent: Int { lock.lock(); defer { lock.unlock() }; return blacks }
+    var lastFrameSize: String { lock.lock(); defer { lock.unlock() }; return lastFrame }
+    var samplesSent: Int { lock.lock(); defer { lock.unlock() }; return samples }
+
+    func connect(url: String, token: String, completion: @escaping (Bool) -> Void) {
+        if connects { connectedTo = (url, token) }
+        DispatchQueue.main.async { [connects] in completion(connects) }
+    }
+
+    /// As the library does: a track takes its size from its first frame
+    /// and is not published until one came, or at all when none does.
+    func publishVideo(width: Int, height: Int, settings: SharePublication, completion: @escaping (Bool) -> Void) {
+        guard publishes else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        let givesUp = Date().addingTimeInterval(Self.patienceForAFrame)
+        func look() {
+            if framesSent > 0 {
+                published.append((width, height, settings))
+                completion(true)
+            } else if Date() > givesUp {
+                completion(false)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { look() }
+            }
+        }
+        DispatchQueue.main.async { look() }
+    }
+
+    func send(frame: CVPixelBuffer) {
+        var black = false
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        if let luma = CVPixelBufferGetBaseAddressOfPlane(frame, 0) {
+            let row = CVPixelBufferGetBytesPerRowOfPlane(frame, 0)
+            let width = CVPixelBufferGetWidth(frame)
+            let height = CVPixelBufferGetHeight(frame)
+            let bytes = luma.assumingMemoryBound(to: UInt8.self)
+            // A made-up picture is bright in most of these places.
+            let spots = (1 ... 15).map { (width * $0 / 16, height * $0 / 16) }
+            black = spots.allSatisfy { bytes[$0.1 * row + $0.0] <= 20 }
+        }
+        CVPixelBufferUnlockBaseAddress(frame, .readOnly)
+        lock.lock()
+        if frames == 0 { firstIsBlack = black }
+        if black { blacks += 1 }
+        frames += 1
+        lastFrame = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.unlock()
+    }
+
+    func setVideoPaused(_ paused: Bool) {
+        pauses.append(paused)
+    }
+
+    func setEncoding(maxBitrate: Int, minBitrate: Int, framesPerSecond: Int, completion: @escaping (Bool) -> Void) {
+        encodings.append((maxBitrate, minBitrate, framesPerSecond))
+        DispatchQueue.main.async { completion(true) }
+    }
+
+    func publishAudio(format _: MediaWire.AudioFormat, completion: @escaping (Bool) -> Void) {
+        audioPublished += 1
+        DispatchQueue.main.async { completion(true) }
+    }
+
+    func send(audio samples: Data) {
+        lock.lock()
+        self.samples += samples.count
+        lock.unlock()
+    }
+
+    func unpublishAudio() {
+        audioUnpublished += 1
+    }
+
+    func disconnect() {
+        isDisconnected = true
+    }
+
+    /// The connection says something, as the real one does while a share runs.
+    func say(_ event: SharePublisherEvent) {
+        onEvent?(event)
+    }
+}
+
+/// A preview of a source that draws nothing: it remembers where it was put
+/// and how many frames it was given.
+final class CheckSharePreview: SharePreviewPresenter {
+    var view: NSView? { nil }
+    private(set) var shown: (frame: NSRect, cornerRadius: CGFloat)?
+    private(set) var cleared = 0
+    private let lock = NSLock()
+    private var frames = 0
+    private var lastFrame = ""
+
+    var framesDrawn: Int { lock.lock(); defer { lock.unlock() }; return frames }
+    var lastFrameSize: String { lock.lock(); defer { lock.unlock() }; return lastFrame }
+
+    func show(in frame: NSRect, cornerRadius: CGFloat) {
+        shown = (frame, cornerRadius)
+    }
+
+    func hide() {
+        shown = nil
+    }
+
+    func draw(_ frame: CVPixelBuffer, at _: CMTime) {
+        lock.lock()
+        frames += 1
+        lastFrame = "\(CVPixelBufferGetWidth(frame))x\(CVPixelBufferGetHeight(frame))"
+        lock.unlock()
+    }
+
+    func clear() {
+        shown = nil
+        cleared += 1
+    }
+}
+
+/// The shell's own share through the bridge, as the web client will start
+/// one: a screen and a system the check makes up, and a connection to a call
+/// that goes nowhere. What is checked is the share's own conduct: what it
+/// refuses, what it hands the call, what a change touches and what it leaves,
+/// and how it ends.
+func checkShare() -> Never {
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var sounds: [CheckSystemAudioCapturer] = []
+    var publishers: [CheckSharePublisher] = []
+    var connects = true
+    var publishes = true
+    /// Whether the next capture is of a source the system does not draw.
+    var sourceIsHidden = false
+    let preview = CheckSharePreview()
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 100_000, hidden: sourceIsHidden)
+                capturers.append(capturer)
+                return capturer
+            },
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                sounds.append(capturer)
+                return capturer
+            },
+            sharePublisher: {
+                let publisher = CheckSharePublisher()
+                publisher.connects = connects
+                publisher.publishes = publishes
+                publishers.append(publisher)
+                return publisher
+            },
+            sharePreview: preview
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start(_ options: String) -> [String: Any] {
+        page("return await window.backspace.startNativeScreenShare(\(options));") as? [String: Any] ?? [:]
+    }
+    func update(_ options: String) -> [String: Any] {
+        page("return await window.backspace.updateNativeScreenShare(\(options));") as? [String: Any] ?? [:]
+    }
+    /// Forgets what the page heard so far. One listener for a page, however
+    /// often this is called: two would write every event down twice.
+    func listen() {
+        _ = page("""
+            window.events = [];
+            if (!window.listens) {
+              window.listens = true;
+              window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+            }
+            return true;
+            """)
+    }
+    func events(_ type: String) -> [[String: Any]] {
+        let all = page("return window.events;") as? [[String: Any]] ?? []
+        return all.filter { $0["type"] as? String == type }
+    }
+    func refused(_ answer: [String: Any], _ reason: String) -> Bool {
+        answer["ok"] as? Bool == false && answer["reason"] as? String == reason
+    }
+    let good = """
+        { url: 'wss://calls.example/livekit', token: 'stream-token', sourceId: 'screen:1:0',
+          maxWidth: 1280, maxHeight: 720, frameRate: 30, codec: 'h265',
+          maxBitrate: 6000000, minBitrate: 1500000, audio: true }
+        """
+
+    load(address)
+    listen()
+
+    // 1. Who picks the source: the app, for a client that says it can have
+    //    the shell publish the share; WebKit, for one that says nothing.
+    let modes = page("""
+        return [
+          await window.backspace.getScreenSharePickerMode({ nativeShare: true }),
+          await window.backspace.getScreenSharePickerMode(),
+        ];
+        """) as? [String]
+    if modes != ["app", "system"] {
+        problems.append("the picker modes were \(String(describing: modes)), expected app for a client that has the shell publish and system otherwise")
+    }
+
+    // 2. What is not a share is refused before anything is made for it: no
+    //    address, an address that is no call server, no token, no source.
+    let unasked = [
+        start("{ token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'ws://calls.example', token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'https://calls.example', token: 't', sourceId: 'screen:1:0' }"),
+        start("{ url: 'wss://calls.example', sourceId: 'screen:1:0' }"),
+        start("{ url: 'wss://calls.example', token: 't' }"),
+    ]
+    if !unasked.allSatisfy({ refused($0, "bad-request") }) || !publishers.isEmpty || !capturers.isEmpty {
+        problems.append("requests that are no share were answered \(unasked), and \(publishers.count) connection(s) and \(capturers.count) capture(s) were made for them")
+    }
+    if !refused(update("{ maxBitrate: 3000000 }"), "not-running") {
+        problems.append("a change to a share that does not run was not refused as one")
+    }
+
+    // 3. A source that is gone: the call never hears of the share.
+    let gone = start("{ url: 'wss://calls.example', token: 't', sourceId: 'screen:77:0' }")
+    if !refused(gone, "no-source") || publishers.last?.connectedTo != nil {
+        problems.append("a share of a source that is gone was answered \(gone), and the call was \(publishers.last?.connectedTo == nil ? "not " : "")joined")
+    }
+
+    // 4. A call that does not let the share in, and one that does and takes
+    //    no track: both are said, and nothing is left capturing.
+    connects = false
+    let shut = start(good)
+    if !refused(shut, "connect-failed") || capturers.last?.isStopped != true {
+        problems.append("a share the call did not let in was answered \(shut); its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running")")
+    }
+    connects = true
+    publishes = false
+    let untaken = start(good)
+    if !refused(untaken, "publish-failed") || capturers.last?.isStopped != true || publishers.last?.isDisconnected != true {
+        problems.append("a share whose track was not published was answered \(untaken); its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running"), its connection \(publishers.last?.isDisconnected == true ? "closed" : "left open")")
+    }
+    publishes = true
+
+    // 5. A share: the call is joined with the address and the token the
+    //    page gave, the track is published as asked, frames of the fitted
+    //    size and the system's sound reach it.
+    let running = start(good)
+    let publisher = publishers.last
+    let firstCapturer = capturers.last
+    if running["ok"] as? Bool != true || running["width"] as? Int != 1152 || running["height"] as? Int != 720
+        || running["frameRate"] as? Int != 30 {
+        problems.append("the share was answered \(running), expected 1152 by 720 at 30")
+    }
+    if publisher?.connectedTo?.url != "wss://calls.example/livekit" || publisher?.connectedTo?.token != "stream-token" {
+        problems.append("the call was not joined with the address and the token the page gave")
+    }
+    let asked = SharePublication(codec: .h265, maxBitrate: 6_000_000, minBitrate: 1_500_000, framesPerSecond: 30)
+    if publisher?.published.count != 1 || publisher?.published.first?.settings != asked
+        || publisher?.published.first?.width != 1152 || publisher?.published.first?.height != 720 {
+        problems.append("the track was published as \(String(describing: publisher?.published)), expected once, 1152 by 720, \(asked)")
+    }
+    if !wait(5, until: { (publisher?.framesSent ?? 0) >= 30 && (publisher?.samplesSent ?? 0) > 0 })
+        || publisher?.lastFrameSize != "1152x720" || publisher?.audioPublished != 1 {
+        problems.append("the call was handed \(publisher?.framesSent ?? 0) frame(s), the last \(publisher?.lastFrameSize ?? "?"), and \(publisher?.samplesSent ?? 0) byte(s) of sound over \(publisher?.audioPublished ?? 0) published sound track(s)")
+    }
+
+    // 6. One share at a time.
+    let second = start(good)
+    if !refused(second, "busy") || publishers.count != 4 || publisher?.isDisconnected != false {
+        problems.append("a second share was answered \(second) while the first ran; \(publishers.count) connections were made in all")
+    }
+
+    // 7. Another bitrate: the published track is given a new encoding, and
+    //    neither the capture nor the publication starts again.
+    let capturesBefore = capturers.count
+    let cheaper = update("{ maxBitrate: 3000000 }")
+    let encoding = publisher?.encodings.last
+    if cheaper["ok"] as? Bool != true || encoding?.maxBitrate != 3_000_000 || encoding?.minBitrate != 1_500_000
+        || encoding?.framesPerSecond != 30 || capturers.count != capturesBefore || publisher?.published.count != 1 {
+        problems.append("a new bitrate was answered \(cheaper); the encoding became \(String(describing: encoding)), \(capturers.count - capturesBefore) capture(s) and \((publisher?.published.count ?? 1) - 1) publication(s) were started for it")
+    }
+
+    // 8. Another size: a new capture takes over, the one before it stops,
+    //    and its frames go into the same track.
+    let smaller = update("{ maxWidth: 640, maxHeight: 360 }")
+    if smaller["ok"] as? Bool != true || smaller["width"] as? Int != 576 || smaller["height"] as? Int != 360
+        || capturers.count != capturesBefore + 1 || firstCapturer?.isStopped != true || capturers.last?.isStopped != false
+        || publisher?.published.count != 1
+        || !wait(5, until: { publisher?.lastFrameSize == "576x360" }) {
+        problems.append("a smaller size was answered \(smaller); the first capture was \(firstCapturer?.isStopped == true ? "stopped" : "left running"), the call's last frame is \(publisher?.lastFrameSize ?? "?"), the track was published \(publisher?.published.count ?? 0) time(s)")
+    }
+
+    // 9. A source that is gone cannot replace the one that is shared: the
+    //    share goes on as it was.
+    let sharing = capturers.last
+    let nowhere = update("{ sourceId: 'screen:77:0' }")
+    let framesThen = publisher?.framesSent ?? 0
+    if !refused(nowhere, "no-source") || sharing?.isStopped != false
+        || !wait(5, until: { (publisher?.framesSent ?? 0) >= framesThen + 10 }) {
+        problems.append("a change to a source that is gone was answered \(nowhere); the capture that ran was \(sharing?.isStopped == false ? "kept" : "stopped")")
+    }
+
+    // 10. The sound off and on again: its track is unpublished and
+    //     published anew, the picture is not touched.
+    let quiet = update("{ audio: false }")
+    let firstSound = sounds.last
+    if quiet["ok"] as? Bool != true || firstSound?.isStopped != true || publisher?.audioUnpublished != 1 {
+        problems.append("turning the sound off was answered \(quiet); its capture was \(firstSound?.isStopped == true ? "stopped" : "left running"), its track unpublished \(publisher?.audioUnpublished ?? 0) time(s)")
+    }
+    let loud = update("{ audio: true }")
+    let samplesThen = publisher?.samplesSent ?? 0
+    if loud["ok"] as? Bool != true || publisher?.audioPublished != 2 || sounds.count != 2
+        || !wait(5, until: { (publisher?.samplesSent ?? 0) > samplesThen }) || publisher?.published.count != 1 {
+        problems.append("turning the sound on again was answered \(loud); \(publisher?.audioPublished ?? 0) sound track(s) were published over \(sounds.count) capture(s)")
+    }
+
+    // 11. The source changes its size, as a window that is resized: the
+    //     video takes the size it settles on, fitted into what was asked,
+    //     and the page is told. A size it only passed through is not taken.
+    sharing?.sourceBecame(width: 500, height: 500)
+    sharing?.sourceBecame(width: 1000, height: 1000)
+    let resized = wait(5, until: { !events("resized").isEmpty })
+    let told = events("resized")
+    if !resized || told.count != 1 || told.first?["width"] as? Int != 360 || told.first?["height"] as? Int != 360
+        || sharing?.resizedTo.map({ [$0.width, $0.height] }) != [[360, 360]] {
+        problems.append("after the source became 1000 by 1000 the page was told \(told) and the capture was resized to \(String(describing: sharing?.resizedTo))")
+    }
+
+    // 12. What the connection says reaches the page: that it is being
+    //     restored, that it is back, and what it sends.
+    publisher?.say(.reconnecting)
+    publisher?.say(.reconnected)
+    publisher?.say(.stats(ScreenShareStats(
+        bitrate: 2_900_000, framesPerSecond: 30, width: 576, height: 360, codec: "video/H265", encoder: "VideoToolbox",
+        hardware: true, roundTripMilliseconds: 5, availableBitrate: 6_000_000, limitedBy: "none", audioBitrate: 128_000
+    )))
+    let said = wait(5, until: { !events("stats").isEmpty })
+    let stats = events("stats").first
+    if !said || events("reconnecting").count != 1 || events("reconnected").count != 1
+        || stats?["bitrate"] as? Int != 2_900_000 || stats?["codec"] as? String != "video/H265"
+        || stats?["hardware"] as? Bool != true || stats?["audioBitrate"] as? Int != 128_000 {
+        problems.append("of a connection that was restored and reported once the page heard \(events("reconnecting").count) reconnecting, \(events("reconnected").count) reconnected, statistics \(String(describing: stats))")
+    }
+
+    // 13. The system's sound ends by itself: the page is told, and the
+    //     picture goes on.
+    sounds.last?.endByItself()
+    let soundEnded = wait(5, until: { !events("audio-ended").isEmpty })
+    let framesAfterSound = publisher?.framesSent ?? 0
+    if !soundEnded || publisher?.audioUnpublished != 2 || !events("ended").isEmpty
+        || !wait(5, until: { (publisher?.framesSent ?? 0) >= framesAfterSound + 10 }) {
+        problems.append("after the sound ended by itself the page heard \(events("audio-ended").count) audio-ended and \(events("ended").count) ended; the sound track was unpublished \(publisher?.audioUnpublished ?? 0) time(s)")
+    }
+
+    // 14. The page stops the share: the capture stops, the call is left,
+    //     and nothing is said about an ending that was asked for.
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    if !wait(5, until: { publisher?.isDisconnected == true && sharing?.isStopped == true }) || !events("ended").isEmpty {
+        problems.append("after the page stopped the share its capture was \(sharing?.isStopped == true ? "stopped" : "left running"), its connection \(publisher?.isDisconnected == true ? "closed" : "left open"), and the page heard \(events("ended").count) ended")
+    }
+    if !refused(update("{ maxBitrate: 3000000 }"), "not-running") {
+        problems.append("a change to a share that was stopped was not refused as one")
+    }
+
+    // 15. A source that ends by itself ends the share, and the page is told
+    //     why; another share can start after it.
+    _ = start(good)
+    capturers.last?.endByItself()
+    let endedBySource = wait(5, until: { !events("ended").isEmpty })
+    if !endedBySource || events("ended").first?["reason"] as? String != "source-ended" || publishers.last?.isDisconnected != true {
+        problems.append("after the source ended by itself the page heard \(events("ended")); the connection was \(publishers.last?.isDisconnected == true ? "closed" : "left open")")
+    }
+
+    // 16. A connection that is lost for good ends the share too.
+    listen()
+    let again = start(good)
+    publishers.last?.say(.disconnected)
+    let endedByCall = wait(5, until: { !events("ended").isEmpty })
+    if again["ok"] as? Bool != true || !endedByCall || events("ended").first?["reason"] as? String != "disconnected"
+        || capturers.last?.isStopped != true {
+        problems.append("a share started after one that ended was answered \(again); after its connection was lost the page heard \(events("ended")), and its capture was \(capturers.last?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    // 17. The live preview of a source, before any share: what is no
+    //     source is refused; a source is captured at a preview's size and
+    //     its frames are drawn, and nothing is shown until the page says
+    //     where its box is.
+    func startPreview(_ options: String) -> [String: Any] {
+        page("return await window.backspace.startNativeSharePreview(\(options));") as? [String: Any] ?? [:]
+    }
+    listen()
+    let noPreview = [startPreview("{}"), startPreview("{ sourceId: 'tab:1:0' }")]
+    let previewOfNothing = startPreview("{ sourceId: 'screen:77:0' }")
+    if !noPreview.allSatisfy({ refused($0, "bad-request") }) || !refused(previewOfNothing, "no-source") || preview.shown != nil {
+        problems.append("previews of no source were answered \(noPreview), one of a source that is gone \(previewOfNothing)")
+    }
+    let previewing = startPreview("{ sourceId: 'screen:1:0', maxWidth: 8000, frameRate: 60 }")
+    let previewCapture = capturers.last
+    if previewing["ok"] as? Bool != true || previewing["width"] as? Int != 1280 || previewing["height"] as? Int != 800
+        || previewCapture?.request?.framesPerSecond != 30
+        || !wait(5, until: { preview.framesDrawn >= 10 }) || preview.lastFrameSize != "1280x800" || preview.shown != nil {
+        problems.append("a preview was answered \(previewing); \(preview.framesDrawn) frame(s) were drawn, the last \(preview.lastFrameSize), and it was \(preview.shown == nil ? "not shown" : "shown") before the page said where")
+    }
+
+    // 18. The page's box: the picture is put over it, with its corners,
+    //     and taken away when the page says it has no box to show it in.
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 100, y: 60, width: 640, height: 400, radius: 10 }); return true;")
+    if !wait(5, until: { preview.shown != nil }) || preview.shown?.frame != NSRect(x: 100, y: 60, width: 640, height: 400)
+        || preview.shown?.cornerRadius != 10 {
+        problems.append("the preview was put at \(String(describing: preview.shown)), expected the page's box")
+    }
+    _ = page("window.backspace.setNativeSharePreviewFrame(null); return true;")
+    let drawnWhenHidden = preview.framesDrawn
+    if !wait(5, until: { preview.shown == nil }) || previewCapture?.isStopped != false
+        || !wait(5, until: { preview.framesDrawn >= drawnWhenHidden + 5 }) {
+        problems.append("a box of null left the preview \(preview.shown == nil ? "hidden" : "shown"), its capture \(previewCapture?.isStopped == false ? "running" : "stopped")")
+    }
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 100, y: 60, width: 640, height: 400 }); return true;")
+    _ = wait(5, until: { preview.shown != nil })
+
+    // 19. A share starts and stops beside the preview, each with a capture
+    //     of its own; a preview of another source replaces the one before.
+    let beside = start(good)
+    let besideCapture = capturers.last
+    if beside["ok"] as? Bool != true || besideCapture === previewCapture || previewCapture?.isStopped != false {
+        problems.append("a share beside a preview was answered \(beside); the preview's capture was \(previewCapture?.isStopped == false ? "kept" : "stopped")")
+    }
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    if !wait(5, until: { besideCapture?.isStopped == true }) || previewCapture?.isStopped != false || preview.shown == nil {
+        problems.append("stopping the share left the preview's capture \(previewCapture?.isStopped == false ? "running" : "stopped")")
+    }
+    let replaced = startPreview("{ sourceId: 'screen:1:0' }")
+    let secondPreview = capturers.last
+    if replaced["ok"] as? Bool != true || previewCapture?.isStopped != true || secondPreview?.isStopped != false {
+        problems.append("a second preview was answered \(replaced); the first one's capture was \(previewCapture?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    // 20. A previewed source that ends by itself: the page is told, and
+    //     the picture is gone. A preview the page stops is not news.
+    secondPreview?.endByItself()
+    if !wait(5, until: { !events("preview-ended").isEmpty }) || preview.shown != nil || !events("ended").isEmpty {
+        problems.append("after a previewed source ended by itself the page heard \(events("preview-ended").count) preview-ended and \(events("ended").count) ended; the picture was \(preview.shown == nil ? "gone" : "left")")
+    }
+    listen()
+    _ = startPreview("{ sourceId: 'screen:1:0' }")
+    let stoppedPreview = capturers.last
+    _ = page("window.backspace.stopNativeSharePreview(); return true;")
+    if !wait(5, until: { stoppedPreview?.isStopped == true }) || !events("preview-ended").isEmpty {
+        problems.append("a preview the page stopped left its capture \(stoppedPreview?.isStopped == true ? "stopped" : "running") and the page heard \(events("preview-ended").count) preview-ended")
+    }
+
+    // 21. The window shows another page: the share and the preview of the
+    //     page before go with it.
+    _ = start(good)
+    let orphan = publishers.last
+    let orphanCapture = capturers.last
+    _ = startPreview("{ sourceId: 'screen:1:0' }")
+    let orphanPreview = capturers.last
+    _ = page("window.backspace.setNativeSharePreviewFrame({ x: 0, y: 0, width: 320, height: 200 }); return true;")
+    _ = wait(5, until: { preview.shown != nil })
+    load(address)
+    listen()
+    if !wait(5, until: { orphan?.isDisconnected == true && orphanCapture?.isStopped == true && sounds.last?.isStopped == true })
+        || orphanPreview?.isStopped != true || preview.shown != nil {
+        problems.append("after the window showed another page the share's connection was \(orphan?.isDisconnected == true ? "closed" : "left open"), its capture \(orphanCapture?.isStopped == true ? "stopped" : "left running"), the preview's capture \(orphanPreview?.isStopped == true ? "stopped" : "left running")")
+    }
+
+    // 22. A source the system does not draw, as a window in another of
+    //     Stage Manager's sets: its capture gives no frame. The share
+    //     starts all the same, with a black picture of the source's
+    //     size for the track to be published with, the call is told the
+    //     video is paused, so that viewers are, and the page is told the
+    //     source is hidden; when the system draws it, the call and the
+    //     page are told that too and its frames go to the call.
+    listen()
+    sourceIsHidden = true
+    let unseen = start(good)
+    let unseenCall = publishers.last
+    let unseenCapture = capturers.last
+    if unseen["ok"] as? Bool != true || unseen["hidden"] as? Bool != true
+        || unseenCall?.framesSent != 1 || unseenCall?.firstFrameIsBlack != true || unseenCall?.lastFrameSize != "1152x720"
+        || unseenCall?.pauses != [true] {
+        problems.append("a share of a source that is not drawn was answered \(unseen); the call was handed \(unseenCall?.framesSent ?? -1) frame(s), the first \(unseenCall?.firstFrameIsBlack == true ? "black" : "not black"), of \(unseenCall?.lastFrameSize ?? "no size"), expected one black frame of 1152x720; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true]")
+    }
+    unseenCapture?.show()
+    let seen = wait(5, until: { (unseenCall?.framesSent ?? 0) > 5 && !events("source-hidden").isEmpty })
+    if !seen || events("source-hidden").map({ $0["hidden"] as? Bool }) != [false] || unseenCall?.pauses != [true, false] {
+        problems.append("after the source was drawn the call had \(unseenCall?.framesSent ?? -1) frame(s) and the page heard \(events("source-hidden")), expected frames and one source-hidden with hidden false; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true, false]")
+    }
+    //     A source that is hidden while it is shared: the call and the
+    //     page are told, and no black picture is sent.
+    listen()
+    unseenCapture?.hide()
+    let toldHidden = wait(5, until: { !events("source-hidden").isEmpty })
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let framesWhenHidden = unseenCall?.framesSent ?? -1
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    if !toldHidden || events("source-hidden").map({ $0["hidden"] as? Bool }) != [true]
+        || unseenCall?.framesSent != framesWhenHidden || unseenCall?.blackFramesSent != 1
+        || unseenCall?.pauses != [true, false, true] {
+        problems.append("after a shared source was hidden the page heard \(events("source-hidden")), the call got \((unseenCall?.framesSent ?? -1) - framesWhenHidden) more frame(s) and \(unseenCall?.blackFramesSent ?? -1) black one(s) in all, expected one source-hidden with hidden true, no more frames and the one black frame of the start; the call was told of pauses \(unseenCall?.pauses ?? []), expected [true, false, true]")
+    }
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    _ = wait(5, until: { unseenCall?.isDisconnected == true })
+
+    // 23. The preview of such a source: it starts, the page is told there
+    //     is no picture of it, and told again when there is one.
+    listen()
+    let unseenPreview = startPreview("{ sourceId: 'screen:1:0' }")
+    let unseenPreviewCapture = capturers.last
+    let previewToldHidden = wait(5, until: { !events("preview-hidden").isEmpty })
+    unseenPreviewCapture?.show()
+    let previewToldShown = wait(5, until: { events("preview-hidden").count == 2 })
+    if unseenPreview["ok"] as? Bool != true || !previewToldHidden || !previewToldShown
+        || events("preview-hidden").map({ $0["hidden"] as? Bool }) != [true, false] || !events("source-hidden").isEmpty {
+        problems.append("a preview of a source that is not drawn was answered \(unseenPreview); the page heard preview-hidden \(events("preview-hidden")) and \(events("source-hidden").count) source-hidden, expected hidden true and then false")
+    }
+    sourceIsHidden = false
+    _ = page("window.backspace.stopNativeSharePreview(); return true;")
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the shell's own share: refused, started, changed and ended as it should be, with a live preview put where the page says, through the bridge"
+        : "the shell's own share: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The shell's own share into a real call: the real session and the real
+/// connection through LiveKit's library, started through the bridge as the
+/// web client will, with a screen and a system the check makes up (the real
+/// screen is not captured and nothing is played on this machine). It joins
+/// the room the token names, publishes for a while, changes the bitrate in
+/// the middle, and prints what the connection reports once a second.
+///
+///   --check share-live --url wss://… --token-file <stream token> [--seconds 20] [--codec h265]
+///                      [--hidden-from 8 --hidden-until 14] [--starts-hidden yes]
+///
+/// With `--hidden-from` and `--hidden-until` the made-up source is one the
+/// system stops drawing between those seconds, and with `--starts-hidden yes`
+/// one it does not draw until the fifth second: the video is paused in
+/// the call meanwhile, which a viewer in the room sees.
+///
+/// Run by hand, with a token minted for a test room; watch the room with
+/// `StreamProbe --watch` to see what arrives.
+func checkShareLive() -> Never {
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    guard let url = arguments["url"], let tokenPath = arguments["token-file"],
+          let token = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+          !token.isEmpty else {
+        fail("--check share-live needs --url and --token-file")
+    }
+    let seconds = Int(arguments["seconds"] ?? "") ?? 20
+    let codec = arguments["codec"] ?? "h265"
+    let hiddenFrom = Int(arguments["hidden-from"] ?? "")
+    let hiddenUntil = Int(arguments["hidden-until"] ?? "")
+    let startsHidden = arguments["starts-hidden"] != nil
+    var liveCapturers: [CheckScreenCapturer] = []
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            // A picture that moves and can be compressed: a busy one makes the
+            // encoder drop frames to keep the bitrate, which says nothing of
+            // the share.
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000, hidden: startsHidden)
+                liveCapturers.append(capturer)
+                return capturer
+            },
+            systemAudioCapturer: { CheckSystemAudioCapturer() },
+            sharePublisher: { LiveKitSharePublisher() }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    func page(_ script: String, _ arguments: [String: Any] = [:]) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { answer = $0 }
+        guard wait(60, until: { answer != nil }) else { return nil }
+        if case .success(let value)? = answer { return value }
+        if case .failure(let error)? = answer {
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+        }
+        return nil
+    }
+    _ = page("""
+        window.events = [];
+        window.backspace.onNativeScreenShareEvent((event) => { window.events.push(event); });
+        window.backspace.rendererReady();
+        return true;
+        """)
+    // The token goes to the page as an argument and from it to the shell,
+    // as the web client hands it over; it is never printed.
+    let started = page("""
+        return await window.backspace.startNativeScreenShare({
+          url, token, sourceId: 'screen:1:0', maxWidth: 2560, maxHeight: 1600, frameRate: 60,
+          codec, maxBitrate: 8000000, minBitrate: 1500000, audio: true,
+        });
+        """, ["url": url, "token": token, "codec": codec]) as? [String: Any] ?? [:]
+    print("the share was answered \(started)")
+    guard started["ok"] as? Bool == true else { exit(1) }
+
+    var problems: [String] = []
+    var printed = 0
+    func report() {
+        let all = page("return window.events;") as? [[String: Any]] ?? []
+        for event in all.dropFirst(printed) {
+            if event["type"] as? String == "stats" {
+                print(String(
+                    format: "  sends %@ %dx%d %.0f fps %d kbit/s, encoder %@%@, limited by %@, round trip %@ ms, sound %@ kbit/s",
+                    event["codec"] as? String ?? "?", event["width"] as? Int ?? 0, event["height"] as? Int ?? 0,
+                    event["frameRate"] as? Double ?? 0, (event["bitrate"] as? Int ?? 0) / 1000,
+                    event["encoder"] as? String ?? "?", event["hardware"] as? Bool == true ? " (hardware)" : "",
+                    event["limitedBy"] as? String ?? "?",
+                    (event["roundTripMs"] as? Double).map { String(format: "%.0f", $0) } ?? "?",
+                    (event["audioBitrate"] as? Int).map { String($0 / 1000) } ?? "?"
+                ))
+            } else {
+                print("  the page heard \(event)")
+            }
+        }
+        printed = all.count
+    }
+    for second in 1 ... seconds {
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        report()
+        if startsHidden, second == 5 {
+            liveCapturers.last?.show()
+            print("  -- the source is drawn")
+        }
+        if second == hiddenFrom {
+            liveCapturers.last?.hide()
+            print("  -- the source is hidden")
+        }
+        if second == hiddenUntil {
+            liveCapturers.last?.show()
+            print("  -- the source is drawn again")
+        }
+        if second == seconds / 2 {
+            let changed = page("return await window.backspace.updateNativeScreenShare({ maxBitrate: 2000000, minBitrate: 0 });") as? [String: Any] ?? [:]
+            print("  -- a ceiling of 2000 kbit/s was answered \(changed)")
+            if changed["ok"] as? Bool != true { problems.append("the bitrate was not changed") }
+        }
+    }
+    let all = page("return window.events;") as? [[String: Any]] ?? []
+    let stats = all.filter { $0["type"] as? String == "stats" }
+    let late = stats.suffix(3)
+    if stats.count < seconds / 2 { problems.append("only \(stats.count) statistics in \(seconds) s") }
+    if !late.allSatisfy({ ($0["frameRate"] as? Double ?? 0) >= 55 }) { problems.append("the share did not hold 55 frames a second at its end") }
+    if !late.allSatisfy({ $0["hardware"] as? Bool == true }) { problems.append("the encoder is not the hardware one") }
+    if !late.allSatisfy({ ($0["bitrate"] as? Int ?? 0) <= 2_600_000 }) { problems.append("the new ceiling was not kept") }
+    if all.contains(where: { $0["type"] as? String == "ended" }) { problems.append("the share ended by itself") }
+
+    _ = page("window.backspace.stopNativeScreenShare(); return true;")
+    // The room is left on a task of the library's own.
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the shell's own share into a real call: joined, published in hardware, changed and left"
+        : "the shell's own share into a real call: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real layer of the live preview, on the screen: is a frame handed to
+/// it a picture a person sees. A small window of the check's own appears ON
+/// THE SCREEN for a few seconds with the preview in it, fed with frames the
+/// check makes up (the real screen is not previewed); the window is then
+/// captured through ScreenCaptureKit, which shows the system's recording
+/// indicator, and the brightness of what was captured is measured. A layer
+/// that draws nothing is one flat colour. Nothing captured is kept.
+///
+/// Run by hand; it is not part of contract-check.sh.
+func checkSharePreviewSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 240, y: 320, width: 520, height: 340),
+        styleMask: [.titled], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: the live preview's layer"
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 340))
+    content.wantsLayer = true
+    content.layer?.backgroundColor = NSColor(white: 0.07, alpha: 1).cgColor
+    window.contentView = content
+    let preview = SystemSharePreview()
+    guard let surface = preview.view else { fail("the preview has no view") }
+    content.addSubview(surface)
+    let box = NSRect(x: 20, y: 20, width: 480, height: 300)
+    preview.show(in: box, cornerRadius: 12)
+    window.orderFrontRegardless()
+
+    let source = CheckScreenCapturer(movingFrames: 1_000_000, noiseEvery: 100_000)
+    var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    source.prepare(ScreenCaptureRequest(
+        source: .display(1), maxWidth: SharePreview.maxWidth, maxHeight: SharePreview.maxHeight,
+        framesPerSecond: SharePreview.framesPerSecond
+    )) { prepared = $0 }
+    guard wait(5, until: { prepared != nil }), case .success? = prepared else { fail("the made-up source did not start") }
+    var drawn = 0
+    var fed: Bool?
+    source.begin(frame: { frame, time, _ in
+        preview.draw(frame, at: time)
+        drawn += 1
+    }, completion: { fed = $0 })
+    guard wait(5, until: { fed != nil }), fed == true else { fail("the made-up source gave no frames") }
+    RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+
+    // What a person sees of the window, by capturing it.
+    let capturer = SystemScreenCapturer()
+    var seen: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+    capturer.prepare(ScreenCaptureRequest(
+        source: .window(UInt32(window.windowNumber)), maxWidth: 8192, maxHeight: 8192, framesPerSecond: 30
+    )) { seen = $0 }
+    guard wait(10, until: { seen != nil }), case .success(let size)? = seen else {
+        if case .failure(let failure)? = seen { fail("the window could not be captured: \(failure.rawValue)") }
+        fail("the capture did not answer")
+    }
+    let lock = NSLock()
+    var darkest = 255
+    var brightest = 0
+    var measured = 0
+    var began: Bool?
+    capturer.begin(frame: { frame, _, _ in
+        CVPixelBufferLockBaseAddress(frame, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(frame, 0) else { return }
+        let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(frame, 0)
+        let width = CVPixelBufferGetWidthOfPlane(frame, 0)
+        let height = CVPixelBufferGetHeightOfPlane(frame, 0)
+        // The middle of the window, where the preview is: away from the
+        // title bar and the margins around the box.
+        var low = 255
+        var high = 0
+        for y in Swift.stride(from: height * 2 / 5, to: height * 4 / 5, by: 3) {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+            for x in Swift.stride(from: width / 4, to: width * 3 / 4, by: 3) {
+                let value = Int(row[x])
+                low = min(low, value)
+                high = max(high, value)
+            }
+        }
+        lock.lock()
+        darkest = min(darkest, low)
+        brightest = max(brightest, high)
+        measured += 1
+        lock.unlock()
+    }, completion: { began = $0 })
+    guard wait(10, until: { began != nil }), began == true else { fail("the capture did not begin") }
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    capturer.stop()
+    source.stop()
+    preview.clear()
+    window.orderOut(nil)
+
+    lock.lock()
+    let (low, high, frames) = (darkest, brightest, measured)
+    lock.unlock()
+    print("the window was captured at \(size.width)x\(size.height); \(drawn) frame(s) were handed to the preview; over \(frames) captured frame(s) the middle of the window went from \(low) to \(high) of 255 in brightness")
+    var problems: [String] = []
+    if drawn < 20 { problems.append("the preview was handed too few frames") }
+    if frames < 3 { problems.append("too few frames of the window were captured to tell") }
+    if high - low < 60 { problems.append("the preview's box is one flat colour: the layer drew no picture") }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "the live preview, the real layer: the frames it is handed are a picture on the screen"
+        : "the live preview, the real layer: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// How many frames a second ScreenCaptureKit really gives when asked for a
+/// rate, on this machine's display. A small window of the check's own appears
+/// ON THE SCREEN and changes colour at every refresh, so that the display has
+/// something new each time; the main display is captured for a few seconds at
+/// each rate three ways (the system asked for the rate itself, asked for
+/// frames with room to spare, and the capturer as the app uses it, which
+/// paces them), and the frames are counted. The system shows that
+/// the screen is being recorded; nothing captured is read but the count.
+///
+///   --check capture-rate-system [--seconds 4]
+///
+/// Run by hand; it is not part of contract-check.sh.
+func checkCaptureRateSystem() -> Never {
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let window = NSWindow(
+        contentRect: NSRect(x: 200, y: 300, width: 320, height: 200),
+        styleMask: [.titled], backing: .buffered, defer: false
+    )
+    window.title = "ContractCheck: a picture that changes at every refresh"
+    let pulse = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+    pulse.wantsLayer = true
+    window.contentView = pulse
+    window.orderFrontRegardless()
+    var tick = 0
+    let timer = Timer(timeInterval: 1.0 / 240, repeats: true) { _ in
+        tick += 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pulse.layer?.backgroundColor = CGColor(gray: CGFloat(tick % 16) / 16, alpha: 1)
+        CATransaction.commit()
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    defer { timer.invalidate() }
+    let seconds = Double(arguments["seconds"] ?? "") ?? 4
+    let refresh = NSScreen.main?.maximumFramesPerSecond ?? 0
+    print("the main display refreshes up to \(refresh) times a second")
+
+    func measure(rate: Int, factor: Double, paced: Bool) -> Double? {
+        let capturer = SystemScreenCapturer()
+        capturer.frameIntervalFactor = factor
+        capturer.pacesFrames = paced
+        var prepared: Result<(width: Int, height: Int), ScreenCaptureFailure>?
+        capturer.prepare(ScreenCaptureRequest(
+            source: .display(CGMainDisplayID()), maxWidth: 1920, maxHeight: 1200, framesPerSecond: rate
+        )) { prepared = $0 }
+        guard wait(10, until: { prepared != nil }), case .success? = prepared else { return nil }
+        let lock = NSLock()
+        var times: [Double] = []
+        var began: Bool?
+        capturer.begin(frame: { _, time, _ in
+            lock.lock()
+            times.append(time.seconds)
+            lock.unlock()
+        }, completion: { began = $0 })
+        guard wait(10, until: { began != nil }), began == true else { return nil }
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds + 1))
+        capturer.stop()
+        lock.lock()
+        let all = times
+        lock.unlock()
+        // The first second is the capture starting.
+        guard let last = all.last else { return 0 }
+        let counted = all.filter { $0 >= last - seconds }
+        guard counted.count > 1, let first = counted.first else { return 0 }
+        return Double(counted.count - 1) / (last - first)
+    }
+
+    let product = SystemScreenCapturer()
+    var lines: [String] = []
+    var problems: [String] = []
+    for rate in [60, 45, 30] {
+        let asIs = measure(rate: rate, factor: 1, paced: false)
+        let spare = measure(rate: rate, factor: product.frameIntervalFactor, paced: false)
+        let paced = measure(rate: rate, factor: product.frameIntervalFactor, paced: true)
+        func said(_ value: Double?) -> String { value.map { String(format: "%.1f", $0) } ?? "no capture" }
+        lines.append("asked for \(rate) a second: the system gives \(said(asIs)) for the rate itself and \(said(spare)) with room to spare; the capturer hands on \(said(paced))")
+        if let paced, abs(paced - Double(rate)) > Double(rate) * 0.03 {
+            problems.append("the capturer hands on \(said(paced)) frames a second where \(rate) were asked for")
+        } else if paced == nil {
+            problems.append("the capture at \(rate) a second did not start")
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+    }
+    window.orderOut(nil)
+    lines.forEach { print($0) }
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture rate, the real system: the capturer hands on the rate that was asked for"
+        : "capture rate, the real system: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// A share through the bridge, as the web client will start one, with a
+/// screen the check makes up.
+/// Whether this machine has a hardware H.264 encoder. Every Mac has one; a
+/// virtual machine, which is what a CI runner is, has none.
+func hasHardwareH264Encoder() -> Bool {
+    var list: CFArray?
+    guard VTCopyVideoEncoderList(nil, &list) == noErr, let encoders = list as? [[CFString: Any]] else { return false }
+    return encoders.contains {
+        ($0[kVTVideoEncoderList_CodecType] as? NSNumber)?.uint32Value == kCMVideoCodecType_H264
+            && ($0[kVTVideoEncoderList_IsHardwareAccelerated] as? Bool) == true
+    }
+}
+
+func checkCapture() -> Never {
+    // The capture path encodes with the hardware encoder and with no other
+    // (VideoEncoder requires it), so there is nothing to check without one.
+    guard hasHardwareH264Encoder() else {
+        print("capture: not run, this machine has no hardware H.264 encoder (a virtual machine)")
+        exit(0)
+    }
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var movingFrames = 90
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: movingFrames)
+                capturers.append(capturer)
+                return capturer
+            }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    func load(_ url: URL) {
+        var hasEnded = false
+        shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+        shell.load(url)
+        guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func start(_ options: String) -> [String: Any] {
+        page("window.share = await window.backspace.startNativeScreenCapture(\(options)); return window.share;") as? [String: Any] ?? [:]
+    }
+    func stats() -> [String: Any] {
+        page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    }
+    func decoded() -> Int {
+        stats()["decoded"] as? Int ?? 0
+    }
+    let connect = "return await window.startPipe(window.share.url, window.share.token, 'track');"
+
+    load(address)
+    _ = page(videoPipePage)
+    _ = page("""
+        window.ended = 0;
+        window.endedIDs = [];
+        window.backspace.onNativeScreenCaptureEnded((event) => { window.ended += 1; window.endedIDs.push(event && event.id); });
+        return true;
+        """)
+
+    // 1. Who picks the source: the app, for a client that says it takes a
+    //    native capture; WebKit, for one that does not.
+    let modes = page("""
+        return [
+          await window.backspace.getScreenSharePickerMode({ nativeCapture: true }),
+          await window.backspace.getScreenSharePickerMode(),
+        ];
+        """) as? [String]
+    if modes != ["app", "system"] {
+        problems.append("the picker modes were \(String(describing: modes)), expected app for a client that takes native capture and system otherwise")
+    }
+
+    // 2. A request that names no source, or one that is gone, starts nothing.
+    let bad = start("{ maxWidth: 1280 }")
+    let gone = start("{ sourceId: 'screen:77:0' }")
+    if bad["ok"] as? Bool != false || bad["reason"] as? String != "bad-request"
+        || gone["ok"] as? Bool != false || gone["reason"] as? String != "no-source" {
+        problems.append("a request without a source was answered \(bad), one for a source that is gone \(gone)")
+    }
+    if capturers.last?.isStopped != true {
+        problems.append("the capture that could not start was left running")
+    }
+
+    // 3. A screen that changes: three seconds at thirty frames a second,
+    //    fitted into what was asked for.
+    let moving = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    if moving["ok"] as? Bool != true || moving["width"] as? Int != 1152 || moving["height"] as? Int != 720
+        || moving["frameRate"] as? Int != 30 || (moving["url"] as? String)?.hasPrefix("wss://127.0.0.1:") != true {
+        problems.append("the share was answered \(moving.filter { $0.key != "token" }), expected 1152 by 720 at 30")
+    }
+    if page(connect) as? String != "video" {
+        problems.append("the page got no video track")
+    }
+    // A second of video is what is asked for, not most of the ninety
+    // frames: the page connects after the capture started and misses what
+    // was sent before, more of it on a slow machine (59 on a CI runner).
+    _ = wait(20, until: { capturers.last.map { _ in decoded() >= 30 } ?? false })
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let first = stats()
+    let firstDecoded = first["decoded"] as? Int ?? 0
+    let format = (first["formats"] as? [[String: Any]])?.first
+    if firstDecoded < 30 || format?["width"] as? Int != 1152 || format?["height"] as? Int != 720
+        || first["videoWidth"] as? Int != 1152 || !(first["errors"] as? [String] ?? ["?"]).isEmpty {
+        problems.append("of a screen that changed for 90 frames the page decoded \(firstDecoded), in \(String(describing: format)), with errors \(String(describing: first["errors"]))")
+    }
+    let movingCapturer = capturers.last
+
+    // 4. A screen that stands still. The one frame it gives is long gone when
+    //    the page connects, and the page still gets a picture; and another
+    //    when its decoder asks for one. The capture before it runs on: the
+    //    page previews a source while its share continues.
+    let movingID = moving["id"] as? String ?? ""
+    movingFrames = 1
+    let still = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    if movingCapturer?.isStopped != false || movingID.isEmpty || still["id"] as? String == movingID {
+        problems.append("a second capture ended the first, or the two share an id")
+    }
+    _ = page("window.backspace.stopNativeScreenCapture('\(movingID)'); return true;")
+    if !wait(5, until: { movingCapturer?.isStopped == true }) || capturers.last?.isStopped != false {
+        problems.append("stopping a capture by its id did not stop that one alone")
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+    _ = page(connect)
+    if still["ok"] as? Bool != true || !wait(5, until: { decoded() >= 1 }) {
+        problems.append("a page that connected to a screen standing still got no picture")
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    let before = decoded()
+    _ = page("window.pipeWorker.postMessage({ ask: 'keyframe' }); return true;")
+    if !wait(5, until: { decoded() > before }) {
+        problems.append("the page asked for a key frame of a screen standing still and got none")
+    }
+    let afterKeyFrame = stats()
+    if afterKeyFrame["deltaFrames"] as? Int != 0 {
+        problems.append("a screen standing still sent \(String(describing: afterKeyFrame["deltaFrames"])) frames that need others, expected key frames only")
+    }
+
+    // 5. The capture ends by itself: the page is told, and the share is over.
+    let endedBefore = page("return window.ended;") as? Int ?? -1
+    capturers.last?.endByItself()
+    if !wait(5, until: { page("return window.ended;") as? Int == endedBefore + 1 })
+        || page("return window.endedIDs;") as? [String] != [still["id"] as? String ?? "?"] {
+        problems.append("the page was not told which capture ended")
+    }
+
+    // 6. The page stops a share.
+    movingFrames = 900
+    _ = start("{ sourceId: 'screen:1:0', frameRate: 30 }")
+    let running = capturers.last
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
+    if !wait(5, until: { running?.isStopped == true }) {
+        problems.append("stopNativeScreenCapture left the capture running")
+    }
+    if page("return window.ended;") as? Int != endedBefore + 1 {
+        problems.append("the page was told that a share it stopped itself had ended")
+    }
+
+    // 6a. The source changes its size, as a window that is resized: the
+    //     video follows once the size has settled, fitted into the same
+    //     limits, and the page is told the new format and goes on
+    //     decoding. A size it only passed through is not taken.
+    movingFrames = 900
+    _ = start("{ sourceId: 'screen:1:0', maxWidth: 1280, maxHeight: 720, frameRate: 30 }")
+    let resized = capturers.last
+    _ = page(connect)
+    _ = wait(8, until: { decoded() >= 15 })
+    resized?.sourceBecame(width: 500, height: 500)
+    resized?.sourceBecame(width: 1000, height: 1000)
+    let tookTheNewSize = wait(8, until: {
+        let formats = stats()["formats"] as? [[String: Any]] ?? []
+        return formats.last?["width"] as? Int == 720 && formats.last?["height"] as? Int == 720
+    })
+    let decodedThen = decoded()
+    let wentOn = wait(8, until: { decoded() >= decodedThen + 15 })
+    if !tookTheNewSize || !wentOn || resized?.resizedTo.map({ [$0.width, $0.height] }) != [[720, 720]]
+        || stats()["videoWidth"] as? Int != 720 {
+        problems.append("after the source became 1000 by 1000 the capture was resized to \(String(describing: resized?.resizedTo)), the page's last format is \(String(describing: (stats()["formats"] as? [[String: Any]])?.last)), its video is \(stats()["videoWidth"] ?? "?") wide")
+    }
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
+
+    // 7. A page may have a few captures at once, and no more.
+    let made = capturers.count
+    var answers: [[String: Any]] = []
+    for _ in 0...ScreenCaptureRequest.mostAtOnce {
+        answers.append(start("{ sourceId: 'screen:1:0', maxWidth: 320, maxHeight: 200, frameRate: 5 }"))
+    }
+    if answers.dropLast().contains(where: { $0["ok"] as? Bool != true })
+        || answers.last?["reason"] as? String != "too-many" {
+        problems.append("\(ScreenCaptureRequest.mostAtOnce) captures at once should start and one more be refused; got \(answers.map { $0["ok"] ?? $0 })")
+    }
+
+    // 8. Another page: the captures of the one before it stop.
+    let leftBehind = Array(capturers[made...])
+    load(URL(string: origin + "/next")!)
+    if !wait(5, until: { leftBehind.allSatisfy(\.isStopped) }) {
+        problems.append("a capture outlived its page")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture: started through the bridge and fitted to what was asked; a screen standing still still gives a picture; several run at once, each stopped by its id, by itself or with its page"
+        : "capture: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The web client's own capture code, in the shell, with a screen the check
+/// makes up. `address` is the web package's workbench page
+/// (`dev-native-capture.html`) on a running Vite server.
+func checkCaptureWeb(address: String) -> Never {
+    guard let url = URL(string: address) else { fail("--url takes the address of dev-native-capture.html") }
+    var problems: [String] = []
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    var capturers: [CheckScreenCapturer] = []
+    var soundCapturers: [CheckSystemAudioCapturer] = []
+    var movingFrames = 3000
+    var timings = RecoveryTimings()
+    // The workbench page is not a web client and never says it started.
+    timings.bootTimeout = 600
+    let shell: MainWindowController
+    do {
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: {
+                let capturer = CheckScreenCapturer(movingFrames: movingFrames)
+                capturers.append(capturer)
+                return capturer
+            },
+            systemAudioCapturer: {
+                let capturer = CheckSystemAudioCapturer()
+                soundCapturers.append(capturer)
+                return capturer
+            },
+            recoveryTimings: timings
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    var hasEnded = false
+    var loadError: Error?
+    shell.onMainFrameLoadEnded = { error in
+        hasEnded = true
+        loadError = error
+    }
+    shell.load(url)
+    guard wait(30, until: { hasEnded }), loadError == nil else {
+        fail("\(address) did not load: \(loadError?.localizedDescription ?? "no answer"). Is the web package's dev server running?")
+    }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }) else { return nil }
+        switch answer {
+        case .success(let value)?: return value
+        case .failure(let error)?:
+            FileHandle.standardError.write(Data("ContractCheck: the page threw: \(error.localizedDescription)\n".utf8))
+            return nil
+        case nil: return nil
+        }
+    }
+    func state() -> [String: Any] {
+        page("return window.nativeCaptureWorkbench ? window.nativeCaptureWorkbench.state() : null;") as? [String: Any] ?? [:]
+    }
+    guard wait(30, until: { state()["available"] != nil }) else {
+        fail("the workbench page did not start")
+    }
+    if state()["available"] as? Bool != true {
+        problems.append("the web client does not see the shell's native capture")
+    }
+
+    // 0. How the audio thread keeps time, measured before anything else
+    //    has run and again at the end. The window of a check is never
+    //    shown, and WebKit holds back a page nobody sees (see --check
+    //    audio-clock): the numbers are printed, not judged.
+    func soundClock(_ label: String) {
+        func state() -> [String: Any] {
+            page("return await window.nativeCaptureWorkbench.soundState();") as? [String: Any] ?? [:]
+        }
+        func value(_ state: [String: Any], _ key: String) -> Double { state[key] as? Double ?? 0 }
+        _ = page("return await window.nativeCaptureWorkbench.startSound(false);")
+        _ = wait(10, until: { value(state(), "received") >= 24_000 })
+        let then = state()
+        RunLoop.main.run(until: Date().addingTimeInterval(2))
+        let now = state()
+        _ = page("return await window.nativeCaptureWorkbench.stopSound();")
+        FileHandle.standardError.write(Data(String(
+            format: "ContractCheck: sound, nothing listening, %@: the audio thread's clock moved %.3f s in %.3f s; %.0f waiting, %.0f skipped, ran dry %.0f time(s)\n",
+            label, value(now, "clock") - value(then, "clock"), (value(now, "wall") - value(then, "wall")) / 1000,
+            value(now, "waiting"), value(now, "skipped"), value(now, "ranDry")
+        ).utf8))
+    }
+    soundClock("at the start")
+
+    // 1. A capture started by the web client's code plays in a video element.
+    let started = page("""
+        return await window.nativeCaptureWorkbench.start('screen:1:0', { maxWidth: 1280, maxHeight: 720, frameRate: 30 });
+        """) as? [String: Any] ?? [:]
+    if started["phase"] as? String != "running" || started["native"] as? Bool != true {
+        problems.append("the capture did not start: \(started)")
+    }
+    if !wait(10, until: { state()["videoWidth"] as? Int == 1152 && state()["videoHeight"] as? Int == 720 }) {
+        problems.append("the video element shows \(state()["videoWidth"] ?? "?") by \(state()["videoHeight"] ?? "?"), expected 1152 by 720")
+    }
+    let playedThen = state()["played"] as? Double ?? 0
+    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+    let playedNow = state()["played"] as? Double ?? 0
+    if playedNow - playedThen < 0.5 {
+        problems.append("the video did not go on playing (\(playedThen) s, then \(playedNow) s)")
+    }
+
+    // 2. Other limits: a second capture behind the same track, and the first
+    //    one stopped.
+    let first = capturers.last
+    let changed = page("""
+        return await window.nativeCaptureWorkbench.reconfigure({ maxWidth: 640, maxHeight: 400, frameRate: 30 });
+        """) as? [String: Any] ?? [:]
+    if changed["error"] as? String != nil || capturers.count != 2 || changed["trackState"] as? String != "live" {
+        problems.append("other limits were answered \(changed) with \(capturers.count) capture(s) made")
+    }
+    if !wait(10, until: { state()["videoWidth"] as? Int == 640 && state()["videoHeight"] as? Int == 400 }) {
+        problems.append("after other limits the video element shows \(state()["videoWidth"] ?? "?") by \(state()["videoHeight"] ?? "?"), expected 640 by 400")
+    }
+    if !wait(5, until: { first?.isStopped == true }) || capturers.last?.isStopped != false {
+        problems.append("the capture with the old limits was left running, or the new one was stopped")
+    }
+
+    // 3. The capture ends by itself: the track says so.
+    capturers.last?.endByItself()
+    if !wait(5, until: { state()["phase"] as? String == "ended" }) {
+        problems.append("the track did not say that its capture ended (\(state()["phase"] ?? "?"))")
+    }
+
+    // 4. Stopping the track stops the capture.
+    movingFrames = 3000
+    _ = page("return await window.nativeCaptureWorkbench.start('screen:1:0', { frameRate: 30 });")
+    let running = capturers.last
+    let stopped = page("return window.nativeCaptureWorkbench.stop();") as? [String: Any] ?? [:]
+    if stopped["phase"] as? String != "stopped" || !wait(5, until: { running?.isStopped == true }) {
+        problems.append("stopping the track left the capture running (\(stopped))")
+    }
+
+    // 5. A source that is gone: the web client reports the failure.
+    let gone = page("return await window.nativeCaptureWorkbench.start('screen:77:0', { frameRate: 30 });") as? [String: Any] ?? [:]
+    if gone["phase"] as? String != "failed" || (gone["error"] as? String)?.contains("no-source") != true {
+        problems.append("a source that is gone was answered \(gone)")
+    }
+
+    // 6. The system's sound, through the web client's own worker and audio
+    //    worklet: the track carries each channel's tone on its own side, at
+    //    the level it was made at, and keeps up with what arrives.
+    func sound(_ call: String) -> [String: Any] {
+        page("return await window.nativeCaptureWorkbench.\(call)();") as? [String: Any] ?? [:]
+    }
+    func number(_ state: [String: Any], _ key: String) -> Double {
+        state[key] as? Double ?? 0
+    }
+    soundClock("after the captures")
+    let soundStarted = sound("startSound")
+    if soundStarted["available"] as? Bool != true || soundStarted["phase"] as? String != "running" {
+        problems.append("the system's sound did not start: \(soundStarted)")
+    }
+    _ = wait(10, until: {
+        let state = sound("soundState")
+        return number(state, "received") >= 48_000 && number(state, "levelLeft") > 0.1
+    })
+    let heard = sound("soundState")
+    // A sine at a quarter of full scale has a root mean square of 0.177.
+    let expectedLevel = CheckSystemAudioCapturer.level / 2.0.squareRoot()
+    if abs(number(heard, "levelLeft") - expectedLevel) > 0.03 || abs(number(heard, "levelRight") - expectedLevel) > 0.03
+        || abs(number(heard, "toneLeft") - CheckSystemAudioCapturer.tones.left) > 12
+        || abs(number(heard, "toneRight") - CheckSystemAudioCapturer.tones.right) > 12
+        || heard["trackState"] as? String != "live" {
+        problems.append(String(
+            format: "the sound track carries %.0f Hz at %.3f on the left and %.0f Hz at %.3f on the right (track %@), expected 440 and 880 at %.3f",
+            number(heard, "toneLeft"), number(heard, "levelLeft"), number(heard, "toneRight"), number(heard, "levelRight"),
+            heard["trackState"] as? String ?? "?", expectedLevel
+        ))
+    }
+    let heardAt = Date()
+    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    let later = sound("soundState")
+    let between = Date().timeIntervalSince(heardAt)
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: sound, a meter listening: in %.2f s (%.3f s on the audio thread's wall clock) its clock moved %.3f s and it played %.0f frames\n",
+        between, (number(later, "wall") - number(heard, "wall")) / 1000,
+        number(later, "clock") - number(heard, "clock"), number(later, "played") - number(heard, "played")
+    ).utf8))
+    let arrived = number(later, "received") - number(heard, "received")
+    let ranDry = number(later, "ranDry") - number(heard, "ranDry")
+    // Two seconds and the time the two questions took: at least 80,000 frames.
+    if arrived < 80_000 || ranDry > 2 || number(later, "skipped") > 12_000 || number(later, "waiting") > 12_000 {
+        problems.append(String(
+            format: "in two seconds the audio thread took in %.0f frames, ran dry %.0f time(s), had skipped %.0f and held %.0f",
+            arrived, ranDry, number(later, "skipped"), number(later, "waiting")
+        ))
+    }
+    FileHandle.standardError.write(Data(String(
+        format: "ContractCheck: sound: %.0f frames in two seconds, %.0f waiting, %.0f skipped, ran dry %.0f time(s) in all\n",
+        arrived, number(later, "waiting"), number(later, "skipped"), number(later, "ranDry")
+    ).utf8))
+
+    // 7. The sound's capture ends by itself: the track says so. And stopping
+    //    the track stops the capture.
+    soundCapturers.last?.endByItself()
+    if !wait(5, until: { sound("soundState")["phase"] as? String == "ended" }) {
+        problems.append("the sound track did not say that its capture ended")
+    }
+    _ = sound("startSound")
+    let soundRunning = soundCapturers.last
+    let soundStopped = sound("stopSound")
+    if soundStopped["phase"] as? String != "stopped" || !wait(5, until: { soundRunning?.isStopped == true }) {
+        problems.append("stopping the sound track left its capture running (\(soundStopped))")
+    }
+
+    for problem in problems {
+        FileHandle.standardError.write(Data("ContractCheck: \(problem)\n".utf8))
+    }
+    print(problems.isEmpty
+        ? "capture, web client's side: its worker decodes the shell's capture into a track that plays, follows other limits behind the same track, says when the capture ends and stops it when stopped; its audio worklet plays the system's sound into a track with each channel on its own side"
+        : "capture, web client's side: \(problems.count) problem(s)")
+    exit(problems.isEmpty ? 0 : 1)
+}
+
+/// The real screen, for a few seconds, through the whole path to a decoder in
+/// the page. Prints sizes, counts and times; the pictures stay in the page.
+func checkCaptureSystem(size: String, framesPerSecond: Int, seconds: Double) -> Never {
+    let parts = size.split(separator: "x").compactMap { Int($0) }
+    guard parts.count == 2 else { fail("--size takes a width and a height, as in 1920x1080") }
+    defer { try? FileManager.default.removeItem(at: temporary) }
+
+    let shell: MainWindowController
+    let server: LocalPageServer
+    do {
+        server = try LocalPageServer()
+        shell = try MainWindowController(
+            environment: environment, showsWindow: false, websiteDataStore: .nonPersistent(),
+            loginItem: CheckLoginItem(), notifications: nil,
+            screenCapturer: { SystemScreenCapturer() }
+        )
+    } catch {
+        fail(String(describing: error))
+    }
+    guard let origin = server.origin(), let address = URL(string: origin + "/") else {
+        fail("the local page server did not start")
+    }
+    var hasEnded = false
+    shell.onMainFrameLoadEnded = { _ in hasEnded = true }
+    shell.load(address)
+    guard wait(until: { hasEnded }) else { fail("the local page did not load") }
+    func page(_ script: String) -> Any? {
+        var answer: Result<Any, Error>?
+        shell.webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { answer = $0 }
+        guard wait(30, until: { answer != nil }), case .success(let value)? = answer else { return nil }
+        return value
+    }
+    _ = page(videoPipePage)
+    let display = CGMainDisplayID()
+    let reply = page("""
+        window.share = await window.backspace.startNativeScreenCapture({
+          sourceId: 'screen:\(display):0', maxWidth: \(parts[0]), maxHeight: \(parts[1]), frameRate: \(framesPerSecond),
+        });
+        return window.share;
+        """) as? [String: Any] ?? [:]
+    guard reply["ok"] as? Bool == true else {
+        fail("the capture did not start: \(reply["reason"] ?? "no answer")")
+    }
+    _ = page("return await window.startPipe(window.share.url, window.share.token, 'track');")
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    let stats = page("return await window.pipeStats();") as? [String: Any] ?? [:]
+    _ = page("window.backspace.stopNativeScreenCapture(window.share.id); return true;")
+
+    let format = (stats["formats"] as? [[String: Any]])?.first
+    print("captured the main display at \(reply["width"] ?? "?")x\(reply["height"] ?? "?"), asked for \(framesPerSecond) frames a second, for \(seconds) s")
+    print("format in the page: \(format?["codec"] ?? "none") \(format?["width"] ?? "?")x\(format?["height"] ?? "?"); video element \(stats["videoWidth"] ?? "?")x\(stats["videoHeight"] ?? "?")")
+    print(String(
+        format: "decoded %d frames (%d key), %.1f a second while the screen changed; captured-to-decoded %.0f ms at the median, %.0f at the 95th percentile, %.0f at most",
+        stats["decoded"] as? Int ?? 0, stats["keyFrames"] as? Int ?? 0, stats["framesPerSecond"] as? Double ?? 0,
+        stats["p50"] as? Double ?? -1, stats["p95"] as? Double ?? -1, stats["max"] as? Double ?? -1
+    ))
+    print("the page fell behind \(stats["fellBehind"] ?? "?") time(s), skipped \(stats["skipped"] ?? "?"); decoder errors: \(stats["errors"] ?? "?")")
+    exit((stats["decoded"] as? Int ?? 0) >= 1 && (stats["errors"] as? [String] ?? ["?"]).isEmpty ? 0 : 1)
+}
+
+/// Asks the system once for what can be shared and prints how many displays
+/// and windows it gave and how large their pictures are. No name or title is
+/// printed, and no picture leaves the process.
+func checkSourcesSystem() -> Never {
+    let lister = SystemScreenSourceLister(unnamedScreen: { "Screen \($0)" })
+    var answer: [ScreenSource]?
+    let started = Date()
+    lister.listSources { answer = $0 }
+    guard wait(30, until: { answer != nil }), let sources = answer else {
+        fail("the system did not answer in 30 s")
+    }
+    let took = Date().timeIntervalSince(started)
+    let displays = sources.filter(\.isScreen)
+    let windows = sources.filter { !$0.isScreen }
+    func sizes(_ list: [ScreenSource]) -> String {
+        let bytes = list.map(\.thumbnailPNG.count)
+        guard let smallest = bytes.min(), let largest = bytes.max() else { return "none" }
+        return "\(smallest)...\(largest) bytes"
+    }
+    func dimensions(_ list: [ScreenSource]) -> String {
+        Set(list.compactMap { source -> String? in
+            guard let image = NSBitmapImageRep(data: source.thumbnailPNG) else { return nil }
+            return "\(image.pixelsWide)x\(image.pixelsHigh)"
+        }).sorted().prefix(6).joined(separator: ", ")
+    }
+    let bridged = sources.map(\.bridgeValue)
+    let json = (try? JSONSerialization.data(withJSONObject: bridged))?.count ?? -1
+    print("screen recording allowed: \(CGPreflightScreenCaptureAccess())")
+    print("listed in \(String(format: "%.2f", took)) s: \(displays.count) display(s), \(windows.count) window(s)")
+    print("display pictures: \(sizes(displays)); \(dimensions(displays))")
+    print("window pictures: \(sizes(windows)); \(dimensions(windows))")
+    print("windows with an application icon: \(windows.filter { $0.appIconPNG != nil }.count) of \(windows.count)")
+    print("displays with a name of their own: \(displays.filter { !$0.name.hasPrefix("Screen ") }.count) of \(displays.count)")
+    print("the whole list as the page gets it: \(json) bytes of JSON")
+    let unique = Set(sources.map(\.id)).count == sources.count
+    exit(unique && !displays.isEmpty ? 0 : 1)
 }
 
 /// The actions of the menu in a check run: they do nothing.
@@ -1913,6 +5442,50 @@ case "menu":
     checkMenu()
 case "notifications":
     checkNotifications()
+case "sources":
+    checkSources()
+case "media-channel":
+    checkMediaChannel()
+case "capture":
+    checkCapture()
+case "share":
+    checkShare()
+case "share-live":
+    checkShareLive()
+case "share-preview-system":
+    checkSharePreviewSystem()
+case "capture-rate-system":
+    checkCaptureRateSystem()
+case "system-audio":
+    checkSystemAudio()
+case "system-audio-system":
+    checkSystemAudioSystem(
+        seconds: arguments["seconds"].flatMap { Double($0) } ?? 4, workbench: arguments["url"],
+        tone: arguments["tone"].flatMap { Double($0) }
+    )
+case "audio-clock":
+    checkAudioClock(seconds: arguments["seconds"].flatMap { Double($0) } ?? 2)
+case "pointer-overlay":
+    checkPointerOverlay()
+case "pointer-overlay-system":
+    checkPointerOverlaySystem(pictureAt: arguments["out"])
+case "capture-window-system":
+    checkCaptureWindowSystem()
+case "capture-web":
+    checkCaptureWeb(address: arguments["url"] ?? "http://localhost:5173/dev-native-capture.html")
+case "capture-system":
+    checkCaptureSystem(
+        size: arguments["size"] ?? "1920x1080",
+        framesPerSecond: arguments["frame-rate"].flatMap { Int($0) } ?? 60,
+        seconds: arguments["seconds"].flatMap { Double($0) } ?? 5
+    )
+case "video-pipe":
+    checkVideoPipe(
+        size: arguments["size"] ?? "1920x1080", sink: arguments["sink"] ?? "track",
+        noiseEvery: arguments["noise-every"].flatMap { Int($0) } ?? 32
+    )
+case "sources-system":
+    checkSourcesSystem()
 case "launch":
     checkLaunch()
 case "window-state":
@@ -1920,7 +5493,7 @@ case "window-state":
 case "local-storage-import":
     checkLocalStorageImport(fixture: fileURL(arguments, "fixture"))
 default:
-    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds or electron-profile")
+    fail("--check takes window-state, local-storage-import, launch, notifications, menu, recovery, drag, tray, activity, keybinds, sources, sources-system, media-channel, video-pipe, capture, capture-rate-system, share, share-live, share-preview-system, system-audio, system-audio-system, audio-clock, pointer-overlay, pointer-overlay-system, capture-web, capture-system, capture-window-system or electron-profile")
 }
 
 let contract: BridgeContract

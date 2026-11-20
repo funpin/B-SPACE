@@ -61,6 +61,9 @@ public struct ShellEnvironment {
     /// The language the shell starts in: the one the web client last
     /// reported, else the system's (`DesktopStrings.resolve`).
     public var language: DesktopLanguage
+    /// Where the page's warnings and errors are written (`PageLog`); nil
+    /// writes none. Set for a development build only.
+    public var pageLogURL: URL?
 
     public init(
         resources: ShellResources,
@@ -104,7 +107,7 @@ public struct ShellEnvironment {
         let override = ProcessInfo.processInfo.environment["BACKSPACE_URL"].flatMap { $0.isEmpty ? nil : $0 }
         let userData = support.appendingPathComponent(directoryName, isDirectory: true)
         let strings = try DesktopStrings(data: Data(contentsOf: resources.stringsURL))
-        return ShellEnvironment(
+        var environment = ShellEnvironment(
             resources: resources,
             userDataDirectory: userData,
             appVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
@@ -116,6 +119,12 @@ public struct ShellEnvironment {
                 systemLanguage: Locale.preferredLanguages.first
             )
         )
+        // A build to try a branch with (scripts/bundle.sh --identity dev)
+        // keeps what its page complains about; the shipped app does not.
+        if directoryName.hasSuffix("-Dev") {
+            environment.pageLogURL = userData.appendingPathComponent("page.log")
+        }
+        return environment
     }
 
     /// Safari is part of the system and ships the WebKit this app renders with,

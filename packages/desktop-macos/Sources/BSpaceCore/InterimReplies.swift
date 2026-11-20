@@ -7,7 +7,7 @@ import Foundation
 /// channel with no handler would reject its Promise, and a rejected call
 /// inside an effect takes the whole client down. So until a feature is ported,
 /// its channels answer what Electron answers where that feature is absent:
-/// no update mechanism, no sources to list, no global shortcuts running.
+/// no update mechanism, the system's own picker of what to share.
 ///
 /// The number after each group is the stage that replaces it with a real
 /// handler; the entry is deleted from here in the same change. `BridgeRouter`
@@ -15,9 +15,8 @@ import Foundation
 public enum InterimReplies {
     /// `fire` channels that are accepted and do nothing yet.
     public static let fireChannels: Set<String> = [
-        // Stage 4: screen sharing, viewers' pointers.
+        // Stage 4: what is left of screen sharing.
         "screen-share-selected", "screen-share-audio-preference",
-        "stream-pointer-overlay", "stream-pointer-overlay-end",
         // Stage 5: updates.
         "install-update", "check-for-updates", "dismiss-update", "open-release-page",
     ]
@@ -26,12 +25,8 @@ public enum InterimReplies {
     public static func invokeReplies() -> [String: BridgeReply] {
         return [
 
-            // Stage 4. WebKit's own picker chooses the source, as for a server
-            // whose client knows nothing of the native shell (plan, 5.5).
-            "get-screen-share-picker-mode": .value("system"),
-            "get-screen-sources": .value([Any]()),
+            // Stage 4: what is left of screen sharing.
             "screen-share-preselect": .undefined,
-            "get-system-audio-capability": .value("unavailable"),
             "get-audio-routers": .value([Any]()),
             "system-audio-exclusion-failed": .value(false),
             "system-audio-start": .value(["ok": false, "reason": "unsupported-platform"] as [String: Any]),

@@ -24,6 +24,8 @@ interface Person {
   name: string;
   local?: boolean;
   screen?: boolean;
+  /** The share is published and its sharer's client has no picture to send now. */
+  paused?: boolean;
   camera?: boolean;
   muted?: boolean;
   speaking?: boolean;
@@ -111,6 +113,21 @@ const SCENES: Record<string, Scene> = {
     caption: 'Your own share is the only media: it fills the grid',
     people: [{ name: 'funpin', local: true, screen: true }, { name: 'akk0' }],
   },
+  paused: {
+    caption: 'Two sharers hid their window (one watched, one not), and so did you: the tiles say it in words',
+    people: [
+      { name: 'funpin', local: true, screen: true, paused: true },
+      { name: 'akk0', screen: true, paused: true },
+      { name: 'fox', screen: true, paused: true },
+      { name: 'marsel', screen: true },
+    ],
+    unwatched: ['fox'],
+  },
+  pausedFocus: {
+    caption: 'The focused sharer hid the window',
+    people: [{ name: 'funpin', local: true }, { name: 'akk0', screen: true, paused: true }, { name: 'fox' }],
+    focus: 'akk0:stream',
+  },
 };
 
 const HUES: Record<string, number> = { funpin: 200, akk0: 30, fox: 140, marsel: 280, nika: 340, leo: 60, vera: 180 };
@@ -154,7 +171,7 @@ function fakeTrack(label: string, hue: number, kind: 'screen' | 'camera'): { tra
 
 function buildParticipant(person: Person): ParticipantInfo {
   const hue = HUES[person.name] ?? 0;
-  const screen = person.screen ? fakeTrack(person.name, hue, 'screen') : null;
+  const screen = person.screen && !person.paused ? fakeTrack(person.name, hue, 'screen') : null;
   const camera = person.camera ? fakeTrack(person.name, hue, 'camera') : null;
   return {
     identity: person.name,
@@ -164,7 +181,8 @@ function buildParticipant(person: Person): ParticipantInfo {
     isMuted: person.muted ?? false,
     isDeafened: false,
     isCameraOn: camera !== null,
-    isScreenSharing: screen !== null,
+    isScreenSharing: person.screen === true,
+    screenSharePaused: person.paused === true,
     isLocal: person.local ?? false,
     audioTrack: null,
     videoTrack: camera?.track ?? null,
