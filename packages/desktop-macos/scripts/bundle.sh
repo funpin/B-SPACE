@@ -5,13 +5,20 @@
 #   scripts/bundle.sh [options]
 #
 # Options:
-#   --identity dev|release
+#   --identity dev|beta|release
 #         dev (default)  a build to try a branch with. Its own bundle
 #                        identifier (com.backspace.desktop.dev) and its own
 #                        settings folder (Application Support/Backspace-Dev),
 #                        and it does not claim the backspace:// scheme. It can
 #                        run beside the installed app without touching that
 #                        app's sign-in, settings or web storage.
+#         beta           B-SPACE Swift Beta, the build that is handed out
+#                        while the native client is not the app yet: an
+#                        application of its own beside the Electron build
+#                        (com.backspace.desktop.swift, Application
+#                        Support/Backspace-Swift, no backspace:// scheme),
+#                        so installing it replaces nothing and removing it
+#                        leaves B-SPACE as it was.
 #         release        the identity of the shipped app: com.backspace.desktop,
 #                        Application Support/Backspace, the backspace:// scheme.
 #                        This is what replaces the Electron build.
@@ -46,7 +53,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run) RUN=true ;;
     --help|-h)
-      sed -n '2,30p' "$SELF" | sed 's/^# \{0,1\}//'
+      sed -n '2,37p' "$SELF" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -66,6 +73,17 @@ case "$IDENTITY" in
     USER_DATA_XML="<key>BSpaceUserDataDirectory</key><string>Backspace-Dev</string>"
     URL_SCHEME_XML=""
     ;;
+  beta)
+    # The identifier and the settings folder do not say "beta": they stay
+    # when the word leaves the name, and with them the user's sign-in and
+    # the permissions macOS gave.
+    BUNDLE_ID="com.backspace.desktop.swift"
+    BUNDLE_NAME="B-SPACE Swift Beta"
+    APP_FILE="B-SPACE Swift Beta.app"
+    DISPLAY_NAME="B:SPACE Swift Beta"
+    USER_DATA_XML="<key>BSpaceUserDataDirectory</key><string>Backspace-Swift</string>"
+    URL_SCHEME_XML=""
+    ;;
   release)
     BUNDLE_ID="com.backspace.desktop"
     BUNDLE_NAME="B-SPACE"
@@ -75,7 +93,7 @@ case "$IDENTITY" in
     URL_SCHEME_XML="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>B:SPACE</string><key>CFBundleTypeRole</key><string>Editor</string><key>CFBundleURLSchemes</key><array><string>backspace</string></array></dict></array>"
     ;;
   *)
-    echo "bundle.sh: --identity takes dev or release" >&2
+    echo "bundle.sh: --identity takes dev, beta or release" >&2
     exit 64
     ;;
 esac

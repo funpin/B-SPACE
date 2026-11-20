@@ -68,7 +68,8 @@ In the tray B moves too and shows the same states. With "Reduce motion" on in th
 | | |
 |---|---|
 | **Name and look** | Its own logo and character, its own "Kamen" interface with selectable accent themes. |
-| **App builds** | Two, nothing extra: **Windows x64** (installer) and **macOS Apple Silicon** (DMG). Linux, Windows on ARM and Intel Macs are not built here; the [original project](https://github.com/TheZwiss/backspace/releases) releases them. |
+| **App builds** | **B-SPACE** on Electron, two builds and nothing extra: **Windows x64** (installer) and **macOS Apple Silicon** (DMG). Linux, Windows on ARM and Intel Macs are not built here; the [original project](https://github.com/TheZwiss/backspace/releases) releases them. |
+| **B-SPACE Swift** | A native macOS client of its own, written in Swift and in beta for now: **B-SPACE Swift Beta** (macOS 26+, Apple Silicon). It is an application of its own beside B-SPACE, not a replacement. It encodes a screen share in hardware and publishes it itself, past the page. |
 | **Links and updates** | The app, the Download panel and the update check point to this repository, not the original: the versions diverge, and the source has to be the code that actually runs (AGPL, section 13). |
 | **Server** | Its own Docker image (`ghcr.io/funpin/backspace`) and three optional settings: only admins create spaces, attachment retention, thumbnails off. |
 | **Voice channel** | One tile per person instead of two, members without video in a strip under the grid, tiles can be hidden and rearranged. |
@@ -78,6 +79,8 @@ Since 2.0.0 the fork is maintained independently: it grew out of the original 1.
 ## Quick start
 
 **App.** Download a build from the [latest release](https://github.com/funpin/B-SPACE/releases/latest): **Windows**, the installer; **macOS (Apple Silicon)**, the DMG. On first launch, enter your server's address. The app downloads new versions on its own: it shows a window with the download progress and a restart button.
+
+The same page has **B-SPACE Swift Beta**, the native client for macOS 26 and later. It installs beside B-SPACE, has its own sign-in and its own macOS permissions, and does not update itself yet: a new version is downloaded by hand.
 
 **Server.** You need a Linux host with Docker and a domain:
 
