@@ -107,7 +107,7 @@ public final class LiveKitSharePublisher: NSObject, ScreenSharePublisher, RoomDe
             // A viewer that cannot decode H.265 is sent H.264, encoded only
             // while such a viewer watches.
             preferredBackupCodec: settings.codec == .h265 ? .h264 : nil,
-            degradationPreference: .disabled
+            degradationPreference: .maintainFramerateAndResolution
         )
         Task {
             do {

@@ -54,153 +54,96 @@ DESKTOP="$(cd ../desktop && pwd)"
 source "$(dirname "$SELF")/toolchain.sh"
 swift build -c release --product ContractCheck >&2
 
+# Every check runs, whatever the ones before it said, and the script fails at
+# the end naming those that failed: one run on a machine that is not the one
+# they were written on (a CI runner) then shows all that is wrong there, not
+# only the first.
+FAILED=()
+check() {
+  local name="$1"
+  shift
+  .build/release/ContractCheck \
+    --contract "$DESKTOP/src/bridgeContract.json" \
+    --picker "$DESKTOP/resources/instance-picker.html" \
+    --strings "$DESKTOP/src/desktopStrings.json" \
+    --recovery "$DESKTOP/resources/recovery.html" \
+    --check "$name" "$@" >&2 || FAILED+=("$name")
+}
+
 # The shell's window, on this machine's displays: restored from
 # window-state.json, written back after a move, centred when its place is gone.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check window-state >&2
+check window-state
 
 # The import of the Electron build's localStorage, from the fixture profile the
 # tests read, into a data store that is never written to disk.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check local-storage-import \
-  --fixture "$PWD/Tests/BSpaceCoreTests/Fixtures/chromium-local-storage/leveldb" >&2
+check local-storage-import \
+  --fixture "$PWD/Tests/BSpaceCoreTests/Fixtures/chromium-local-storage/leveldb"
 
 # What reaches the page from outside the app: backspace:// links, held until
 # the page listens for them, and the auto-launch settings.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check launch >&2
+check launch
 
 # Notifications and the Dock badge, on a page served from the loopback
 # address. No notification is shown.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check notifications >&2
+check notifications
 
 # The menu bar in every language, and the language following the web client.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check menu >&2
+check menu
 
 # Recovery mode, with its clocks shortened: a failed load, a web client that
 # never starts and a page that stops answering all end on the recovery page.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check recovery >&2
+check recovery
 
 # Dragging the window: by the top strip of a page that reported nothing, then
 # by what the page reports; the page sees nothing of a press that drags.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check drag >&2
+check drag
 
 # The tray: the character plays the state the page reports, the menu offers
 # the controls the page allows and sends the chosen one back.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check tray >&2
+check tray
 
 # Game detection, with a made-up list of processes and a made-up answer of
 # the network: nothing real is listed and nothing is fetched.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check activity >&2
+check activity
 
 # Global keybinds, with a made-up keyboard and a made-up permission: no real
 # key is listened to.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check keybinds >&2
+check keybinds
 
 # What can be shared, with a made-up list: the screen is not looked at.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check sources >&2
+check sources
 
 # The local channel captured media reach the page on: a WebSocket over TLS
 # on the loopback address, with a key that never reaches a keychain.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check media-channel >&2
+check media-channel
 
 # A share through the bridge, with a screen the check makes up: the real
 # screen is not captured.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check capture >&2
+check capture
 
 # The shell's own share through the bridge: a screen, a system and a call
 # the check makes up. Nothing real is captured and no call is joined.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check share >&2
+check share
 
 # The system's sound through the bridge, with a system the check makes up:
 # nothing real is captured.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check system-audio >&2
+check system-audio
 
 # Viewers' pointers through the bridge, with a screen and an overlay the
 # check makes up: nothing is drawn on the real screen.
-.build/release/ContractCheck \
-  --contract "$DESKTOP/src/bridgeContract.json" \
-  --picker "$DESKTOP/resources/instance-picker.html" \
-  --strings "$DESKTOP/src/desktopStrings.json" \
-  --recovery "$DESKTOP/resources/recovery.html" \
-  --check pointer-overlay >&2
+check pointer-overlay
 
-exec .build/release/ContractCheck \
+STATUS=0
+.build/release/ContractCheck \
   --contract "$DESKTOP/src/bridgeContract.json" \
   --picker "$DESKTOP/resources/instance-picker.html" \
   --strings "$DESKTOP/src/desktopStrings.json" \
   --recovery "$DESKTOP/resources/recovery.html" \
   --harness "$PWD/contract/harness.html" \
-  ${OUT_ARGS[@]+"${OUT_ARGS[@]}"}
+  ${OUT_ARGS[@]+"${OUT_ARGS[@]}"} || STATUS=$?
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "contract-check.sh: failed: ${FAILED[*]}" >&2
+  [[ $STATUS -ne 0 ]] || STATUS=1
+fi
+exit $STATUS

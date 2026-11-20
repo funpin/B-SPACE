@@ -415,7 +415,7 @@ let run = Task {
     case "resolution": degradation = .maintainResolution
     case "framerate": degradation = .maintainFramerate
     case "balanced": degradation = .balanced
-    case "disabled": degradation = .disabled
+    case "disabled": degradation = .maintainFramerateAndResolution
     default: stop("unknown degradation preference \(degradationName)")
     }
     let publishOptions = VideoPublishOptions(

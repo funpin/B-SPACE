@@ -4,6 +4,7 @@ import BSpaceShell
 import CoreMedia
 import CoreVideo
 import Network
+import VideoToolbox
 import WebKit
 
 // Runs the bridge contract check against the real shell: the same window
@@ -1272,7 +1273,10 @@ func checkMediaChannel() -> Never {
             if (out.messages === expected) finish();
           };
           socket.onclose = () => { out.closed = true; finish(); };
-          setTimeout(finish, 12000);
+          // Long: the sender is a timer on the check's own run loop, and on
+          // a slow machine (a CI runner) 240 turns of it took more than
+          // twelve seconds. A count that is reached ends the wait at once.
+          setTimeout(finish, 60000);
         });
         return true;
         """
@@ -1349,7 +1353,7 @@ func checkMediaChannel() -> Never {
         sent += 1
         if sent == 240 { timer.invalidate() }
     }
-    _ = wait(20, until: { report != nil })
+    _ = wait(70, until: { report != nil })
     timer.invalidate()
     let messages = report?["messages"] as? Int ?? 0
     let p95 = report?["p95"] as? Double ?? -1
@@ -3925,7 +3929,24 @@ func checkCaptureRateSystem() -> Never {
 
 /// A share through the bridge, as the web client will start one, with a
 /// screen the check makes up.
+/// Whether this machine has a hardware H.264 encoder. Every Mac has one; a
+/// virtual machine, which is what a CI runner is, has none.
+func hasHardwareH264Encoder() -> Bool {
+    var list: CFArray?
+    guard VTCopyVideoEncoderList(nil, &list) == noErr, let encoders = list as? [[CFString: Any]] else { return false }
+    return encoders.contains {
+        ($0[kVTVideoEncoderList_CodecType] as? NSNumber)?.uint32Value == kCMVideoCodecType_H264
+            && ($0[kVTVideoEncoderList_IsHardwareAccelerated] as? Bool) == true
+    }
+}
+
 func checkCapture() -> Never {
+    // The capture path encodes with the hardware encoder and with no other
+    // (VideoEncoder requires it), so there is nothing to check without one.
+    guard hasHardwareH264Encoder() else {
+        print("capture: not run, this machine has no hardware H.264 encoder (a virtual machine)")
+        exit(0)
+    }
     var problems: [String] = []
     defer { try? FileManager.default.removeItem(at: temporary) }
 
